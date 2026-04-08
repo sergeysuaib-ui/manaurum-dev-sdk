@@ -138,6 +138,34 @@ Your app will be validated before publishing:
 - `permissions`: only from the allowed list above
 - `category`: one of productivity, utility, lifestyle, entertainment, dev_tools, other
 
+## Debugging Failed Apps
+
+If a user's app doesn't work, use these APIs to diagnose:
+
+### Probe the entrypoint (server-side HTTP check)
+```bash
+curl -s "https://manaurum.com/api/developer/apps/{slug}/probe-entrypoint" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://manaurum.com/hosted/{slug}/index.html"}'
+```
+Returns: `reachable`, `status_code`, `content_type`, `iframe_blocked`, `response_time_ms`
+
+### Get diagnostic logs (from failed preview sessions)
+```bash
+curl -s "https://manaurum.com/api/developer/apps/{slug}/diagnostics" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN"
+```
+Returns: array of recent sessions with `status`, `events` timeline, `probe_result`
+
+### Common failures
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Timeout, init sent but no ready | SDK not loaded or init() not called | Add `<script src="manaurum.js">` and call `ManaurumSDK.init()` |
+| Error, no events | Entrypoint unreachable | Check URL, verify hosting works |
+| Probe: iframe_blocked | X-Frame-Options: DENY | Remove header or set ALLOWALL |
+| Probe: content_type is JSON | Wrong URL points to API | Change entrypoint to HTML page |
+
 ## What NOT to Do
 
 - Do NOT try to access the parent window or break out of the iframe

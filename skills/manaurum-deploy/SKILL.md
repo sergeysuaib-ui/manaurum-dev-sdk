@@ -157,6 +157,65 @@ When creating an app, always generate this deploy script with the correct slug f
 | "Invalid file: xxx" | Only web files allowed (html, js, css, images, fonts, wasm). |
 | "ZIP must contain index.html" | Ensure index.html is at the root of the ZIP, not in a subdirectory. |
 
+## Post-Deploy: Verify with Probe
+
+After deploying, ALWAYS verify the entrypoint is working:
+
+```bash
+curl -s "https://manaurum.com/api/developer/apps/$APP_SLUG/probe-entrypoint" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://manaurum.com/hosted/'$APP_SLUG'/index.html"}' | python3 -m json.tool
+```
+
+**Expected good response:**
+```json
+{
+  "reachable": true,
+  "status_code": 200,
+  "content_type": "text/html; charset=utf-8",
+  "response_time_ms": 45,
+  "iframe_blocked": false,
+  "error": null
+}
+```
+
+**If probe fails**, check:
+- `reachable: false` → file not found or server error
+- `status_code: 404` → index.html missing from ZIP root
+- `iframe_blocked: true` → server sets X-Frame-Options: DENY
+- `content_type` not text/html → wrong file being served
+
+## Post-Deploy: Check Diagnostics
+
+If the app fails during preview, diagnostic logs are saved automatically. Retrieve them:
+
+```bash
+curl -s "https://manaurum.com/api/developer/apps/$APP_SLUG/diagnostics" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" | python3 -m json.tool
+```
+
+Each log contains:
+- `status`: ready / timeout / error
+- `events`: full postMessage timeline with timestamps
+- `probe_result`: server-side HTTP check at time of failure
+- `created_at`: when it happened
+
+Use this to diagnose why an app fails:
+- If status is `timeout` and events show `manaurum:init → app` but no `manaurum:ready ← app`, the app is not calling `ManaurumSDK.init()`
+- If status is `error` and no events, the entrypoint URL is unreachable
+- If events show permission blocks, the manifest is missing required permissions
+
+### AI Agent Diagnostic Workflow
+
+When a user reports their ManAurum app is broken:
+
+1. Get the app slug
+2. Run probe: `POST /api/developer/apps/{slug}/probe-entrypoint`
+3. Get diagnostics: `GET /api/developer/apps/{slug}/diagnostics`
+4. Analyze the events timeline and probe result
+5. Suggest specific fixes
+
 ## Publishing Flow
 
 After deploying, the app is automatically set to Private. To share or publish:
