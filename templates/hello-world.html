@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SDK Example</title>
+  <script src="https://manaurum.com/sdk/manaurum.js"></script>
+  <style>
+    body { font-family: Inter, sans-serif; margin: 0; padding: 24px; background: #f9f9ff; color: #181c23; }
+    body.xp { font-family: Tahoma, sans-serif; background: #ece9d8; }
+    .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; margin: 4px; }
+    .btn-blue { background: #0058bc; color: white; }
+    .btn-gray { background: #e0e0e0; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>SDK Example</h1>
+  <p id="status">Initializing...</p>
+  <div id="actions" style="display:none;">
+    <button class="btn btn-blue" onclick="app.setTitle('Updated @ ' + new Date().toLocaleTimeString())">Set Title</button>
+    <button class="btn btn-gray" onclick="app.toastSuccess('It works!')">Toast</button>
+    <button class="btn btn-gray" onclick="app.toastError('Oops!')">Error Toast</button>
+    <button class="btn btn-gray" onclick="app.close()">Close</button>
+  </div>
+
+  <script>
+    var app = ManaurumSDK.init();
+
+    app.onReady(function(ctx) {
+      document.getElementById('status').textContent =
+        'Connected! Hello, ' + ctx.user.nickname + ' (theme: ' + ctx.theme + ')';
+      document.getElementById('actions').style.display = 'block';
+    });
+
+    app.onThemeChange(function(theme) {
+      document.body.className = theme === 'xp' ? 'xp' : '';
+    });
+  </script>
+</body>
+</html>

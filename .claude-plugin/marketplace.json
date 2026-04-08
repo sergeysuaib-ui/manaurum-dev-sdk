@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "manaurum-sdk",
+  "description": "Build, test, and deploy apps for ManAurum OS — a browser-based virtual desktop",
+  "owner": {
+    "name": "ManAurum OS"
+  },
+  "plugins": [
+    {
+      "name": "manaurum-dev-sdk",
+      "description": "Skills for building ManAurum OS apps: create apps from prompts, generate manifests, deploy to the platform",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/sergeysuaib-ui/manaurum-dev-sdk.git"
+      },
+      "category": "development",
+      "homepage": "https://github.com/sergeysuaib-ui/manaurum-dev-sdk"
+    }
+  ]
+}
