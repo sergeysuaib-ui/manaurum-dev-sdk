@@ -104,9 +104,25 @@ function App() {
 ### Vue, Svelte, plain JS
 Same pattern: load SDK, init, handle onReady/onThemeChange.
 
+## Deploy Setup
+
+To enable direct deploy from CLI without opening a browser:
+
+1. Go to [manaurum.com](https://manaurum.com) → Developer Console → generate an API token
+2. Create `.env.manaurum` in your project root:
+```
+MANAURUM_TOKEN=mdev_your_token_here
+```
+3. Add to `.gitignore`:
+```
+.env.manaurum
+```
+
+Now you can deploy with `/manaurum-deploy`.
+
 ## Next Steps
 
 After setup:
 1. Build your app features
 2. Test in the Test Harness
-3. Use `/manaurum-deploy` to publish to ManAurum OS
+3. Use `/manaurum-deploy` to deploy directly to ManAurum OS

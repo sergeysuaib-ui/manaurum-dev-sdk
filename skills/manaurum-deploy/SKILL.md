@@ -1,66 +1,166 @@
 ---
 name: manaurum-deploy
-description: Deploy and publish a ManAurum OS app. Use when the user wants to deploy, publish, host, or release their ManAurum/SeregaOS app. Covers hosting setup, entrypoint configuration, private/unlisted/public publishing, and App Store submission.
+description: Deploy and publish a ManAurum OS app. Use when the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers API token setup, direct deploy from CLI via curl, hosting on ManAurum, external hosting, and publishing flow. Also use when user says "deploy to ManAurum", "upload my app", "publish my app", or "host on ManAurum".
 ---
 
 # Deploy ManAurum OS App
 
-Help the user deploy their ManAurum OS app from local development to production.
+Help the user deploy their ManAurum OS app. There are two deployment paths:
 
-## Deployment Checklist
+## Path 1: Deploy directly from CLI (recommended)
 
-Before deploying, verify the app:
-- [ ] Loads the ManAurum SDK (`manaurum.js`)
-- [ ] Handles `manaurum:init` and sends `manaurum:ready`
-- [ ] Adapts to theme changes (smoothie/xp)
-- [ ] Works at the declared window size
+This is the fastest path. The user generates an API token once, then deploys from their terminal without opening a browser.
 
-## Hosting Options
+### Step 1: Get an API token
 
-The app needs to be served over HTTPS. Recommend one of:
+The user needs a ManAurum developer API token. They can generate one from:
+- ManAurum OS → Developer Console → Tokens section
+- Or via the API if they have a session:
 
-### Vercel (easiest for single files)
 ```bash
-npm i -g vercel
-# Put your app files in a directory
-vercel deploy --prod
+curl -X POST https://manaurum.com/api/developer/tokens \
+  -H "Authorization: Bearer SESSION_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "CLI deploy"}'
 ```
 
-### Netlify (drag and drop)
-1. Go to netlify.com → Sites → drag your folder
-2. Get HTTPS URL automatically
+Response includes a token like `mdev_xxxxxxxxxxxxx`. Save it — it's shown only once.
 
-### GitHub Pages (free, from repo)
-1. Push app to a GitHub repo
-2. Settings → Pages → Deploy from branch
-3. URL: `https://username.github.io/repo-name/`
+### Step 2: Store the token locally
 
-### Cloudflare Pages
+Save the token so it's available for deploy commands:
+
 ```bash
-npx wrangler pages deploy ./your-app-directory
+# Create a config file
+echo "MANAURUM_TOKEN=mdev_your_token_here" > .env.manaurum
+
+# Or export in shell
+export MANAURUM_TOKEN=mdev_your_token_here
 ```
 
-## After Hosting
+**Important:** Add `.env.manaurum` to `.gitignore` so the token is never committed.
 
-Once the app is live at an HTTPS URL:
+### Step 3: Deploy single HTML file
 
-1. **Test in harness first**: Open `https://manaurum.com/sdk/test-harness.html`, paste the URL, verify green dot
-2. **Connect to ManAurum**: Open Developer Console → your app → Build tab → paste URL → Preview
-3. **Auto-publish**: First successful preview publishes as Private automatically
-4. **Share**: Make Unlisted → copy link → send to testers
-5. **Go public**: Add screenshot → Submit for Review → Publish
+For simple apps (one HTML file):
 
-## Manifest Configuration
+```bash
+curl -X POST "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/paste" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"html\": $(cat index.html | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}"
+```
 
-If the user needs to update their manifest (window size, permissions, title):
-- Done through Developer Console → Settings tab → Manifest editor
-- Or via API: `PUT /api/developer/apps/{slug}/manifest`
+Or the simpler version if the file is small:
+
+```bash
+# Read file and deploy
+HTML_CONTENT=$(cat index.html)
+curl -X POST "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/paste" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- <<EOF
+{"html": $(python3 -c "import json; print(json.dumps(open('index.html').read()))")}
+EOF
+```
+
+### Step 4: Deploy multi-file app (ZIP)
+
+For apps with multiple files (HTML + JS + CSS + images):
+
+```bash
+# Create ZIP
+zip -r app.zip index.html style.css app.js assets/
+
+# Upload
+curl -X POST "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/upload" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -F "file=@app.zip"
+```
+
+The ZIP must contain `index.html` at the root level.
+
+### Step 5: Verify deployment
+
+```bash
+curl -s "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/status" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" | python3 -m json.tool
+```
+
+The app is now live at: `https://manaurum.com/hosted/YOUR_SLUG/index.html`
+
+## Path 2: Deploy via external hosting
+
+If the user prefers to host externally:
+
+1. Deploy to Vercel/Netlify/GitHub Pages/Cloudflare Pages
+2. Get the HTTPS URL
+3. Set it as the entrypoint in Developer Console → Manifest tab
+4. Preview in SeregaOS
+
+## Deploy Script Helper
+
+When generating an app, also create a `deploy.sh` script:
+
+```bash
+#!/bin/bash
+# Deploy to ManAurum OS
+# Usage: ./deploy.sh
+
+set -e
+
+# Load token from .env.manaurum
+if [ -f .env.manaurum ]; then
+  export $(cat .env.manaurum | xargs)
+fi
+
+if [ -z "$MANAURUM_TOKEN" ]; then
+  echo "Error: MANAURUM_TOKEN not set"
+  echo "Create .env.manaurum with: MANAURUM_TOKEN=mdev_your_token"
+  exit 1
+fi
+
+APP_SLUG="YOUR_SLUG"
+API="https://manaurum.com/api/developer/apps/$APP_SLUG/hosting"
+
+# Check if we have multiple files or just index.html
+if [ -f "style.css" ] || [ -f "app.js" ] || [ -d "assets" ]; then
+  echo "Packaging multi-file app..."
+  zip -r /tmp/manaurum-deploy.zip . -x ".*" "deploy.sh" "node_modules/*" ".env*"
+  echo "Uploading ZIP..."
+  curl -s -X POST "$API/upload" \
+    -H "Authorization: Bearer $MANAURUM_TOKEN" \
+    -F "file=@/tmp/manaurum-deploy.zip" | python3 -m json.tool
+  rm /tmp/manaurum-deploy.zip
+else
+  echo "Deploying single file..."
+  curl -s -X POST "$API/paste" \
+    -H "Authorization: Bearer $MANAURUM_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"html\": $(python3 -c "import json; print(json.dumps(open('index.html').read()))")}" | python3 -m json.tool
+fi
+
+echo ""
+echo "Live at: https://manaurum.com/hosted/$APP_SLUG/index.html"
+```
+
+When creating an app, always generate this deploy script with the correct slug filled in.
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|---------|
-| "App not responding" | Check that `manaurum:ready` is sent within 10s of `manaurum:init` |
-| Preview shows blank | Check browser console for CORS errors. Entrypoint must allow iframe embedding. |
-| Entrypoint validation fails | Ensure URL returns HTTP 200. Check it's not behind auth. |
-| "Permission denied" | Check manifest permissions match what your app uses |
+| "Invalid token format" | Token must start with `mdev_`. Check you copied the full token. |
+| "Invalid or revoked token" | Generate a new token from Developer Console. |
+| "App not found" | Check the app slug. The token must belong to the app's developer. |
+| "ZIP too large" | Max 10MB. Remove node_modules, .git, large assets. |
+| "Invalid file: xxx" | Only web files allowed (html, js, css, images, fonts, wasm). |
+| "ZIP must contain index.html" | Ensure index.html is at the root of the ZIP, not in a subdirectory. |
+
+## Publishing Flow
+
+After deploying, the app is automatically set to Private. To share or publish:
+
+1. **Make Unlisted** (share link): Dev Console → Publish tab → "Make Unlisted"
+2. **Submit for Public** (App Store): Add screenshot → Submit for Review
+3. Or via API with token — future capability
