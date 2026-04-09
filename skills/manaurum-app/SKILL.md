@@ -126,6 +126,8 @@ Only request permissions your app actually needs:
 | `notifications.send` | Send persistent notifications to Notification Center |
 | `notifications.schedule` | Schedule reminders (sensitive — requires review) |
 | `tasks.suggest` | Suggest tasks to Work Assistant (sensitive — requires review) |
+| `storage.read` | Read stored data (server-side, per user) |
+| `storage.write` | Save and delete stored data (server-side, 5MB per app) |
 
 ## Validation Rules
 
@@ -165,6 +167,52 @@ Returns: array of recent sessions with `status`, `events` timeline, `probe_resul
 | Error, no events | Entrypoint unreachable | Check URL, verify hosting works |
 | Probe: iframe_blocked | X-Frame-Options: DENY | Remove header or set ALLOWALL |
 | Probe: content_type is JSON | Wrong URL points to API | Change entrypoint to HTML page |
+
+## Using Server-Side Storage
+
+If the app needs to persist data (tasks, settings, notes, etc.), use the Storage API instead of localStorage. Storage is server-side, per user, and syncs across devices.
+
+Add permissions to manifest:
+```json
+{ "permissions": ["storage.read", "storage.write"] }
+```
+
+Use this pattern in your app code:
+```javascript
+// Promise wrapper for storage
+function storage(type, payload) {
+  return new Promise((resolve) => {
+    const _reqId = Math.random().toString(36);
+    const handler = (e) => {
+      if (e.data?.type === 'manaurum:storage-response' && e.data.payload?._reqId === _reqId) {
+        window.removeEventListener('message', handler);
+        resolve(e.data.payload);
+      }
+    };
+    window.addEventListener('message', handler);
+    window.parent.postMessage({ type, payload: { ...payload, _reqId } }, '*');
+  });
+}
+
+// Save data
+await storage('manaurum:storage-set', { key: 'tasks', value: myTasks });
+
+// Load data
+const result = await storage('manaurum:storage-get', { key: 'tasks' });
+if (result.ok) {
+  myTasks = result.value;
+}
+
+// Delete
+await storage('manaurum:storage-delete', { key: 'old-data' });
+
+// List all keys
+const keys = await storage('manaurum:storage-list', {});
+```
+
+**Important:** Always include this storage helper when building apps that need persistence. Do NOT use `localStorage` as the primary store — it doesn't sync between devices and is cleared when the user clears browser data.
+
+Read `references/sdk-api.md` for full Storage API reference with limits and error handling.
 
 ## What NOT to Do
 

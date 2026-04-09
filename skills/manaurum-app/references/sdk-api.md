@@ -96,6 +96,118 @@ Types: `informational` (no action needed), `actionable` (requires deep_link.acti
 }
 ```
 
+## Storage API (App → Shell → Server)
+
+Apps can persist data server-side. Data is scoped per app per user — each user has their own storage, synced across devices.
+
+### `manaurum:storage-set` (requires `storage.write`)
+```json
+{
+  "type": "manaurum:storage-set",
+  "payload": {
+    "key": "tasks",
+    "value": [{"title": "Buy milk", "done": false}],
+    "_reqId": "1"
+  }
+}
+```
+Key: string, max 200 chars. Value: any JSON (max 100KB). `_reqId` is optional — used to match async responses.
+
+### `manaurum:storage-get` (requires `storage.read`)
+```json
+{
+  "type": "manaurum:storage-get",
+  "payload": { "key": "tasks", "_reqId": "2" }
+}
+```
+
+### `manaurum:storage-delete` (requires `storage.write`)
+```json
+{
+  "type": "manaurum:storage-delete",
+  "payload": { "key": "tasks", "_reqId": "3" }
+}
+```
+
+### `manaurum:storage-list` (requires `storage.read`)
+```json
+{
+  "type": "manaurum:storage-list",
+  "payload": { "prefix": "task", "_reqId": "4" }
+}
+```
+Returns all keys matching the prefix. Omit prefix to list all keys.
+
+### `manaurum:storage-response` (Shell → App)
+All storage operations return an async response:
+```json
+{
+  "type": "manaurum:storage-response",
+  "payload": {
+    "ok": true,
+    "key": "tasks",
+    "value": [{"title": "Buy milk", "done": false}],
+    "_reqId": "2"
+  }
+}
+```
+On error: `{ "ok": false, "error": "Key not found", "_reqId": "2" }`
+
+### Storage Limits
+| Limit | Value |
+|-------|-------|
+| Max keys per app per user | 500 |
+| Max value size | 100 KB |
+| Max total per app per user | 5 MB |
+| Key length | 1-200 chars |
+
+### Storage Usage Pattern
+
+```javascript
+// Helper to promisify storage calls
+function storageGet(key) {
+  return new Promise((resolve) => {
+    const reqId = Math.random().toString(36);
+    const handler = (e) => {
+      if (e.data?.type === 'manaurum:storage-response' && e.data.payload?._reqId === reqId) {
+        window.removeEventListener('message', handler);
+        resolve(e.data.payload);
+      }
+    };
+    window.addEventListener('message', handler);
+    window.parent.postMessage({
+      type: 'manaurum:storage-get',
+      payload: { key, _reqId: reqId }
+    }, '*');
+  });
+}
+
+function storageSet(key, value) {
+  return new Promise((resolve) => {
+    const reqId = Math.random().toString(36);
+    const handler = (e) => {
+      if (e.data?.type === 'manaurum:storage-response' && e.data.payload?._reqId === reqId) {
+        window.removeEventListener('message', handler);
+        resolve(e.data.payload);
+      }
+    };
+    window.addEventListener('message', handler);
+    window.parent.postMessage({
+      type: 'manaurum:storage-set',
+      payload: { key, value, _reqId: reqId }
+    }, '*');
+  });
+}
+
+// Usage
+const data = await storageGet('tasks');
+if (data.ok) {
+  console.log(data.value); // [{title: 'Buy milk', done: false}]
+}
+
+await storageSet('tasks', [{title: 'Buy milk', done: true}]);
+```
+
 ## SDK Methods (wraps postMessage)
 
 ### Lifecycle
@@ -145,5 +257,7 @@ Types: `informational` (no action needed), `actionable` (requires deep_link.acti
 | `notifications.send` | Persistent notifications | No |
 | `notifications.schedule` | Schedule reminders | Yes |
 | `tasks.suggest` | Suggest tasks | Yes |
+| `storage.read` | Read stored data | No |
+| `storage.write` | Save and delete stored data | No |
 
 Sensitive permissions require admin review when the app is published to the public App Store.
