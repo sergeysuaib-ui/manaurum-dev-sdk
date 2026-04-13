@@ -124,8 +124,8 @@ Only request permissions your app actually needs:
 | `window.manage` | Change title, resize, close the window |
 | `toast.send` | Show toast notifications |
 | `notifications.send` | Send persistent notifications to Notification Center |
-| `notifications.schedule` | Schedule reminders (sensitive — requires review) |
-| `tasks.suggest` | Suggest tasks to Work Assistant (sensitive — requires review) |
+| `notifications.schedule` | Schedule reminders |
+| `tasks.suggest` | Suggest tasks to Work Assistant |
 | `storage.read` | Read stored data (server-side, per user) |
 | `storage.write` | Save and delete stored data (server-side, 5MB per app) |
 
@@ -134,11 +134,17 @@ Only request permissions your app actually needs:
 Your app will be validated before publishing:
 - `app_id`: lowercase a-z, 0-9, hyphens only, 3-50 chars
 - `version`: semver format (X.Y.Z)
-- `entrypoint`: HTTPS URL (or localhost for private testing)
+- `entrypoint`: HTTPS URL (or localhost for draft testing)
 - `window.default_size`: width 300-2000, height 200-1500
-- `description.short`: 1-160 characters
 - `permissions`: only from the allowed list above
 - `category`: one of productivity, utility, lifestyle, entertainment, dev_tools, other
+
+Optional (recommended but not required to publish):
+- `description.short`: 1-160 characters
+- App icon (PNG, 256x256)
+- Screenshots
+
+**No review or approval needed.** Publishing is direct and immediate.
 
 ## Debugging Failed Apps
 

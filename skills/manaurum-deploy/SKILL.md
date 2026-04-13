@@ -218,8 +218,43 @@ When a user reports their ManAurum app is broken:
 
 ## Publishing Flow
 
-After deploying, the app is automatically set to Private. To share or publish:
+After deploying, publish via the Versions tab or API:
 
-1. **Make Unlisted** (share link): Dev Console → Publish tab → "Make Unlisted"
-2. **Submit for Public** (App Store): Add screenshot → Submit for Review
-3. Or via API with token — future capability
+### Publish directly (no review needed)
+```bash
+# Publish the app (creates live version from latest draft)
+curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/publish" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN"
+```
+
+### Release an update
+```bash
+# Create a new version
+curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/versions" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"version": "1.1.0", "release_notes": "Bug fixes and improvements"}'
+
+# Publish and make it live (all installed copies auto-update)
+curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/publish" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN"
+```
+
+### Rollback to previous version
+```bash
+curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/versions/VERSION_ID/make-live" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN"
+```
+
+### Unpublish or delete
+```bash
+# Unpublish (remove from store, installs keep working)
+curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/unpublish" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN"
+
+# Delete (soft-delete, blocks new installs)
+curl -X DELETE "https://manaurum.com/api/developer/apps/$APP_SLUG" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN"
+```
+
+**Important:** There is no review or approval process. Publishing is direct and immediate. All installed copies auto-update to the latest live version.
