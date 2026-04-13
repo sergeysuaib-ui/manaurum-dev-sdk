@@ -146,6 +146,72 @@ Optional (recommended but not required to publish):
 
 **No review or approval needed.** Publishing is direct and immediate.
 
+## AI Assistant Integration (Optional)
+
+ManAurum OS has an OS-level AI Assistant that can route user input to apps. When a user types "Spent $15 at doctor" into the Assistant, the AI splits it into actions and sends them to the right apps (Finance, Parent Space, Work Assistant, etc.).
+
+**Third-party apps can participate.** Add an `agent` section to your manifest:
+
+```json
+{
+  "agent": {
+    "enabled": true,
+    "capabilities": [
+      {
+        "name": "create_todo",
+        "description": "Create a to-do item in the app",
+        "input_schema": {
+          "title": { "type": "string", "required": true, "description": "Task title" },
+          "due_date": { "type": "date", "required": false, "description": "Due date YYYY-MM-DD" },
+          "priority": { "type": "string", "required": false, "enum": ["low", "medium", "high"] }
+        },
+        "routing_hints": ["todo", "task", "remind", "need to", "buy"],
+        "trust_default": "suggest",
+        "example": { "title": "Buy groceries", "due_date": "2026-04-15" }
+      }
+    ],
+    "emitted_events": ["todo.created", "todo.completed"],
+    "subscribed_events": []
+  }
+}
+```
+
+**How it works:**
+1. User types natural language (or speaks via voice) into the Assistant (sparkle icon in dock)
+2. AI reads all registered app capabilities and decides where to route
+3. Your app's capability is matched based on `description` + `routing_hints`
+4. AI fills `input_schema` fields from the user's message
+5. User sees a proposal with confidence score and confirms
+6. OS sends `manaurum:agent-preview` to your iframe with `{ request_id, capability, fields }`
+7. Your app validates, executes, and responds with `manaurum:agent-result`
+
+**Handle agent messages in your app:**
+```javascript
+app.on('agent-preview', function(data) {
+  // data.request_id — unique ID for this request
+  // data.capability — "create_todo" (matches your manifest)
+  // data.fields — { title: "Buy groceries", due_date: "2026-04-15" }
+
+  var result = myApp.createTodo(data.fields);
+
+  app.send('agent-result', {
+    request_id: data.request_id,
+    success: true,
+    record_id: result.id
+  });
+});
+```
+
+**Key points:**
+- `description` is what the AI reads — be specific and clear
+- `routing_hints` are keywords that trigger matching — more is better
+- `trust_default: "suggest"` means user must confirm; `"auto_save"` allows auto-execution for high confidence
+- `input_schema` fields use the same types as manifest window/permissions
+- `emitted_events` / `subscribed_events` enable cross-app automations (e.g. "when todo.completed, notify via calendar")
+- Capabilities are registered in the OS when your app is installed — no extra setup needed
+
+**System apps already registered:** Work Assistant (tasks, reminders), Parent Space (health events, notes), Finance (transactions). Your app joins the same routing engine.
+
 ## Debugging Failed Apps
 
 If a user's app doesn't work, use these APIs to diagnose:

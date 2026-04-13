@@ -258,3 +258,9 @@ curl -X DELETE "https://manaurum.com/api/developer/apps/$APP_SLUG" \
 ```
 
 **Important:** There is no review or approval process. Publishing is direct and immediate. All installed copies auto-update to the latest live version.
+
+## AI Assistant Integration
+
+If your app has an `agent` section in the manifest, its capabilities are automatically registered with the OS-level AI Assistant when the app is installed. Users can then interact with your app via natural language or voice — the Assistant routes actions to your app based on declared capabilities.
+
+See `manaurum-app` skill for full agent integration docs (manifest format, postMessage protocol, examples).

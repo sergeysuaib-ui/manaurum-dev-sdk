@@ -144,3 +144,11 @@ Content-Type: application/json
   "developer_name": "Your Name"  // only needed first time
 }
 ```
+
+## AI Assistant Integration
+
+Apps with an `agent` section in their manifest automatically register capabilities with the OS-level AI Assistant. When a user types or speaks into the Assistant, your app can receive routed actions.
+
+This is opt-in: add `"agent": { "enabled": true, "capabilities": [...] }` to your manifest. See the main SKILL.md for full documentation and examples.
+
+After install, your capabilities appear in `GET /api/os-agent/capabilities` alongside system apps.
