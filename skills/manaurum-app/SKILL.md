@@ -286,6 +286,76 @@ const keys = await storage('manaurum:storage-list', {});
 
 Read `references/sdk-api.md` for full Storage API reference with limits and error handling.
 
+## Mobile Platform Support
+
+ManAurum OS runs on both desktop and mobile. Every app must explicitly declare platform support.
+
+### Declaring Platform Support
+
+Add a `platforms` section to the manifest:
+```json
+{
+  "platforms": {
+    "desktop": { "supported": true },
+    "mobile": {
+      "supported": true,
+      "optimized": false,
+      "supportLevel": "adaptive",
+      "navigationPattern": "stack"
+    }
+  }
+}
+```
+
+### Support Levels
+
+| Level | Behavior |
+|-------|----------|
+| `full` | Dedicated mobile UI — app renders without banners, mobile entrypoint used if set |
+| `adaptive` | Responsive design — renders without banners |
+| `fallback` | Desktop UI shown with "Designed for desktop" warning banner |
+| `none` | Launch blocked — "Desktop only" message shown |
+
+### Navigation Patterns
+
+Declare how the app navigates on mobile: `stack`, `tabs`, `list-detail`, `single-view`, or `composer-first`.
+
+### Mobile Entrypoint
+
+Set `platforms.mobile.entrypoint` to serve a completely different URL on mobile devices.
+
+### Runtime Detection
+
+The `manaurum:init` payload includes platform context:
+```javascript
+app.onReady(function(ctx) {
+  if (ctx.platform === 'mobile') {
+    // Mobile-specific layout
+    // ctx.safeAreaInsets = { top, bottom, left, right }
+    // ctx.navigationMode = "stack" (from your manifest)
+    // ctx.shell.hasTabBar = true
+    // ctx.shell.tabBarHeight = 72
+  }
+});
+```
+
+### App Store Badges
+
+- `mobile.optimized = true` → "Optimized for Mobile" (green badge)
+- `mobile.supported = true` → "Mobile" (blue badge)
+- `mobile.supported = false` → "Desktop Only" (gray badge)
+
+Apps with `mobile.supported = false` don't appear on mobile home screens.
+
+### Mobile Best Practices
+
+- Always declare `platforms` explicitly — the system never assumes
+- Use viewport-relative units for layouts
+- Test at 390x844px (common mobile viewport)
+- Read `shell.tabBarHeight` to avoid content behind the system tab bar
+- One primary job per screen on mobile
+- No floating windows or desktop sidebars on mobile
+
 ## What NOT to Do
 
 - Do NOT try to access the parent window or break out of the iframe

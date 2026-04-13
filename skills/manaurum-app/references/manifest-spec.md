@@ -26,6 +26,16 @@
     "title": "Weather Widget"
   },
   "permissions": ["theme.read", "window.manage"],
+  "platforms": {
+    "desktop": { "supported": true },
+    "mobile": {
+      "supported": true,
+      "optimized": false,
+      "entrypoint": "https://your-app.com/mobile/",
+      "supportLevel": "adaptive",
+      "navigationPattern": "stack"
+    }
+  },
   "compatibility": { "min_shell_version": "1.0.0" }
 }
 ```
@@ -47,6 +57,32 @@
 | `permissions` | Only from the allowed list (see SDK reference) |
 | `category` | One of: `productivity`, `utility`, `lifestyle`, `entertainment`, `dev_tools`, `other` |
 | `tags` | Max 10 tags |
+
+## Platform Support
+
+Declare platform support explicitly. The system uses these fields to control App Store badges, mobile home screen placement, and entrypoint switching.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `platforms.desktop.supported` | boolean | `true` | Desktop support |
+| `platforms.mobile.supported` | boolean | `false` | Mobile support |
+| `platforms.mobile.optimized` | boolean | `false` | Has mobile-optimized UI |
+| `platforms.mobile.entrypoint` | string (URL) | — | Separate HTTPS URL for mobile |
+| `platforms.mobile.supportLevel` | enum | `"none"` | `full` / `adaptive` / `fallback` / `none` |
+| `platforms.mobile.navigationPattern` | enum | — | `stack` / `tabs` / `list-detail` / `single-view` / `composer-first` |
+
+**Support levels:**
+- `full` — Dedicated mobile UI (no banners, mobile entrypoint used)
+- `adaptive` — Responsive design that works on mobile (no banners)
+- `fallback` — Desktop UI shown on mobile with "Designed for desktop" warning
+- `none` — Mobile launch blocked with "Desktop only" message
+
+**App Store badges:**
+- `mobile.optimized = true` → "Optimized for Mobile" (green)
+- `mobile.supported = true` → "Mobile" (blue)
+- `mobile.supported = false` → "Desktop Only" (gray)
+
+Apps with `mobile.supported = false` do not appear on mobile home screens.
 
 ## Required vs Optional
 

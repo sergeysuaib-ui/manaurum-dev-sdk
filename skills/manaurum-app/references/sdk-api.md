@@ -13,7 +13,15 @@ All communication uses postMessage. Message format: `{ type: "manaurum:<event>",
   "payload": {
     "theme": "smoothie",
     "device": "desktop",
+    "platform": "desktop",
     "screen": { "width": 1920, "height": 1080 },
+    "safeAreaInsets": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+    "navigationMode": "window",
+    "shell": {
+      "hasTabBar": false,
+      "hasBackButton": false,
+      "tabBarHeight": 0
+    },
     "user": { "nickname": "User Name" },
     "permissions": ["theme.read", "window.manage"],
     "windowId": "win_42"
@@ -21,6 +29,17 @@ All communication uses postMessage. Message format: `{ type: "manaurum:<event>",
 }
 ```
 Your app MUST respond with `manaurum:ready` within 10 seconds.
+
+**Platform fields:**
+| Field | Desktop | Mobile |
+|-------|---------|--------|
+| `platform` | `"desktop"` | `"mobile"` |
+| `device` | `"desktop"` | `"mobile"` (legacy, prefer `platform`) |
+| `safeAreaInsets` | All zeros | Device notch/home indicator insets |
+| `navigationMode` | `"window"` | App's declared `navigationPattern` |
+| `shell.hasTabBar` | `false` | `true` |
+| `shell.hasBackButton` | `false` | `true` |
+| `shell.tabBarHeight` | `0` | `72` |
 
 ### `manaurum:theme` (when user switches theme)
 ```json
