@@ -333,8 +333,8 @@ app.onReady(function(ctx) {
     // Mobile-specific layout
     // ctx.safeAreaInsets = { top, bottom, left, right }
     // ctx.navigationMode = "stack" (from your manifest)
-    // ctx.shell.hasTabBar = true
-    // ctx.shell.tabBarHeight = 72
+    // ctx.shell.hasTabBar = false (tab bar hidden when app is open)
+    // ctx.shell.tabBarHeight = 0
   }
 });
 ```

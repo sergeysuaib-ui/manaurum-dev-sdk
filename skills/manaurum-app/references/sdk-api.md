@@ -37,9 +37,9 @@ Your app MUST respond with `manaurum:ready` within 10 seconds.
 | `device` | `"desktop"` | `"mobile"` (legacy, prefer `platform`) |
 | `safeAreaInsets` | All zeros | Device notch/home indicator insets |
 | `navigationMode` | `"window"` | App's declared `navigationPattern` |
-| `shell.hasTabBar` | `false` | `true` |
+| `shell.hasTabBar` | `false` | `false` (tab bar hidden when app is open) |
 | `shell.hasBackButton` | `false` | `true` |
-| `shell.tabBarHeight` | `0` | `72` |
+| `shell.tabBarHeight` | `0` | `0` (tab bar hidden when app is open) |
 
 ### `manaurum:theme` (when user switches theme)
 ```json
