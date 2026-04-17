@@ -14,7 +14,7 @@ This is the fastest path. The user generates an API token once, then deploys fro
 ### Step 1: Get an API token
 
 The user needs a ManAurum developer API token. They can generate one from:
-- ManAurum OS → Developer Console → Tokens section
+- ManAurum OS → Dev Hub → Tokens section
 - Or via the API if they have a session:
 
 ```bash
@@ -87,7 +87,7 @@ curl -s "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/status" \
   -H "Authorization: Bearer $MANAURUM_TOKEN" | python3 -m json.tool
 ```
 
-The app is now live at: `https://manaurum.com/hosted/YOUR_SLUG/index.html`
+The app is now live at: `https://manaurum.com/api/hosted/YOUR_SLUG/index.html`
 
 ## Path 2: Deploy via external hosting
 
@@ -95,8 +95,8 @@ If the user prefers to host externally:
 
 1. Deploy to Vercel/Netlify/GitHub Pages/Cloudflare Pages
 2. Get the HTTPS URL
-3. Set it as the entrypoint in Developer Console → Manifest tab
-4. Preview in SeregaOS
+3. Set it as the entrypoint in Dev Hub → Manifest tab
+4. Preview in ManAurum OS
 
 ## Deploy Script Helper
 
@@ -141,7 +141,7 @@ else
 fi
 
 echo ""
-echo "Live at: https://manaurum.com/hosted/$APP_SLUG/index.html"
+echo "Live at: https://manaurum.com/api/hosted/$APP_SLUG/index.html"
 ```
 
 When creating an app, always generate this deploy script with the correct slug filled in.
@@ -151,7 +151,7 @@ When creating an app, always generate this deploy script with the correct slug f
 | Problem | Solution |
 |---------|---------|
 | "Invalid token format" | Token must start with `mdev_`. Check you copied the full token. |
-| "Invalid or revoked token" | Generate a new token from Developer Console. |
+| "Invalid or revoked token" | Generate a new token from Dev Hub. |
 | "App not found" | Check the app slug. The token must belong to the app's developer. |
 | "ZIP too large" | Max 10MB. Remove node_modules, .git, large assets. |
 | "Invalid file: xxx" | Only web files allowed (html, js, css, images, fonts, wasm). |
@@ -165,7 +165,7 @@ After deploying, ALWAYS verify the entrypoint is working:
 curl -s "https://manaurum.com/api/developer/apps/$APP_SLUG/probe-entrypoint" \
   -H "Authorization: Bearer $MANAURUM_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://manaurum.com/hosted/'$APP_SLUG'/index.html"}' | python3 -m json.tool
+  -d '{"url": "https://manaurum.com/api/hosted/'$APP_SLUG'/index.html"}' | python3 -m json.tool
 ```
 
 **Expected good response:**
@@ -257,7 +257,25 @@ curl -X DELETE "https://manaurum.com/api/developer/apps/$APP_SLUG" \
   -H "Authorization: Bearer $MANAURUM_TOKEN"
 ```
 
-**Important:** There is no review or approval process. Publishing is direct and immediate. All installed copies auto-update to the latest live version.
+### Change visibility
+
+Apps start as Private (only visible to creator). You can promote:
+
+```bash
+# Make app shareable via link (no review needed)
+curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/set-visibility" \
+  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility": "unlisted"}'
+```
+
+| Visibility | Who sees it | Review needed |
+|------------|------------|---------------|
+| `private` | Only you | No |
+| `unlisted` | Anyone with the share link | No |
+| `public` | Everyone (App Store) | Yes (admin review required) |
+
+**Publishing is direct and immediate for private/unlisted.** Public requires admin review. All installed copies auto-update to the latest live version.
 
 ## AI Assistant Integration
 

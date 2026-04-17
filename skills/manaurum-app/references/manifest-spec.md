@@ -93,7 +93,7 @@ Apps with `mobile.supported = false` do not appear on mobile home screens.
 - All above + description.short + icon
 
 **Additionally required for Public App Store:**
-- At least 1 screenshot uploaded via Developer Console
+- At least 1 screenshot uploaded via Dev Hub
 
 ## Window Size Presets
 

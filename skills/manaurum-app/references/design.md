@@ -437,4 +437,4 @@ Filled: `style="font-variation-settings: 'FILL' 1"`
 
 - 256x256 PNG
 - Recognizable at 52x52px
-- Uploaded via Developer Console
+- Uploaded via Dev Hub

@@ -49,7 +49,7 @@ For local testing, `http://localhost` works for draft apps.
 
 ### 3. Connect your entrypoint
 1. In the **Build** tab, paste your hosted URL into the entrypoint field
-2. Click **"Preview in SeregaOS"**
+2. Click **"Preview in ManAurum OS"**
 3. Your app opens in a real OS window
 
 ### 4. Auto-publish on first preview

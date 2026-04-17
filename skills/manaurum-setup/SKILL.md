@@ -108,7 +108,7 @@ Same pattern: load SDK, init, handle onReady/onThemeChange.
 
 To enable direct deploy from CLI without opening a browser:
 
-1. Go to [manaurum.com](https://manaurum.com) → Developer Console → generate an API token
+1. Go to [manaurum.com](https://manaurum.com) → Dev Hub → generate an API token
 2. Create `.env.manaurum` in your project root:
 ```
 MANAURUM_TOKEN=mdev_your_token_here

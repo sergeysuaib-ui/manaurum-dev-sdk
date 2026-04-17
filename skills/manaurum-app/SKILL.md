@@ -106,12 +106,21 @@ Tell the user:
 
 ### Step 5: Deploy
 
-Read `references/publishing.md` for the full publishing flow. Quick summary:
-1. Host the app at an HTTPS URL (Vercel, Netlify, Cloudflare Pages, etc.)
-2. Go to ManAurum OS → Developer Console → Create App
-3. Set the entrypoint URL to your hosted app
-4. Click "Preview in SeregaOS" to test inside the real OS
-5. The app auto-publishes as Private — visible only to you
+Read `references/publishing.md` for the full publishing flow. Two hosting options:
+
+**Option A: Internal hosting (recommended for simple apps)**
+1. Go to ManAurum OS → Dev Hub → Create App
+2. Build tab → Paste your HTML code
+3. App is hosted at `https://manaurum.com/api/hosted/{slug}/index.html`
+4. Click "Publish" — app auto-installs on your desktop
+
+**Option B: External hosting**
+1. Deploy to Vercel/Netlify/GitHub Pages/Cloudflare Pages
+2. Go to ManAurum OS → Dev Hub → Create App
+3. Set the HTTPS entrypoint URL
+4. Click "Publish" — app auto-installs on your desktop
+
+All apps start as Private (visible only to you). Can be promoted to Unlisted (share link) or Public (App Store, requires admin review).
 
 ## Permissions
 
@@ -221,7 +230,7 @@ If a user's app doesn't work, use these APIs to diagnose:
 curl -s "https://manaurum.com/api/developer/apps/{slug}/probe-entrypoint" \
   -H "Authorization: Bearer $MANAURUM_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://manaurum.com/hosted/{slug}/index.html"}'
+  -d '{"url": "https://manaurum.com/api/hosted/{slug}/index.html"}'
 ```
 Returns: `reachable`, `status_code`, `content_type`, `iframe_blocked`, `response_time_ms`
 
