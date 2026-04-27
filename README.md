@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code Plugin
 
-**Current version: 1.5.0** (tenant-aware Deploy API — BREAKING change from 1.4.x; see CHANGELOG)
+**Current version: 1.6.0** (runtime Database API documented; tenant-aware Deploy API since 1.5.0 — see CHANGELOG)
 
 Build, test, and deploy apps for [ManAurum OS](https://manaurum.com) using Claude Code.
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.6.0 (2026-04-27) — runtime Database API
+
+### Added
+
+- **`manaurum.db.*` runtime API documented end-to-end.** New "Database API" section in `references/sdk-api.md` covers `create`, `get`, `list` (with pagination + indexed sort), `update` (full replace), and `delete` (soft). Includes wire format (postMessage type → HTTP route), error table mapping `422 EntityTypeNotDeclared`, `404 record_not_found`, `422 FieldNotIndexedError`, etc.
+- **Manifest ↔ runtime bridge documented** in `references/manifest-spec.md`. Explains that declaring `entities[]` at deploy time is what enables `manaurum.db.*` calls at runtime, with a worked example showing why undeclared types and unindexed sort fields fail.
+- **`SKILL.md` quick-overview updated** to make `db.*` the first-class persistence path; `storage.*` / `files.*` / `collections.*` demoted to a single "legacy runtime APIs" line.
+
+### Changed
+
+- The "Quick overview (v1.5 SDK)" bullet pair in `manaurum-app/SKILL.md` now leads with the manifest-gated `db.*` API.
+
+### Note
+
+This release is purely documentation — the underlying runtime has been live since W4.3 (`backend/app/routes/app_data.py` + the `manaurum.db.*` block in `frontend/public/sdk/manaurum.js`). No backend or SDK shipping change.
+
 ## 1.5.0 (2026-04-27) — BREAKING: tenant-aware Deploy API
 
 ### Changed (BREAKING)

@@ -154,3 +154,32 @@ These were in v0 / legacy docs but are NOT part of v1:
 - `description.short` / `description.long` — moved to `metadata` only as free fields, no validation.
 - `compatibility.min_shell_version` — not validated in v1.
 - Permissions like `theme.read`, `storage.read`, `storage.write`, `files.read`, `files.write`, `toast.send`, `notifications.send`, `window.manage`, `tasks.suggest` — runtime SDK methods may still work but are NOT covered by v1 manifest validation. Use `db.*` for data; treat the rest as evolving.
+
+## Connecting `entities[]` to `manaurum.db.*`
+
+Declaring an entity in the manifest is the ONLY way to enable runtime CRUD against it. The deploy pipeline registers each declared entity in `application_data_models`, which the runtime checks on every `manaurum.db.create` / `update` call.
+
+```json
+{
+  "entities": [
+    {
+      "type": "note",
+      "fields": {
+        "title":   { "type": "string",    "required": true },
+        "body":    { "type": "string" },
+        "created": { "type": "timestamp", "indexed": true }
+      }
+    }
+  ]
+}
+```
+
+At runtime:
+- `app.db.create('note', { title: '…', body: '…', created: '…' })` — works.
+- `app.db.create('todo', …)` — `422 EntityTypeNotDeclared` (no `todo` entity in manifest).
+- `app.db.list('note', { sort_by: 'created' })` — works (`created` is `indexed: true`).
+- `app.db.list('note', { sort_by: 'body' })` — `422 FieldNotIndexedError`.
+
+See `sdk-api.md` → "Database API" for the full runtime contract.
+
+> **Index trade-off.** Each `indexed: true` field writes a row into `app_record_indexes` on every `create` / `update` (the create response returns `index_rows_written`). Index only fields you actually sort or filter on.
