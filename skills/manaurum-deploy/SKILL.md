@@ -1,284 +1,260 @@
 ---
 name: manaurum-deploy
-description: Deploy and publish a ManAurum OS app. Use when the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers API token setup, direct deploy from CLI via curl, hosting on ManAurum, external hosting, and publishing flow. Also use when user says "deploy to ManAurum", "upload my app", "publish my app", or "host on ManAurum".
+description: Deploy a ManAurum OS app to a tenant via the Deploy API (manifest+bundle). Use when the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers tenant API-token issuance, manifest+bundle.zip preparation, the POST /api/dev/apps/deploy contract, rejection codes, and post-deploy install/open flow.
 ---
 
-# Deploy ManAurum OS App
+# Deploy ManAurum OS App (v1.5+ tenant-aware)
 
-Help the user deploy their ManAurum OS app. There are two deployment paths:
+Help the user deploy their ManAurum OS app to a specific **tenant** via the Deploy API.
 
-## Path 1: Deploy directly from CLI (recommended)
+In v1.5 there is one canonical deploy path: a tenant-scoped `mnu_*` token authorises a `POST /api/dev/apps/deploy` request carrying a manifest object and a base64-encoded bundle. The same payload format is used for first deploy and every subsequent version.
 
-This is the fastest path. The user generates an API token once, then deploys from their terminal without opening a browser.
+> **One token = one tenant.** A `mnu_*` token is bound to the tenant of the user who issued it. To deploy the same app to another tenant, get a separate token from THAT tenant's Developer Console.
 
-### Step 1: Get an API token
-
-The user needs a ManAurum developer API token. They can generate one from:
-- ManAurum OS → Dev Hub → Tokens section
-- Or via the API if they have a session:
+## Quickstart (assuming you already have `MANAURUM_TENANT_TOKEN`)
 
 ```bash
-curl -X POST https://manaurum.com/api/developer/tokens \
-  -H "Authorization: Bearer SESSION_JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "CLI deploy"}'
+cd my-app
+zip -r bundle.zip .
+
+B64=$(base64 -w0 bundle.zip)
+jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
+  | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
+      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @- | jq .
 ```
 
-Response includes a token like `mdev_xxxxxxxxxxxxx`. Save it — it's shown only once.
-
-### Step 2: Store the token locally
-
-Save the token so it's available for deploy commands:
-
-```bash
-# Create a config file
-echo "MANAURUM_TOKEN=mdev_your_token_here" > .env.manaurum
-
-# Or export in shell
-export MANAURUM_TOKEN=mdev_your_token_here
-```
-
-**Important:** Add `.env.manaurum` to `.gitignore` so the token is never committed.
-
-### Step 3: Deploy single HTML file
-
-For simple apps (one HTML file):
-
-```bash
-curl -X POST "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/paste" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"html\": $(cat index.html | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}"
-```
-
-Or the simpler version if the file is small:
-
-```bash
-# Read file and deploy
-HTML_CONTENT=$(cat index.html)
-curl -X POST "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/paste" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @- <<EOF
-{"html": $(python3 -c "import json; print(json.dumps(open('index.html').read()))")}
-EOF
-```
-
-### Step 4: Deploy multi-file app (ZIP)
-
-For apps with multiple files (HTML + JS + CSS + images):
-
-```bash
-# Create ZIP
-zip -r app.zip index.html style.css app.js assets/
-
-# Upload
-curl -X POST "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/upload" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
-  -F "file=@app.zip"
-```
-
-The ZIP must contain `index.html` at the root level.
-
-### Step 5: Verify deployment
-
-```bash
-curl -s "https://manaurum.com/api/developer/apps/YOUR_SLUG/hosting/status" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" | python3 -m json.tool
-```
-
-The app is now live at: `https://manaurum.com/api/hosted/YOUR_SLUG/index.html`
-
-## Path 2: Deploy via external hosting
-
-If the user prefers to host externally:
-
-1. Deploy to Vercel/Netlify/GitHub Pages/Cloudflare Pages
-2. Get the HTTPS URL
-3. Set it as the entrypoint in Dev Hub → Manifest tab
-4. Preview in ManAurum OS
-
-## Deploy Script Helper
-
-When generating an app, also create a `deploy.sh` script:
-
-```bash
-#!/bin/bash
-# Deploy to ManAurum OS
-# Usage: ./deploy.sh
-
-set -e
-
-# Load token from .env.manaurum
-if [ -f .env.manaurum ]; then
-  export $(cat .env.manaurum | xargs)
-fi
-
-if [ -z "$MANAURUM_TOKEN" ]; then
-  echo "Error: MANAURUM_TOKEN not set"
-  echo "Create .env.manaurum with: MANAURUM_TOKEN=mdev_your_token"
-  exit 1
-fi
-
-APP_SLUG="YOUR_SLUG"
-API="https://manaurum.com/api/developer/apps/$APP_SLUG/hosting"
-
-# Check if we have multiple files or just index.html
-if [ -f "style.css" ] || [ -f "app.js" ] || [ -d "assets" ]; then
-  echo "Packaging multi-file app..."
-  zip -r /tmp/manaurum-deploy.zip . -x ".*" "deploy.sh" "node_modules/*" ".env*"
-  echo "Uploading ZIP..."
-  curl -s -X POST "$API/upload" \
-    -H "Authorization: Bearer $MANAURUM_TOKEN" \
-    -F "file=@/tmp/manaurum-deploy.zip" | python3 -m json.tool
-  rm /tmp/manaurum-deploy.zip
-else
-  echo "Deploying single file..."
-  curl -s -X POST "$API/paste" \
-    -H "Authorization: Bearer $MANAURUM_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"html\": $(python3 -c "import json; print(json.dumps(open('index.html').read()))")}" | python3 -m json.tool
-fi
-
-echo ""
-echo "Live at: https://manaurum.com/api/hosted/$APP_SLUG/index.html"
-```
-
-When creating an app, always generate this deploy script with the correct slug filled in.
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|---------|
-| "Invalid token format" | Token must start with `mdev_`. Check you copied the full token. |
-| "Invalid or revoked token" | Generate a new token from Dev Hub. |
-| "App not found" | Check the app slug. The token must belong to the app's developer. |
-| "ZIP too large" | Max 10MB. Remove node_modules, .git, large assets. |
-| "Invalid file: xxx" | Only web files allowed (html, js, css, images, fonts, wasm). |
-| "ZIP must contain index.html" | Ensure index.html is at the root of the ZIP, not in a subdirectory. |
-
-## Post-Deploy: Verify with Probe
-
-After deploying, ALWAYS verify the entrypoint is working:
-
-```bash
-curl -s "https://manaurum.com/api/developer/apps/$APP_SLUG/probe-entrypoint" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://manaurum.com/api/hosted/'$APP_SLUG'/index.html"}' | python3 -m json.tool
-```
-
-**Expected good response:**
+Success response:
 ```json
 {
-  "reachable": true,
-  "status_code": 200,
-  "content_type": "text/html; charset=utf-8",
-  "response_time_ms": 45,
-  "iframe_blocked": false,
-  "error": null
+  "application_id": "...",
+  "version_id": "...",
+  "version_number": "1.0.0",
+  "deployed_at": "2026-04-27T19:00:00Z",
+  "url": "/t/<your-tenant-slug>/apps/<your-app-slug>"
 }
 ```
 
-**If probe fails**, check:
-- `reachable: false` → file not found or server error
-- `status_code: 404` → index.html missing from ZIP root
-- `iframe_blocked: true` → server sets X-Frame-Options: DENY
-- `content_type` not text/html → wrong file being served
+The app is now in your tenant's catalog. To make it visible to users, a workspace owner must install it (see "After Deploy — Install in Workspace" below).
 
-## Post-Deploy: Check Diagnostics
+---
 
-If the app fails during preview, diagnostic logs are saved automatically. Retrieve them:
+## Step 1 — Issue a tenant token
+
+The user needs a `mnu_*` token. Two ways:
+
+### A) Self-serve via API (recommended)
+
+The user is signed in to the platform (has a SESSION_JWT). They mint a token bound to their active tenant:
 
 ```bash
-curl -s "https://manaurum.com/api/developer/apps/$APP_SLUG/diagnostics" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" | python3 -m json.tool
-```
-
-Each log contains:
-- `status`: ready / timeout / error
-- `events`: full postMessage timeline with timestamps
-- `probe_result`: server-side HTTP check at time of failure
-- `created_at`: when it happened
-
-Use this to diagnose why an app fails:
-- If status is `timeout` and events show `manaurum:init → app` but no `manaurum:ready ← app`, the app is not calling `ManaurumSDK.init()`
-- If status is `error` and no events, the entrypoint URL is unreachable
-- If events show permission blocks, the manifest is missing required permissions
-
-### AI Agent Diagnostic Workflow
-
-When a user reports their ManAurum app is broken:
-
-1. Get the app slug
-2. Run probe: `POST /api/developer/apps/{slug}/probe-entrypoint`
-3. Get diagnostics: `GET /api/developer/apps/{slug}/diagnostics`
-4. Analyze the events timeline and probe result
-5. Suggest specific fixes
-
-## Publishing Flow
-
-After deploying, publish via the Versions tab or API:
-
-### Publish directly (no review needed)
-```bash
-# Publish the app (creates live version from latest draft)
-curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/publish" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN"
-```
-
-### Release an update
-```bash
-# Create a new version
-curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/versions" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+curl -sS -X POST https://manaurum.com/api/developer/tenant-tokens \
+  -H "Authorization: Bearer $SESSION_JWT" \
   -H "Content-Type: application/json" \
-  -d '{"version": "1.1.0", "release_notes": "Bug fixes and improvements"}'
-
-# Publish and make it live (all installed copies auto-update)
-curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/publish" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN"
+  -d '{"name": "ci-deploy"}'
 ```
 
-### Rollback to previous version
-```bash
-curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/versions/VERSION_ID/make-live" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN"
-```
-
-### Unpublish or delete
-```bash
-# Unpublish (remove from store, installs keep working)
-curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/unpublish" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN"
-
-# Delete (soft-delete, blocks new installs)
-curl -X DELETE "https://manaurum.com/api/developer/apps/$APP_SLUG" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN"
-```
-
-### Change visibility
-
-Apps start as Private (only visible to creator). You can promote:
+Default scopes are `["app.deploy", "app.read"]`. To customise:
 
 ```bash
-# Make app shareable via link (no review needed)
-curl -X POST "https://manaurum.com/api/developer/apps/$APP_SLUG/set-visibility" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
+curl -sS -X POST https://manaurum.com/api/developer/tenant-tokens \
+  -H "Authorization: Bearer $SESSION_JWT" \
   -H "Content-Type: application/json" \
-  -d '{"visibility": "unlisted"}'
+  -d '{"name": "deploy-only", "scopes": ["app.deploy"]}'
 ```
 
-| Visibility | Who sees it | Review needed |
-|------------|------------|---------------|
-| `private` | Only you | No |
-| `unlisted` | Anyone with the share link | No |
-| `public` | Everyone (App Store) | Yes (admin review required) |
+Response is shown ONCE:
+```json
+{
+  "token_id": "...",
+  "name": "ci-deploy",
+  "prefix": "mnu_",
+  "raw_token": "mnu_prod_<32-chars>",
+  "scopes": ["app.deploy", "app.read"],
+  "expires_at": null,
+  "created_at": "..."
+}
+```
 
-**Publishing is direct and immediate for private/unlisted.** Public requires admin review. All installed copies auto-update to the latest live version.
+Save the `raw_token` immediately. Cap is 5 active tokens per user per tenant; revoke an old one first if you hit `409 max_active_tokens_reached`.
 
-## AI Assistant Integration
+### B) Through the Developer Console UI
 
-If your app has an `agent` section in the manifest, its capabilities are automatically registered with the OS-level AI Assistant when the app is installed. Users can then interact with your app via natural language or voice — the Assistant routes actions to your app based on declared capabilities.
+Sign in → Developer Console → Tokens → "Issue new token". The UI calls the same endpoint and shows `raw_token` once.
 
-See `manaurum-app` skill for full agent integration docs (manifest format, postMessage protocol, examples).
+### Token housekeeping
+
+```bash
+# List active tokens (no raw_token returned)
+curl -sS https://manaurum.com/api/developer/tenant-tokens \
+  -H "Authorization: Bearer $SESSION_JWT"
+
+# Revoke a token
+curl -sS -X DELETE "https://manaurum.com/api/developer/tenant-tokens/<token_id>" \
+  -H "Authorization: Bearer $SESSION_JWT"
+```
+
+## Step 2 — Store the token locally
+
+```bash
+# .env.manaurum (already gitignored if you used /manaurum-setup)
+MANAURUM_TENANT_TOKEN=mnu_prod_<32-chars>
+
+# or in shell
+export MANAURUM_TENANT_TOKEN=mnu_prod_<32-chars>
+```
+
+## Step 3 — Prepare the bundle
+
+Bundle is a single zip file with `index.html` at the root.
+
+```
+my-app/
+├── manifest.json
+├── index.html        ← MUST be at the root of the zip
+├── style.css         ← optional
+├── app.js            ← optional
+└── assets/           ← optional
+```
+
+```bash
+cd my-app
+zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
+```
+
+Hard limits:
+- **Max bundle size:** 50 MB
+- **File extensions whitelist:** `.html .htm .js .mjs .jsx .ts .tsx .css .svg .png .jpg .jpeg .gif .webp .ico .avif .woff .woff2 .ttf .otf .eot .txt .md .map .webmanifest`
+- **Anti-Lovable scanner** rejects bundles containing credentials (`sk_live_`, `AKIA`, `ghp_`, etc.), undeclared 3rd-party SDKs (Supabase, Firebase, Auth0, Clerk, Stripe...), or disallowed URLs.
+
+To use a 3rd-party SDK legitimately, declare it in `manifest.integrations[]` (see manifest-spec.md).
+
+## Step 4 — Deploy
+
+```bash
+B64=$(base64 -w0 bundle.zip)
+jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
+  | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
+      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @- | jq .
+```
+
+Note the response `url` — that's where users in your tenant will open the app once installed.
+
+## Step 5 — Bump and redeploy
+
+To ship a new version, bump `manifest.json` `version` (semver) and rerun the same `POST /api/dev/apps/deploy`. The platform creates a new `application_versions` row and atomically updates `current_version_id` to the new one. Existing users get the new version on next iframe load.
+
+```bash
+# bump version
+jq '.version = "1.0.1"' manifest.json > /tmp/m && mv /tmp/m manifest.json
+
+# rebuild + redeploy
+zip -r bundle.zip . -x "*.DS_Store" ".git/*" ".env*"
+# ... same curl as Step 4
+```
+
+## After Deploy — Install in workspace
+
+Deploy puts the app in your tenant's **catalog**. It is NOT yet visible to end users. A workspace owner inside the same tenant must install it via AppStore:
+
+1. Sign in as a workspace owner of any workspace in your tenant.
+2. Open AppStore.
+3. Find your app, click "Install".
+4. The install creates a `workspace_app_installs` row that grants the app to that workspace's members.
+
+Members can now open `/t/<tenant_slug>/apps/<app_slug>`.
+
+## Rejection Codes
+
+| HTTP | `rejection` | Meaning | Fix |
+|---|---|---|---|
+| 401 | `rejected_missing_bearer` | No `Authorization` header | Add `-H "Authorization: Bearer $MANAURUM_TENANT_TOKEN"` |
+| 401 | `rejected_token_invalid` | Bad / expired / revoked token | Issue a fresh token |
+| 403 | `rejected_insufficient_scope` | Token lacks `app.deploy` | Issue with scopes including `app.deploy` |
+| 400 | `rejected_manifest_invalid` | Manifest fails v1 schema | Read `findings`; fix and retry |
+| 400 | `rejected_bundle_not_base64` | `bundle` field is not valid base64 | Use `base64 -w0` (no line wrapping) |
+| 400 | `rejected_version_conflict` | A version with this `version` already exists | Bump semver |
+| 413 | `rejected_bundle_too_large` | > 50 MB | Trim assets |
+| 422 | `rejected_bundle_extension_blocked` | File with disallowed extension in bundle | Remove or convert |
+| 422 | `rejected_bundle_credential_detected` | Scanner found a credential pattern | Remove the credential |
+| 422 | `rejected_bundle_sdk_undeclared` | Undeclared 3rd-party SDK import | Declare in `manifest.integrations[]` |
+| 422 | `rejected_bundle_url_disallowed` | URL outside platform CDN whitelist | Use `jsdelivr`/`unpkg`/`cdnjs` or declare integration |
+
+The response body always carries:
+```json
+{
+  "rejection": "<code>",
+  "message": "<human description>",
+  "findings": [...optional details...]
+}
+```
+
+## Verify the live app
+
+After deploy + install, sanity-check the app loads in the shell:
+
+```bash
+# Replace <session_jwt> with a logged-in user's token
+curl -sS -I https://manaurum.com/t/<tenant_slug>/apps/<app_slug> \
+  -H "Authorization: Bearer <session_jwt>"
+```
+
+Expected:
+- `200 OK` if user is in the right tenant + workspace install exists
+- `401` / `403` if user not authenticated
+- `404` if user is in a different tenant, or the workspace doesn't have the app installed (uniform 404 — no info leak)
+
+Open the URL in a browser to load the iframe and verify `manaurum:init` arrives in your app (use devtools → Console).
+
+## Multi-tenant deploys
+
+If the same app must be available in multiple tenants, **deploy it independently to each tenant** with a token from THAT tenant. The platform does not support cross-tenant publishing — each tenant has its own catalog.
+
+```bash
+# tenant 1
+export MANAURUM_TENANT_TOKEN=mnu_prod_<acme-token>
+# ...deploy
+
+# tenant 2
+export MANAURUM_TENANT_TOKEN=mnu_prod_<beta-token>
+# ...deploy (same bundle, different tenant)
+```
+
+## Deploy script helper
+
+When generating an app, also create a `deploy.sh`:
+
+```bash
+#!/bin/bash
+# Deploy to ManAurum OS — tenant-scoped manifest+bundle Deploy API
+set -e
+
+if [ -f .env.manaurum ]; then
+  set -a; source .env.manaurum; set +a
+fi
+
+if [ -z "$MANAURUM_TENANT_TOKEN" ]; then
+  echo "Error: MANAURUM_TENANT_TOKEN not set."
+  echo "Issue one at https://manaurum.com (Developer Console → Tokens)."
+  echo "Save as MANAURUM_TENANT_TOKEN=mnu_prod_<32> in .env.manaurum"
+  exit 1
+fi
+
+echo "Bundling..."
+zip -r /tmp/bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*" "deploy.sh" >/dev/null
+
+echo "Deploying..."
+B64=$(base64 -w0 /tmp/bundle.zip)
+jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
+  | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
+      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @- | jq .
+
+rm -f /tmp/bundle.zip
+```
+
+When creating an app, generate this script with the right name set in `manifest.json`.

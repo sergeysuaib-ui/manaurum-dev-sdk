@@ -1,107 +1,156 @@
-# ManAurum App Manifest Specification
+# ManAurum App Manifest v1 (frozen)
 
-## Full Manifest Structure
+This is the exact contract validated by `POST /api/dev/apps/deploy`. It mirrors `https://manaurum.com/standards/manifest_v1.schema.json`. Anything not in this document will be rejected by the deploy validator.
+
+## Minimal manifest
 
 ```json
 {
-  "manifest_version": 1,
-  "app_id": "my-weather-app",
-  "name": "Weather Widget",
+  "manifest_version": "1",
+  "manaurum_sdk_version": "1",
+  "slug": "my-app",
+  "name": "My App",
   "version": "1.0.0",
-  "description": {
-    "short": "Real-time weather for your desktop (max 160 chars)",
-    "long": "Optional longer description"
-  },
-  "icon": "https://your-cdn.com/icon.png",
-  "category": "utility",
-  "tags": ["weather", "widget"],
-  "runtime": {
-    "type": "iframe",
-    "entrypoint": "https://your-app.com/",
-    "sandbox": ["allow-scripts", "allow-forms", "allow-same-origin"]
-  },
-  "window": {
-    "default_size": { "width": 800, "height": 600 },
-    "min_size": { "width": 400, "height": 300 },
-    "title": "Weather Widget"
-  },
-  "permissions": ["theme.read", "window.manage"],
-  "platforms": {
-    "desktop": { "supported": true },
-    "mobile": {
-      "supported": true,
-      "optimized": false,
-      "entrypoint": "https://your-app.com/mobile/",
-      "supportLevel": "adaptive",
-      "navigationPattern": "stack"
-    }
-  },
-  "compatibility": { "min_shell_version": "1.0.0" }
+  "entry_point": "index.html"
 }
 ```
 
-## Validation Rules
+## Full manifest
+
+```json
+{
+  "manifest_version": "1",
+  "manaurum_sdk_version": "1",
+  "slug": "my-notes",
+  "name": "Notes",
+  "version": "1.2.3",
+  "icon": "icons/app.svg",
+  "entry_point": "index.html",
+
+  "window": {
+    "default_width": 800,
+    "default_height": 600
+  },
+
+  "permissions": [
+    "auth.read_user",
+    "db.read_own_entities",
+    "db.write_own_entities"
+  ],
+
+  "entities": [
+    {
+      "type": "note",
+      "storage": "shared",
+      "fields": {
+        "title":   { "type": "string",    "required": true },
+        "body":    { "type": "string" },
+        "tags":    { "type": "json" },
+        "created": { "type": "timestamp", "indexed": true }
+      }
+    }
+  ],
+
+  "integrations": [
+    { "name": "stripe", "kind": "external_service", "url": "https://js.stripe.com/v3/" }
+  ],
+
+  "metadata": {
+    "category": "productivity",
+    "tags": ["notes", "journal"]
+  }
+}
+```
+
+## Field reference
+
+### Required
 
 | Field | Rule |
-|-------|------|
-| `manifest_version` | Must be `1` |
-| `app_id` | Lowercase a-z, 0-9, hyphens. 3-50 chars. Globally unique. Regex: `^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$` |
-| `name` | 1-100 characters |
-| `version` | Semver: X.Y.Z (e.g. `1.0.0`, `2.3.1`) |
-| `description.short` | 1-160 characters (required for public apps) |
-| `entrypoint` | HTTPS URL that returns HTTP 200. `http://localhost` accepted for private testing only. |
-| `window.default_size.width` | 300-2000 pixels |
-| `window.default_size.height` | 200-1500 pixels |
-| `window.min_size.width` | 200 to default_width |
-| `window.min_size.height` | 150 to default_height |
-| `permissions` | Only from the allowed list (see SDK reference) |
-| `category` | One of: `productivity`, `utility`, `lifestyle`, `entertainment`, `dev_tools`, `other` |
-| `tags` | Max 10 tags |
+|---|---|
+| `manifest_version` | The literal string `"1"`. (Numeric `1` will be rejected.) |
+| `manaurum_sdk_version` | The literal string `"1"`. |
+| `slug` | URL-safe id, regex `^[a-z][a-z0-9-]{2,49}$`. 3–50 chars. Must start with a letter. |
+| `name` | Human-readable, max 100 chars. |
+| `version` | Semver `MAJOR.MINOR.PATCH`. No pre-release / build metadata in v1. |
+| `entry_point` | Path to the entry HTML inside the bundle (e.g. `"index.html"`). NOT a URL. |
 
-## Platform Support
+### Optional
 
-Declare platform support explicitly. The system uses these fields to control App Store badges, mobile home screen placement, and entrypoint switching.
+| Field | Notes |
+|---|---|
+| `icon` | Either an emoji or a path inside the bundle (e.g. `"icons/app.svg"`). |
+| `window.default_width` | Integer, 320–4000. |
+| `window.default_height` | Integer, 240–4000. |
+| `permissions` | Array of strings, unique. Only values from the v1 enum (below). |
+| `entities` | Declared data shapes (below). |
+| `integrations` | External dependencies (below). |
+| `metadata.category` | Free string. |
+| `metadata.tags` | Array of strings. |
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `platforms.desktop.supported` | boolean | `true` | Desktop support |
-| `platforms.mobile.supported` | boolean | `false` | Mobile support |
-| `platforms.mobile.optimized` | boolean | `false` | Has mobile-optimized UI |
-| `platforms.mobile.entrypoint` | string (URL) | — | Separate HTTPS URL for mobile |
-| `platforms.mobile.supportLevel` | enum | `"none"` | `full` / `adaptive` / `fallback` / `none` |
-| `platforms.mobile.navigationPattern` | enum | — | `stack` / `tabs` / `list-detail` / `single-view` / `composer-first` |
+## Permissions enum (v1)
 
-**Support levels:**
-- `full` — Dedicated mobile UI (no banners, mobile entrypoint used)
-- `adaptive` — Responsive design that works on mobile (no banners)
-- `fallback` — Desktop UI shown on mobile with "Designed for desktop" warning
-- `none` — Mobile launch blocked with "Desktop only" message
+Only these are accepted by the validator. Anything else → `400 rejected_manifest_invalid`.
 
-**App Store badges:**
-- `mobile.optimized = true` → "Optimized for Mobile" (green)
-- `mobile.supported = true` → "Mobile" (blue)
-- `mobile.supported = false` → "Desktop Only" (gray)
+| Permission | Grants |
+|---|---|
+| `auth.read_user` | Read the current user's identity from `manaurum:init` payload |
+| `auth.read_workspace_members` | List members of the current workspace |
+| `navigation.open_app` | Programmatically open another app |
+| `navigation.close_self` | Close own iframe |
+| `events.subscribe` | Subscribe to platform event streams |
+| `db.read_own_entities` | Read declared entities |
+| `db.write_own_entities` | Create / update / delete declared entities |
 
-Apps with `mobile.supported = false` do not appear on mobile home screens.
+## Entities
 
-## Required vs Optional
+A declared schema for your app's persistent data. The platform stores rows in a tenant-scoped table (`app_records`) with RLS — your data is automatically isolated per tenant. You only see your own entities (filtered by `application_id` server-side).
 
-**Required for all apps:**
-- manifest_version, app_id, name, version, runtime (type + entrypoint), window.default_size
+```json
+{
+  "type": "note",
+  "storage": "shared",
+  "fields": {
+    "title":   { "type": "string",    "required": true },
+    "body":    { "type": "string" },
+    "tags":    { "type": "json" },
+    "created": { "type": "timestamp", "indexed": true }
+  }
+}
+```
 
-**Required for Private publishing (no review):**
-- All above + description.short + icon
+Entity rules:
+- `type`: lowercase snake_case, `^[a-z][a-z0-9_]*$`.
+- `storage`: only `"shared"` is allowed in v1. (`"dedicated"` is reserved.)
+- `fields`: object of field name → `{type, indexed?, required?}`.
+- Field types: `string`, `uuid`, `timestamp`, `integer`, `decimal`, `boolean`, `json`.
+- `indexed: true` makes a field queryable for equality/range. v1 supports equality only.
+- `required: true` makes a field non-null.
 
-**Additionally required for Public App Store:**
-- At least 1 screenshot uploaded via Dev Hub
+## Integrations
 
-## Window Size Presets
+Declares external runtime dependencies. The bundle scanner uses this list to allow CDN imports (`jsdelivr`, `unpkg`, `cdnjs` are platform-allowed without declaration; everything else must appear here).
 
-For quick setup, use these common sizes:
+```json
+{
+  "name": "stripe",
+  "kind": "external_service",
+  "url": "https://js.stripe.com/v3/"
+}
+```
 
-| Preset | default_size | min_size | Good for |
-|--------|-------------|----------|----------|
-| Small widget | 400 x 400 | 300 x 300 | Clocks, calculators, quick tools |
-| Medium app | 800 x 600 | 400 x 300 | Standard apps, dashboards |
-| Large app | 1100 x 750 | 700 x 500 | Complex UIs, editors |
-| Wide panel | 1000 x 500 | 500 x 300 | Horizontal layouts, timelines |
+- `name`: free string identifier.
+- `kind`: `"cdn"` or `"external_service"`.
+- `url`: optional URI.
+
+If your bundle imports `@stripe/stripe-js` or fetches from `js.stripe.com` without declaring this, the scanner returns `422 rejected_bundle_url_disallowed` or `422 rejected_bundle_sdk_undeclared`.
+
+## What's not in v1
+
+These were in v0 / legacy docs but are NOT part of v1:
+
+- `runtime.entrypoint` (URL) — replaced by bundle-relative `entry_point`.
+- `runtime.sandbox` — sandbox attributes are set by the shell, not the manifest.
+- `description.short` / `description.long` — moved to `metadata` only as free fields, no validation.
+- `compatibility.min_shell_version` — not validated in v1.
+- Permissions like `theme.read`, `storage.read`, `storage.write`, `files.read`, `files.write`, `toast.send`, `notifications.send`, `window.manage`, `tasks.suggest` — runtime SDK methods may still work but are NOT covered by v1 manifest validation. Use `db.*` for data; treat the rest as evolving.

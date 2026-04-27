@@ -1,154 +1,69 @@
-# Publishing ManAurum OS Apps
+# Publishing ManAurum OS Apps (v1.5+ tenant model)
 
 ## Release Model
 
-ManAurum uses a **versioned release model** with direct publishing:
+In v1.5 the release model is **per-tenant catalog**. There is no global App Store, no Private/Unlisted/Public review track. The flow is:
 
-- Each app has a permanent `app_id` (slug)
-- Each app can have many **versions** (semver: X.Y.Z)
-- One version is marked as the **live** version — this is what users receive
-- When you publish a new live version, all installed copies auto-update
-- No review or approval is needed to publish
+1. **Deploy** — `POST /api/dev/apps/deploy` with `mnu_*` token, manifest, bundle. Creates a row in your tenant's `applications` table and a versioned `application_versions` row. The new version becomes the `current_version_id` immediately.
+2. **Install** — a workspace owner inside the same tenant installs the app via AppStore. Creates a `workspace_app_installs` row.
+3. **Open** — workspace members open the app at `/t/<tenant_slug>/apps/<app_slug>`.
 
-**Core flow:** Create app → Upload build → Publish version → Users get it automatically.
-
-## App States
+## App + Version States
 
 | State | Meaning |
-|-------|---------|
-| **Draft** | Not published yet — only visible in Dev Center |
-| **Published** | Live in App Store, available for install |
-| **Unpublished** | Removed from store, existing installs still work |
-| **Deleted** | Soft-deleted, no new installs, shows "unavailable" |
+|---|---|
+| **active** (application) | App is in the tenant catalog and installable. Default after first deploy. |
+| **archived** (application) | App removed from catalog. Existing workspace installs continue to work; no new installs. |
+| **published** (version) | Version is the `current_version_id` for the app. Users get it on next iframe load. |
+| **archived** (version) | Older version, no longer current; bundle still readable for audit. |
 
-## Version States
+There is no manual "publish" step in v1 — the deploy IS the publish. To roll back, deploy a new version with a fixed bundle (semver bump). True rollback (re-promoting an older version) is not exposed via the Deploy API in v1.
 
-| State | Meaning |
-|-------|---------|
-| **Draft** | Work in progress, not yet published |
-| **Published** | Released, can be promoted to live |
-| **Archived** | Retired, no longer active |
+## Versioning
 
-## Step-by-Step Publishing Flow
+- Each `POST /api/dev/apps/deploy` requires a unique `version` (semver) for the same `slug`. Re-using a version returns `400 rejected_version_conflict`.
+- The platform sets `current_version_id` to the newly-deployed version atomically.
+- Existing iframe sessions continue serving the version they loaded with (immutable URL); they pick up the new version on next page load.
 
-### 1. Host your app
-Deploy your HTML/JS app to any HTTPS hosting:
-- **ManAurum Hosting**: paste HTML or upload ZIP directly in Dev Center
-- **Vercel**: `vercel deploy`
-- **Netlify**: drag-and-drop or CLI
-- **GitHub Pages**: push to `gh-pages` branch
-- **Any server**: just serve static files over HTTPS
+## Multi-tenant publishing
 
-For local testing, `http://localhost` works for draft apps.
+A `mnu_*` token is bound to ONE tenant. To publish the same app to multiple tenants:
 
-### 2. Register on ManAurum OS
-1. Go to [manaurum.com](https://manaurum.com) and log in
-2. Open **Dev Hub** on your desktop
-3. Click **"Create App"**
-4. Enter your app name (slug auto-generated)
+1. Get a separate token from each tenant's Developer Console.
+2. Run the same deploy script with each token (env var rotation).
 
-### 3. Connect your entrypoint
-1. In the **Build** tab, paste your hosted URL into the entrypoint field
-2. Click **"Preview in ManAurum OS"**
-3. Your app opens in a real OS window
+There is no cross-tenant publish in v1. Each tenant has its own catalog and its own version history for the same app.
 
-### 4. Auto-publish on first preview
-On first successful preview (handshake succeeds), your app:
-- Automatically publishes version 1.0.0
-- Automatically installs in your workspace
-- Appears on your desktop
+## Workspace install
 
-### 5. Release updates
-1. Go to the **Versions** tab
-2. Click **"Release Update"**
-3. Enter new version number and release notes
-4. Click **"Publish"** or **"Publish & Go Live"**
-5. All installed copies receive the update automatically
+End users do NOT see the app until a workspace owner installs it:
 
-### 6. Rollback
-If a release is broken:
-1. Go to the **Versions** tab
-2. Find the previous stable version
-3. Click **"Make Live"**
-4. Users automatically revert to that version
+1. Workspace owner opens AppStore inside their workspace.
+2. Locates the app in the tenant catalog.
+3. Clicks "Install" → `workspace_app_installs` row created.
+4. App appears in the dock / launcher for all members of that workspace.
 
-## Auto-Update for Users
+To remove: workspace owner uninstalls from AppStore. Existing in-browser sessions stay live until the user closes them.
 
-- Users install the app once — they never need to reinstall
-- When you publish a new live version, all installs update automatically
-- If the new version adds permissions, users see a confirmation dialog
-- If the new version is incompatible with their shell, they stay on the previous version
+## URL structure
 
-## Validation Checks
+- **Catalog open URL:** `/t/<tenant_slug>/apps/<app_slug>` — auth-guarded; returns the iframe shell. 404 if user not in this tenant or workspace lacks the install.
+- **Bundle file URL:** `/api/hosted/<version_id>/<path>?t=<bundle_token>` — short-lived signed token, issued by the shell. Not meant to be used directly; the shell injects the iframe with the right URL.
 
-Before publishing, these are validated:
-1. Entrypoint HTTPS (or localhost for drafts)
-2. Entrypoint responds with HTTP 200
-3. Permissions from the allowed list only
-4. Version in semver format (X.Y.Z)
-5. Window size within range (300-2000 width, 200-1500 height)
+## Versioning checklist
 
-**Note:** Short description, icon, and screenshots are **optional** — they don't block publishing.
+Before each deploy:
+- [ ] Bump `manifest.json` `version` (semver).
+- [ ] `index.html` is at the root of `bundle.zip`.
+- [ ] Bundle < 50 MB.
+- [ ] No credentials / unauthorised SDK imports / disallowed URLs (the deploy scanner will reject otherwise).
+- [ ] Manifest validates against the v1 schema (`manifest_v1.schema.json`).
 
-## Unpublish / Delete
+## What's not in v1
 
-- **Unpublish**: removes from App Store, existing installs keep working, you can republish later
-- **Delete**: soft-delete, blocks new installs, existing installs show "App no longer available"
-
-## API Endpoints
-
-### Publish app (creates version + makes live)
-```
-POST https://manaurum.com/api/developer/apps/{slug}/publish
-Authorization: Bearer {token}
-```
-
-### Publish a specific version
-```
-POST https://manaurum.com/api/developer/apps/{slug}/versions/{version_id}/publish
-Authorization: Bearer {token}
-```
-
-### Make version live (promote)
-```
-POST https://manaurum.com/api/developer/apps/{slug}/versions/{version_id}/make-live
-Authorization: Bearer {token}
-```
-
-### Archive a version
-```
-POST https://manaurum.com/api/developer/apps/{slug}/versions/{version_id}/archive
-Authorization: Bearer {token}
-```
-
-### Unpublish app
-```
-POST https://manaurum.com/api/developer/apps/{slug}/unpublish
-Authorization: Bearer {token}
-```
-
-### Delete app
-```
-DELETE https://manaurum.com/api/developer/apps/{slug}
-Authorization: Bearer {token}
-```
-
-### Quick-Create API
-```
-POST https://manaurum.com/api/developer/apps/quick-create
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{
-  "app_name": "My Weather Widget",
-  "developer_name": "Your Name"  // only needed first time
-}
-```
-
-## AI Assistant Integration
-
-Apps with an `agent` section in their manifest automatically register capabilities with the OS-level AI Assistant. When a user types or speaks into the Assistant, your app can receive routed actions.
-
-This is opt-in: add `"agent": { "enabled": true, "capabilities": [...] }` to your manifest. See the main SKILL.md for full documentation and examples.
-
-After install, your capabilities appear in `GET /api/os-agent/capabilities` alongside system apps.
+- App Store / public marketplace
+- Private / Unlisted / Public visibility tiers
+- Review / approval workflow
+- Cross-tenant publishing
+- Manual rollback to previous version (must re-deploy)
+- Per-app token scoping at the issuance UI (the model supports `application_id` but the self-serve route mints tenant-wide tokens only in v1)
