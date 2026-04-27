@@ -264,6 +264,117 @@ if (data.ok) {
 await storageSet('tasks', [{title: 'Buy milk', done: true}]);
 ```
 
+## Database API (App → Shell → Server)
+
+Apps with declared `entities[]` in their manifest get a typed-record CRUD API at `manaurum.db.*`. Records live in the platform's `app_records` table with RLS FORCE on `tenant_id` — your app sees only its own records inside the current tenant. Cross-tenant access is structurally impossible (RLS, not just route filtering).
+
+**Permission gating:** every method below requires `db.read_own_entities` (read paths) or `db.write_own_entities` (write paths) in the manifest.
+
+**Pre-condition:** the `entity_type` you pass at runtime must appear in `manifest.entities[]`. Write paths (`create`, `update`) reject undeclared types with `422 EntityTypeNotDeclared`. Read paths (`get`, `list`, `delete`) tolerate a missing manifest entry but return empty / 404.
+
+### `manaurum.db.create(entity_type, data)`
+
+Creates one record.
+
+```javascript
+var note = await app.db.create('note', {
+  title: 'Shopping list',
+  body: 'Milk, eggs, bread',
+});
+// { id: '<uuid>', index_rows_written: <int> }
+```
+
+Returns the new `id` plus the count of secondary-index rows written (one per `indexed: true` field in your manifest).
+
+### `manaurum.db.get(entity_type, record_id)`
+
+Reads one record by id.
+
+```javascript
+var record = await app.db.get('note', noteId);
+// { id, entity_type, data, created_at, updated_at }
+```
+
+`404` if the id does not exist (or has been soft-deleted, or belongs to another tenant).
+
+### `manaurum.db.list(entity_type, options?)`
+
+Paginated list. Soft-deleted rows are hidden.
+
+```javascript
+var page = await app.db.list('note', {
+  page: 1,
+  page_size: 50,
+  sort_by: 'created',  // must be an `indexed: true` field, OR omit for default order
+  sort_dir: 'desc',
+});
+// { rows: [...], page, page_size, total }
+```
+
+`options` fields:
+| Field | Default | Notes |
+|---|---|---|
+| `page` | `1` | 1-indexed |
+| `page_size` | server default | bounded by server cap |
+| `sort_by` | none | must reference an `indexed: true` field; else `422 FieldNotIndexedError` |
+| `sort_dir` | `'asc'` | `'asc'` or `'desc'`; else `422 InvalidSortDirectionError` |
+
+### `manaurum.db.update(entity_type, record_id, data)`
+
+**Full-replace** of the record's `data` field. Pass the entire object you want stored — fields you omit will be lost.
+
+```javascript
+await app.db.update('note', noteId, {
+  title: 'Shopping list (updated)',
+  body: 'Milk, eggs, bread, butter',
+});
+// { id, index_rows_written }
+```
+
+There is no partial-update endpoint in v1. Read with `get`, mutate locally, write back the full object.
+
+### `manaurum.db.delete(entity_type, record_id)`
+
+Soft-delete (sets `deleted_at`; the row stays in the database, hidden from `get` and `list`).
+
+```javascript
+await app.db.delete('note', noteId);
+// { ok: true }
+```
+
+There is no hard-delete from the SDK in v1.
+
+### Wire format
+
+The SDK posts these messages; the shell forwards to `/api/app-data/...` under the parent's auth credentials. Iframe apps never see the user's bearer token.
+
+| SDK method | postMessage `type` | HTTP route |
+|---|---|---|
+| `db.create` | `manaurum:db-create` | `POST /api/app-data/{app_slug}/{entity_type}` |
+| `db.get` | `manaurum:db-get` | `GET /api/app-data/{app_slug}/{entity_type}/{record_id}` |
+| `db.list` | `manaurum:db-list` | `GET /api/app-data/{app_slug}/{entity_type}?page=&page_size=&sort_by=&sort_dir=` |
+| `db.update` | `manaurum:db-update` | `PUT /api/app-data/{app_slug}/{entity_type}/{record_id}` |
+| `db.delete` | `manaurum:db-delete` | `DELETE /api/app-data/{app_slug}/{entity_type}/{record_id}` |
+
+Responses come back as `manaurum:db-response` with the SDK matching `_reqId` automatically — your app code only sees the resolved Promise.
+
+### Errors
+
+All errors arrive as a rejected Promise. The SDK surfaces the raw HTTP error text; the most common cases:
+
+| HTTP | Cause | Fix |
+|---|---|---|
+| `404 application_not_found` | App slug not in this tenant | Confirm the user is in the tenant the app was deployed to |
+| `404 record_not_found` | Record id unknown / soft-deleted / wrong tenant | Treat as not found |
+| `422 EntityTypeNotDeclared` | `entity_type` not in `manifest.entities[]` (write paths only) | Add the entity to the manifest, redeploy with bumped semver |
+| `422 FieldNotIndexedError` | `sort_by` references a field without `indexed: true` | Add `"indexed": true` to that field in the manifest, redeploy |
+| `422 InvalidSortDirectionError` | `sort_dir` is not `'asc'` / `'desc'` | Use one of the two values |
+| `422 InvalidPageError` | `page < 1` or non-integer | Send a positive integer |
+
+### Tenant isolation reminder
+
+`manaurum.db.*` is automatically tenant-scoped server-side via RLS. You do not — and cannot — pass a `tenant_id` in your queries. The current tenant is bound by the platform from the user's session. If you need the tenant identifier for display (B2B kustomization), read `payload.tenant` from the `manaurum:init` message instead.
+
 ## SDK Methods (wraps postMessage)
 
 ### Lifecycle
