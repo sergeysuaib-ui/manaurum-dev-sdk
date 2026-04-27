@@ -7,6 +7,28 @@ All communication uses postMessage. Message format: `{ type: "manaurum:<event>",
 ## Shell → App Events
 
 ### `manaurum:init` (sent once after iframe loads)
+
+The exact payload depends on which shell loads the iframe:
+
+- **Main desktop shell** (`IframeAppHost.tsx`) sends the rich payload below (theme, device, screen, etc.).
+- **Tenant shell** (`/t/<slug>/apps/<slug>`, hosted bundle) sends a tenant-aware payload with the `tenant` block (NEW in v1.5).
+
+**Tenant shell payload (v1.5+):**
+```json
+{
+  "type": "manaurum:init",
+  "payload": {
+    "tenant":     { "id": "<uuid>", "slug": "<slug>" },
+    "workspace":  { "id": "<uuid>" },
+    "user":       { "id": "<id>", "nickname": "<id>" },
+    "app":        { "slug": "<slug>", "version_id": "<uuid>" },
+    "permissions": [],
+    "windowId":    "<app_slug>"
+  }
+}
+```
+
+**Main-desktop shell payload (legacy + still in use):**
 ```json
 {
   "type": "manaurum:init",
@@ -28,7 +50,22 @@ All communication uses postMessage. Message format: `{ type: "manaurum:<event>",
   }
 }
 ```
-Your app MUST respond with `manaurum:ready` within 10 seconds.
+
+Your app MUST respond with `manaurum:ready` within 10 seconds in both cases.
+
+To read the `tenant` block (only present in the tenant-shell variant), register a generic message callback — the SDK's `onReady(ctx)` does not yet expose `tenant`:
+
+```javascript
+app.onMessage(function (type, payload) {
+  if (type === 'manaurum:init' && payload.tenant) {
+    console.log('Tenant slug:', payload.tenant.slug);
+    console.log('Workspace id:', payload.workspace.id);
+    console.log('App version:', payload.app.version_id);
+  }
+});
+```
+
+Use `payload.tenant` for B2B kustomization (per-tenant branding, copy, config). Do NOT use it as a security filter — RLS already enforces tenant isolation server-side.
 
 **Platform fields:**
 | Field | Desktop | Mobile |
@@ -279,4 +316,4 @@ await storageSet('tasks', [{title: 'Buy milk', done: true}]);
 | `storage.read` | Read stored data | No |
 | `storage.write` | Save and delete stored data | No |
 
-Sensitive permissions require admin review when the app is published to the public App Store.
+> **Note (v1.5):** the table above lists *runtime SDK capabilities* that may be available depending on the shell and platform. The **manifest validator** in v1 only accepts a smaller set (see `manifest-spec.md` for the canonical list: `auth.read_user`, `auth.read_workspace_members`, `navigation.open_app`, `navigation.close_self`, `events.subscribe`, `db.read_own_entities`, `db.write_own_entities`). The legacy "public App Store + admin review" model is not part of v1 — apps deploy to a tenant catalog only.

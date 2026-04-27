@@ -1,27 +1,18 @@
 {
-  "manifest_version": 1,
-  "app_id": "my-app",
+  "manifest_version": "1",
+  "manaurum_sdk_version": "1",
+  "slug": "my-app",
   "name": "My App",
   "version": "1.0.0",
-  "description": {
-    "short": "A short description of what my app does",
-    "long": "A longer description with more details about features and usage."
-  },
-  "icon": "https://example.com/my-app-icon.png",
-  "category": "utility",
-  "tags": ["example"],
-  "runtime": {
-    "type": "iframe",
-    "entrypoint": "https://example.com/my-app",
-    "sandbox": ["allow-scripts", "allow-forms", "allow-same-origin"]
-  },
+  "entry_point": "index.html",
   "window": {
-    "default_size": { "width": 800, "height": 600 },
-    "min_size": { "width": 400, "height": 300 },
-    "title": "My App"
+    "default_width": 800,
+    "default_height": 600
   },
-  "permissions": ["theme.read"],
-  "compatibility": {
-    "min_shell_version": "1.0.0"
+  "permissions": [],
+  "entities": [],
+  "metadata": {
+    "category": "utility",
+    "tags": ["example"]
   }
 }

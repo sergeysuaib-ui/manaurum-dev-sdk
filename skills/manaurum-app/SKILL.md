@@ -1,21 +1,23 @@
 ---
 name: manaurum-app
-description: Build apps for ManAurum OS — a browser-based virtual desktop. Use this skill whenever the user wants to create, build, generate, or develop an app for ManAurum OS, SeregaOS, or mentions building iframe apps for a virtual desktop. Also triggers when user mentions ManAurum SDK, manaurum.js, or postMessage bridge apps. Covers app generation from prompts, manifest creation, SDK integration, theme support, and testing guidance.
+description: Build apps for ManAurum OS — a multi-tenant browser-based virtual desktop. Use this skill whenever the user wants to create, build, generate, or develop an app for ManAurum OS, SeregaOS, or mentions building iframe apps for a virtual desktop. Also triggers when user mentions ManAurum SDK, manaurum.js, or postMessage bridge apps. Covers app generation from prompts, manifest creation, SDK integration, theme support, multi-tenant context, and the new manifest+bundle Deploy API.
 ---
 
-# Build ManAurum OS Apps
+# Build ManAurum OS Apps (v1.5+ tenant-aware)
 
-You are helping the user build an app that runs inside ManAurum OS — a browser-based virtual desktop. Every app is a standalone HTML/JS page loaded in an iframe. The OS provides the window frame, theme, and user context via a postMessage bridge.
+You are helping the user build an app that runs inside ManAurum OS — a **multi-tenant** browser-based virtual desktop. Each app is a standalone HTML/JS bundle loaded in a sandboxed iframe inside a tenant's workspace. The OS provides the window frame, theme, user info, and **tenant context** via a postMessage bridge.
 
-**You are NOT modifying ManAurum OS itself.** You are building an independent app that runs inside it.
+**You are NOT modifying ManAurum OS itself.** You are building an independent app that runs inside one or more tenants.
 
-## How ManAurum Apps Work
+## How ManAurum Apps Work in v1.5
 
-1. Your app is a regular web page (HTML + CSS + JS, any framework)
-2. ManAurum loads it in a sandboxed iframe inside a desktop window
-3. The OS sends `manaurum:init` with theme, user info, and permissions
-4. Your app responds with `manaurum:ready` within 10 seconds
-5. After that, your app can use SDK methods for window management, toasts, etc.
+1. Your app is a regular web bundle (HTML + CSS + JS, any framework, single `index.html` at the root).
+2. A tenant developer deploys the bundle via the **Deploy API** (`POST /api/dev/apps/deploy`) using a tenant-scoped `mnu_*` token. The bundle becomes a versioned application in that tenant's catalog.
+3. A workspace owner installs the app from their tenant's AppStore.
+4. End users open the app at `/t/<tenant_slug>/apps/<app_slug>`. ManAurum loads the bundle in a sandboxed iframe.
+5. The shell sends `manaurum:init` with theme, user info, permissions, **and a `tenant` block** so the app knows which operator it's rendering inside.
+6. Your app responds with `manaurum:ready` within 10 seconds.
+7. After that, your app uses SDK methods (window, toast, storage, files, etc.).
 
 ## SDK Integration
 
@@ -33,342 +35,207 @@ Initialize and handle the handshake:
 ```javascript
 var app = ManaurumSDK.init();
 
-app.onReady(function(ctx) {
-  // ctx.theme = "smoothie" or "xp"
+app.onReady(function (ctx) {
+  // ctx.theme         = "smoothie" or "xp"
   // ctx.user.nickname = user's display name
-  // ctx.permissions = granted permissions array
-  console.log('Connected to ManAurum OS!');
+  // ctx.permissions   = granted permissions array
+  console.log('Connected to ManAurum OS');
 });
 
-app.onThemeChange(function(theme) {
-  // Adapt your UI to the new theme
+app.onThemeChange(function (theme) {
   document.body.style.background = theme === 'xp' ? '#ece9d8' : '#f9f9ff';
+});
+
+// Multi-tenant: read tenant identity from the raw init message.
+// (The SDK's ctx object doesn't yet expose `tenant` — read the raw payload.)
+app.onMessage(function (type, payload) {
+  if (type === 'manaurum:init' && payload.tenant) {
+    console.log('Running inside tenant', payload.tenant.slug, payload.tenant.id);
+    // payload.workspace.id, payload.app.slug, payload.app.version_id also present
+  }
 });
 ```
 
 ## Available SDK Methods
 
-Read `references/sdk-api.md` for the complete SDK reference including all methods, permissions, and event types.
+Read `references/sdk-api.md` for the complete SDK reference.
 
-## When Building an App
+### Quick overview (v1.5 SDK):
+
+**Tenant context (NEW in v1.5)** — read from `manaurum:init` payload:
+- `payload.tenant.id`, `payload.tenant.slug` — which operator the user is in
+- `payload.workspace.id` — which workspace
+- `payload.app.slug`, `payload.app.version_id` — which version of which app
+
+**Window, Toast, Notifications** — see `references/sdk-api.md`.
+
+**Storage / Files / Collections** — runtime APIs available via the SDK; see `references/sdk-api.md`. Note: in v1.5 the *manifest* permission system formalised a smaller core enum (`db.read_own_entities`, `db.write_own_entities`); legacy SDK paths (`storage.*`, `files.*`) still work in the runtime but are not yet gated by the manifest. Treat them as supported but evolving.
+
+**Deep Links** — `app.onDeepLink(callback)` fires with `{ action, payload }` when the app is opened from a notification.
+
+## When Building a Tenant App
 
 Follow this process:
 
 ### Step 1: Generate the app code
 
-Create a single HTML file (or multi-file app) that:
+Create a single `index.html` (or multi-file bundle) that:
 - Includes the ManAurum SDK via script tag
 - Calls `ManaurumSDK.init()` on load
-- Handles `onReady` callback
-- Handles `onThemeChange` for theme-aware styling
+- Handles `onReady` callback and `onThemeChange`
+- Reads `payload.tenant` from `manaurum:init` if you need tenant-aware behaviour (B2B kustomization, per-tenant branding, per-tenant config)
 - Sends `manaurum:ready` (the SDK does this automatically)
 
 ### Step 2: Apply design guidelines
 
-Read `references/design.md` for:
-- Two themes: **Smoothie** (macOS-like: Inter font, #f9f9ff background) and **XP** (Windows XP: Tahoma font, #ece9d8 background)
-- The app should adapt to both themes
-- The OS provides the window title bar — do NOT render your own window chrome
-- Be responsive to window resizing
+Read `references/design.md` for theme details. Two themes: **Smoothie** (Inter font, `#f9f9ff`) and **XP** (Tahoma font, `#ece9d8`). Adapt to both. The OS provides the window title bar — do NOT render your own window chrome.
 
-### Step 3: Create the manifest
+### Step 3: Write the manifest (v1 schema)
 
-Read `references/manifest-spec.md` for the full manifest specification. The minimum manifest:
+Read `references/manifest-spec.md` for the full v1 schema. The minimum manifest:
 
 ```json
 {
-  "manifest_version": 1,
-  "app_id": "my-app-slug",
-  "name": "My App Name",
+  "manifest_version": "1",
+  "manaurum_sdk_version": "1",
+  "slug": "my-app",
+  "name": "My App",
   "version": "1.0.0",
-  "runtime": {
-    "type": "iframe",
-    "entrypoint": "https://your-app-url.com",
-    "sandbox": ["allow-scripts", "allow-forms", "allow-same-origin"]
-  },
-  "window": {
-    "default_size": { "width": 800, "height": 600 },
-    "min_size": { "width": 400, "height": 300 },
-    "title": "My App Name"
-  },
-  "permissions": [],
-  "description": { "short": "What your app does (max 160 chars)" }
+  "entry_point": "index.html"
 }
 ```
 
-### Step 4: Test locally
-
-Tell the user:
-1. Serve the HTML file with any local server (e.g. `python -m http.server 8000`)
-2. Open the ManAurum Test Harness: `https://manaurum.com/sdk/test-harness.html`
-3. Paste `http://localhost:8000` into the URL field and click "Load App"
-4. Check: green dot = handshake succeeded, event log shows init→ready
-
-### Step 5: Deploy
-
-Read `references/publishing.md` for the full publishing flow. Two hosting options:
-
-**Option A: Internal hosting (recommended for simple apps)**
-1. Go to ManAurum OS → Dev Hub → Create App
-2. Build tab → Paste your HTML code
-3. App is hosted at `https://manaurum.com/api/hosted/{slug}/index.html`
-4. Click "Publish" — app auto-installs on your desktop
-
-**Option B: External hosting**
-1. Deploy to Vercel/Netlify/GitHub Pages/Cloudflare Pages
-2. Go to ManAurum OS → Dev Hub → Create App
-3. Set the HTTPS entrypoint URL
-4. Click "Publish" — app auto-installs on your desktop
-
-All apps start as Private (visible only to you). Can be promoted to Unlisted (share link) or Public (App Store, requires admin review).
-
-## Permissions
-
-Only request permissions your app actually needs:
-
-| Permission | What it does |
-|-----------|-------------|
-| `user.profile.read` | Access user's display name |
-| `theme.read` | Detect current theme (smoothie/xp) |
-| `window.manage` | Change title, resize, close the window |
-| `toast.send` | Show toast notifications |
-| `notifications.send` | Send persistent notifications to Notification Center |
-| `notifications.schedule` | Schedule reminders |
-| `tasks.suggest` | Suggest tasks to Work Assistant |
-| `storage.read` | Read stored data (server-side, per user) |
-| `storage.write` | Save and delete stored data (server-side, 5MB per app) |
-
-## Validation Rules
-
-Your app will be validated before publishing:
-- `app_id`: lowercase a-z, 0-9, hyphens only, 3-50 chars
-- `version`: semver format (X.Y.Z)
-- `entrypoint`: HTTPS URL (or localhost for draft testing)
-- `window.default_size`: width 300-2000, height 200-1500
-- `permissions`: only from the allowed list above
-- `category`: one of productivity, utility, lifestyle, entertainment, dev_tools, other
-
-Optional (recommended but not required to publish):
-- `description.short`: 1-160 characters
-- App icon (PNG, 256x256)
-- Screenshots
-
-**No review or approval needed.** Publishing is direct and immediate.
-
-## AI Assistant Integration (Optional)
-
-ManAurum OS has an OS-level AI Assistant that can route user input to apps. When a user types "Spent $15 at doctor" into the Assistant, the AI splits it into actions and sends them to the right apps (Finance, Parent Space, Work Assistant, etc.).
-
-**Third-party apps can participate.** Add an `agent` section to your manifest:
+Adding declared entities + permissions for data:
 
 ```json
 {
-  "agent": {
-    "enabled": true,
-    "capabilities": [
-      {
-        "name": "create_todo",
-        "description": "Create a to-do item in the app",
-        "input_schema": {
-          "title": { "type": "string", "required": true, "description": "Task title" },
-          "due_date": { "type": "date", "required": false, "description": "Due date YYYY-MM-DD" },
-          "priority": { "type": "string", "required": false, "enum": ["low", "medium", "high"] }
-        },
-        "routing_hints": ["todo", "task", "remind", "need to", "buy"],
-        "trust_default": "suggest",
-        "example": { "title": "Buy groceries", "due_date": "2026-04-15" }
+  "manifest_version": "1",
+  "manaurum_sdk_version": "1",
+  "slug": "my-notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "entry_point": "index.html",
+  "permissions": ["db.read_own_entities", "db.write_own_entities", "auth.read_user"],
+  "entities": [
+    {
+      "type": "note",
+      "fields": {
+        "title":   { "type": "string", "required": true },
+        "body":    { "type": "string" },
+        "created": { "type": "timestamp", "indexed": true }
       }
-    ],
-    "emitted_events": ["todo.created", "todo.completed"],
-    "subscribed_events": []
-  }
-}
-```
-
-**How it works:**
-1. User types natural language (or speaks via voice) into the Assistant (sparkle icon in dock)
-2. AI reads all registered app capabilities and decides where to route
-3. Your app's capability is matched based on `description` + `routing_hints`
-4. AI fills `input_schema` fields from the user's message
-5. User sees a proposal with confidence score and confirms
-6. OS sends `manaurum:agent-preview` to your iframe with `{ request_id, capability, fields }`
-7. Your app validates, executes, and responds with `manaurum:agent-result`
-
-**Handle agent messages in your app:**
-```javascript
-app.on('agent-preview', function(data) {
-  // data.request_id — unique ID for this request
-  // data.capability — "create_todo" (matches your manifest)
-  // data.fields — { title: "Buy groceries", due_date: "2026-04-15" }
-
-  var result = myApp.createTodo(data.fields);
-
-  app.send('agent-result', {
-    request_id: data.request_id,
-    success: true,
-    record_id: result.id
-  });
-});
-```
-
-**Key points:**
-- `description` is what the AI reads — be specific and clear
-- `routing_hints` are keywords that trigger matching — more is better
-- `trust_default: "suggest"` means user must confirm; `"auto_save"` allows auto-execution for high confidence
-- `input_schema` fields use the same types as manifest window/permissions
-- `emitted_events` / `subscribed_events` enable cross-app automations (e.g. "when todo.completed, notify via calendar")
-- Capabilities are registered in the OS when your app is installed — no extra setup needed
-
-**System apps already registered:** Work Assistant (tasks, reminders), Parent Space (health events, notes), Finance (transactions). Your app joins the same routing engine.
-
-## Debugging Failed Apps
-
-If a user's app doesn't work, use these APIs to diagnose:
-
-### Probe the entrypoint (server-side HTTP check)
-```bash
-curl -s "https://manaurum.com/api/developer/apps/{slug}/probe-entrypoint" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://manaurum.com/api/hosted/{slug}/index.html"}'
-```
-Returns: `reachable`, `status_code`, `content_type`, `iframe_blocked`, `response_time_ms`
-
-### Get diagnostic logs (from failed preview sessions)
-```bash
-curl -s "https://manaurum.com/api/developer/apps/{slug}/diagnostics" \
-  -H "Authorization: Bearer $MANAURUM_TOKEN"
-```
-Returns: array of recent sessions with `status`, `events` timeline, `probe_result`
-
-### Common failures
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Timeout, init sent but no ready | SDK not loaded or init() not called | Add `<script src="manaurum.js">` and call `ManaurumSDK.init()` |
-| Error, no events | Entrypoint unreachable | Check URL, verify hosting works |
-| Probe: iframe_blocked | X-Frame-Options: DENY | Remove header or set ALLOWALL |
-| Probe: content_type is JSON | Wrong URL points to API | Change entrypoint to HTML page |
-
-## Using Server-Side Storage
-
-If the app needs to persist data (tasks, settings, notes, etc.), use the Storage API instead of localStorage. Storage is server-side, per user, and syncs across devices.
-
-Add permissions to manifest:
-```json
-{ "permissions": ["storage.read", "storage.write"] }
-```
-
-Use this pattern in your app code:
-```javascript
-// Promise wrapper for storage
-function storage(type, payload) {
-  return new Promise((resolve) => {
-    const _reqId = Math.random().toString(36);
-    const handler = (e) => {
-      if (e.data?.type === 'manaurum:storage-response' && e.data.payload?._reqId === _reqId) {
-        window.removeEventListener('message', handler);
-        resolve(e.data.payload);
-      }
-    };
-    window.addEventListener('message', handler);
-    window.parent.postMessage({ type, payload: { ...payload, _reqId } }, '*');
-  });
-}
-
-// Save data
-await storage('manaurum:storage-set', { key: 'tasks', value: myTasks });
-
-// Load data
-const result = await storage('manaurum:storage-get', { key: 'tasks' });
-if (result.ok) {
-  myTasks = result.value;
-}
-
-// Delete
-await storage('manaurum:storage-delete', { key: 'old-data' });
-
-// List all keys
-const keys = await storage('manaurum:storage-list', {});
-```
-
-**Important:** Always include this storage helper when building apps that need persistence. Do NOT use `localStorage` as the primary store — it doesn't sync between devices and is cleared when the user clears browser data.
-
-Read `references/sdk-api.md` for full Storage API reference with limits and error handling.
-
-## Mobile Platform Support
-
-ManAurum OS runs on both desktop and mobile. Every app must explicitly declare platform support.
-
-### Declaring Platform Support
-
-Add a `platforms` section to the manifest:
-```json
-{
-  "platforms": {
-    "desktop": { "supported": true },
-    "mobile": {
-      "supported": true,
-      "optimized": false,
-      "supportLevel": "adaptive",
-      "navigationPattern": "stack"
     }
-  }
+  ]
 }
 ```
 
-### Support Levels
+Validation rules (key ones):
+- `slug`: `^[a-z][a-z0-9-]{2,49}$`
+- `version`: semver `X.Y.Z`
+- `permissions`: only from the v1 enum (see manifest-spec.md)
+- `entities[].type`: lowercase snake_case
 
-| Level | Behavior |
-|-------|----------|
-| `full` | Dedicated mobile UI — app renders without banners, mobile entrypoint used if set |
-| `adaptive` | Responsive design — renders without banners |
-| `fallback` | Desktop UI shown with "Designed for desktop" warning banner |
-| `none` | Launch blocked — "Desktop only" message shown |
+### Step 4: Bundle and deploy
 
-### Navigation Patterns
+Read `manaurum-deploy/SKILL.md` for the full deploy flow. Quick form:
 
-Declare how the app navigates on mobile: `stack`, `tabs`, `list-detail`, `single-view`, or `composer-first`.
+```bash
+# bundle
+cd my-app && zip -r bundle.zip .
 
-### Mobile Entrypoint
+# get a token from the platform: Developer Console → Tokens → Issue
+# stored as MANAURUM_TENANT_TOKEN=mnu_prod_<32>
 
-Set `platforms.mobile.entrypoint` to serve a completely different URL on mobile devices.
-
-### Runtime Detection
-
-The `manaurum:init` payload includes platform context:
-```javascript
-app.onReady(function(ctx) {
-  if (ctx.platform === 'mobile') {
-    // Mobile-specific layout
-    // ctx.safeAreaInsets = { top, bottom, left, right }
-    // ctx.navigationMode = "stack" (from your manifest)
-    // ctx.shell.hasTabBar = false (tab bar hidden when app is open)
-    // ctx.shell.tabBarHeight = 0
-  }
-});
+# deploy
+B64=$(base64 -w0 bundle.zip)
+jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
+  | curl -X POST https://manaurum.com/api/dev/apps/deploy \
+      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d @-
 ```
 
-### App Store Badges
+Response on success:
+```json
+{
+  "application_id": "...",
+  "version_id": "...",
+  "version_number": "1.0.0",
+  "deployed_at": "2026-04-27T19:00:00Z",
+  "url": "/t/<your-tenant-slug>/apps/my-app"
+}
+```
 
-- `mobile.optimized = true` → "Optimized for Mobile" (green badge)
-- `mobile.supported = true` → "Mobile" (blue badge)
-- `mobile.supported = false` → "Desktop Only" (gray badge)
+### Step 5: Install in workspace + open
 
-Apps with `mobile.supported = false` don't appear on mobile home screens.
+A workspace owner inside the same tenant installs the app via AppStore. After install, any member of that workspace opens it at `/t/<tenant_slug>/apps/<app_slug>`. The shell loads the iframe and sends `manaurum:init` with tenant context.
 
-### Mobile Best Practices
+## Tenant Context — what your app receives
 
-- Always declare `platforms` explicitly — the system never assumes
-- Use viewport-relative units for layouts
-- Test at 390x844px (common mobile viewport)
-- Read `shell.tabBarHeight` to avoid content behind the system tab bar
-- One primary job per screen on mobile
-- No floating windows or desktop sidebars on mobile
+On `manaurum:init`, the `payload` includes (NEW in v1.5):
+
+```json
+{
+  "tenant":     { "id": "<uuid>", "slug": "<slug>" },
+  "workspace":  { "id": "<uuid>" },
+  "user":       { "id": "<id>", "nickname": "<id>" },
+  "app":        { "slug": "<slug>", "version_id": "<uuid>" },
+  "permissions": [...],
+  "windowId":    "<app_slug>"
+}
+```
+
+For B2B apps, use `payload.tenant.slug` (or `id`) to:
+- Render tenant-branded UI (logo, accent colour, copy)
+- Fetch tenant-specific configuration
+- Distinguish telemetry across operators
+
+Your data is **automatically tenant-scoped** by the platform's RLS — you do not need to filter by tenant in your queries; the platform does it server-side. `payload.tenant` is for *display* and *kustomization*, not for security.
+
+> **Important on tokens.** A `mnu_*` token is bound to ONE tenant. Deploying the same app to a second tenant requires a separate token issued from THAT tenant's Developer Console.
+
+## Permissions (v1 manifest enum)
+
+Only these values are accepted by the manifest validator in v1. Anything else → deploy rejection (`rejected_manifest_invalid`).
+
+| Permission | What it grants |
+|---|---|
+| `auth.read_user` | Read the current user's basic identity from `payload.user` |
+| `auth.read_workspace_members` | List members of the current workspace |
+| `navigation.open_app` | Programmatically open another app |
+| `navigation.close_self` | Close own iframe |
+| `events.subscribe` | Subscribe to platform event streams |
+| `db.read_own_entities` | Read your declared entities (per `manifest.entities[]`) |
+| `db.write_own_entities` | Create / update / delete your declared entities |
+
+## Validation Rules (v1)
+
+- `slug`: 3–50 chars, `^[a-z][a-z0-9-]{2,49}$`
+- `version`: semver MAJOR.MINOR.PATCH
+- `entry_point`: path inside the bundle (e.g. `index.html`), not a URL
+- `window.default_width` / `default_height`: 320–4000 / 240–4000
+- `entities[].type`: lowercase snake_case
+- `entities[].storage`: `"shared"` (only allowed value in v1)
+- Bundle: max 50 MB, zip with `index.html` at the root
+
+## Common Failures
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Deploy returns `401 rejected_token_invalid` | Bad / expired / revoked token | Issue a fresh `mnu_*` from Developer Console |
+| Deploy returns `403 rejected_insufficient_scope` | Token lacks `app.deploy` scope | Issue a token with `app.deploy` (default) |
+| Deploy returns `400 rejected_manifest_invalid` | Manifest fails v1 schema | Read `findings` array; fix and retry |
+| Deploy returns `413 rejected_bundle_too_large` | Bundle > 50 MB | Trim assets / split / use external CDN |
+| Deploy returns `422 rejected_bundle_*` | Anti-Lovable scanner caught a credential / undeclared SDK / disallowed URL | Remove the credential or declare via `integrations[]` |
+| App opens but no `manaurum:ready` | SDK not loaded or `init()` not called | Add SDK script tag and call `ManaurumSDK.init()` |
+| App URL returns `404` for a different tenant's user | Wrong tenant — install must exist in the user's workspace | Ask workspace owner of the user's tenant to install |
 
 ## What NOT to Do
 
-- Do NOT try to access the parent window or break out of the iframe
-- Do NOT render your own window title bar or controls
-- Do NOT use permissions you don't need
-- Do NOT hardcode theme colors — adapt to both themes
-- Do NOT forget to handle `manaurum:init` — the app will show "not responding" after 10s
+- Do NOT try to access the parent window or break out of the iframe.
+- Do NOT render your own window title bar or controls.
+- Do NOT request permissions you don't need.
+- Do NOT hardcode theme colors — adapt to both Smoothie and XP.
+- Do NOT forget to handle `manaurum:init` — the app will show "not responding" after 10s.
+- Do NOT include credentials, API keys, or undeclared 3rd-party SDKs in your bundle — the deploy scanner will reject.
+- Do NOT use `tenant_id` from `payload.tenant` as a security filter in your client code — RLS already enforces. Use it only for display.
