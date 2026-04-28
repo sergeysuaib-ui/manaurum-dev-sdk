@@ -307,6 +307,11 @@ var page = await app.db.list('note', {
   page_size: 50,
   sort_by: 'created',  // must be an `indexed: true` field, OR omit for default order
   sort_dir: 'desc',
+  where: {
+    status: 'open',                                  // scalar = equality
+    created: { gte: '2026-04-01', lt: '2026-05-01' }, // range, single JOIN per field
+    supplier_id: { in: ['uuid-1', 'uuid-2'] }         // IN list (max 100)
+  },
 });
 // { rows: [...], page, page_size, total }
 ```
@@ -318,6 +323,21 @@ var page = await app.db.list('note', {
 | `page_size` | server default | bounded by server cap |
 | `sort_by` | none | must reference an `indexed: true` field; else `422 FieldNotIndexedError` |
 | `sort_dir` | `'asc'` | `'asc'` or `'desc'`; else `422 InvalidSortDirectionError` |
+| `where` | `none` | structured filter map (v1.5+, see below) |
+
+**Filters (v1.5+, slice 2.1).** `where` is a map of `{field: <value-or-ops>}`.
+
+- `{field: scalar}` — equality (back-compat shape).
+- `{field: {op: value, ...}}` — one or more operators on that field. Multiple operators on the same field are AND-combined (e.g. `{date: {gte, lt}}` → range).
+- Filtered fields **must** be declared `indexed: true` in the manifest, just like `sort_by`.
+
+| Operator | Value type | Notes |
+|---|---|---|
+| `eq` | scalar | identical to the scalar shape; rare to use explicitly |
+| `gt`, `gte`, `lt`, `lte` | scalar | range; combine with another op on the same field for bounded ranges |
+| `in` | list | non-empty, max **100** items; each item coerces to the field's type |
+
+Anything outside that enum (e.g. `between`, `like`, `not_eq`) returns `422 FilterOperatorError`. `null` values are not allowed (no `IS NULL` operator in v1).
 
 ### `manaurum.db.update(entity_type, record_id, data)`
 
@@ -352,7 +372,7 @@ The SDK posts these messages; the shell forwards to `/api/app-data/...` under th
 |---|---|---|
 | `db.create` | `manaurum:db-create` | `POST /api/app-data/{app_slug}/{entity_type}` |
 | `db.get` | `manaurum:db-get` | `GET /api/app-data/{app_slug}/{entity_type}/{record_id}` |
-| `db.list` | `manaurum:db-list` | `GET /api/app-data/{app_slug}/{entity_type}?page=&page_size=&sort_by=&sort_dir=` |
+| `db.list` | `manaurum:db-list` | `GET /api/app-data/{app_slug}/{entity_type}?page=&page_size=&sort_by=&sort_dir=&where=<URL-encoded JSON>` |
 | `db.update` | `manaurum:db-update` | `PUT /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 | `db.delete` | `manaurum:db-delete` | `DELETE /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 
@@ -370,6 +390,11 @@ All errors arrive as a rejected Promise. The SDK surfaces the raw HTTP error tex
 | `422 FieldNotIndexedError` | `sort_by` references a field without `indexed: true` | Add `"indexed": true` to that field in the manifest, redeploy |
 | `422 InvalidSortDirectionError` | `sort_dir` is not `'asc'` / `'desc'` | Use one of the two values |
 | `422 InvalidPageError` | `page < 1` or non-integer | Send a positive integer |
+| `422 FilterOperatorError` | Unknown operator in `where` (e.g. `between`), `in:[]`, or `in` over 100 items | Use one of `eq/gt/gte/lt/lte/in`; cap IN lists |
+| `422 IndexValueCoercionError` | Value in `where` cannot coerce to the field's declared type (e.g. non-uuid for a uuid field) | Coerce client-side before sending |
+| `400 where_must_be_json` / `where_must_be_object` | `where=` query param is not valid JSON, or is an array/scalar | Pass a JSON object |
+| `405 EntityImmutable` | `update` on an entity declared `immutable: true` | Append a new record instead; do not mutate journal entries |
+| `405 EntityNotSoftDeletable` | `delete` on an entity declared `no_soft_delete: true` | Reverse the journal with a compensating record instead |
 
 ### Tenant isolation reminder
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.8.0 (2026-04-28) — db.list filter operators + entity immutability flags
+
+### Added
+
+- **Range / IN filters on `db.list`** (Phase 2 slice 2.1). The `where` option in `manaurum.db.list(entity, { where })` now accepts structured operators on indexed fields:
+  - Scalar value = equality (back-compat, e.g. `{ status: 'open' }`).
+  - Operator dict = `{ op: value, ... }` with operators `eq`, `gt`, `gte`, `lt`, `lte`, `in`. Multiple ops on one field share a single JOIN, so `{ created: { gte: '2026-04-01', lt: '2026-05-01' } }` runs as one range predicate.
+  - `in` takes a non-empty list (max 100 items).
+  - Filtered fields must still be `indexed: true` — same rule as `sort_by`.
+  - Wire format: `GET /api/app-data/{slug}/{entity}?where=<URL-encoded JSON>` — the SDK and bridge handle the encoding for you.
+  - New error codes: `422 FilterOperatorError`, `422 IndexValueCoercionError`, `400 where_must_be_json`, `400 where_must_be_object`. All documented in `references/sdk-api.md` → "Errors".
+- **Entity immutability flags** (Phase 2 slice 2.2). Manifest entities can declare append-only / non-deletable semantics enforced at the storage layer:
+  - `"immutable": true` — every UPDATE on records of this entity is rejected with `405 EntityImmutable`.
+  - `"no_soft_delete": true` — every soft-delete is rejected with `405 EntityNotSoftDeletable`.
+  - Both default to `false`; combine them for a strict append-only journal (e.g. Receptions `stock_movement`).
+  - Documented in `references/manifest-spec.md` → "Entities" with a `stock_movement` example.
+
+### Notes
+
+- Both changes are forward-additive. Existing manifests and `db.list` callers keep working unchanged.
+- `db.list` with operators: the SDK build is **v1.5.0** (bump from v1.4.0). The platform's bundled SDK is updated automatically on deploy; tenant apps can import either version.
+
 ## 1.7.0 (2026-04-28) — runtime AI API
 
 ### Added

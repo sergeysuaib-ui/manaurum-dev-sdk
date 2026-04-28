@@ -127,8 +127,24 @@ Entity rules:
 - `storage`: only `"shared"` is allowed in v1. (`"dedicated"` is reserved.)
 - `fields`: object of field name → `{type, indexed?, required?}`.
 - Field types: `string`, `uuid`, `timestamp`, `integer`, `decimal`, `boolean`, `json`.
-- `indexed: true` makes a field queryable for equality/range. v1 supports equality only.
+- `indexed: true` makes a field queryable for equality, range, and IN (slice 2.1+).
 - `required: true` makes a field non-null.
+- `immutable: true` (slice 2.2+) — every UPDATE on this entity is rejected with `405 EntityImmutable`. Use for append-only journals (e.g. `stock_movement`).
+- `no_soft_delete: true` (slice 2.2+) — every soft-delete is rejected with `405 EntityNotSoftDeletable`. Combine with `immutable: true` for a strict append-only entity. Default false (deletable).
+
+```json
+{
+  "entities": [{
+    "type": "stock_movement",
+    "immutable": true,
+    "no_soft_delete": true,
+    "fields": {
+      "qty":         { "type": "decimal", "required": true },
+      "occurred_at": { "type": "timestamp", "indexed": true, "required": true }
+    }
+  }]
+}
+```
 
 ## Integrations
 
