@@ -419,6 +419,45 @@ await app.db.delete('note', noteId);
 
 There is no hard-delete from the SDK in v1.
 
+### `manaurum.db.batch(ops)` (v1.8+, slice 3.1)
+
+Run **multiple writes in one transaction**. All ops succeed together or all roll back together — there is no partial commit. Use this when an app-level invariant spans more than one record (e.g. flipping a header to `confirmed` AND inserting the matching stock movements; multi-step status transitions; bulk import).
+
+```javascript
+const { results } = await app.db.batch([
+  { op: 'update', entity_type: 'reception',      record_id: rid, data: { status: 'confirmed' } },
+  { op: 'create', entity_type: 'stock_movement', data: { reception_id: rid, sku: 'A1', qty: 5 } },
+  { op: 'create', entity_type: 'stock_movement', data: { reception_id: rid, sku: 'B2', qty: 3 } },
+]);
+// results: [
+//   { op: 'update', id: rid,         index_rows_written: 2 },
+//   { op: 'create', id: '<new-id>',  index_rows_written: 3 },
+//   { op: 'create', id: '<new-id>',  index_rows_written: 3 },
+// ]
+```
+
+Op shapes:
+
+| op | required | forbidden |
+|---|---|---|
+| `create` | `entity_type`, `data` | `record_id` |
+| `update` | `entity_type`, `record_id`, `data` | — |
+| `delete` | `entity_type`, `record_id` | `data` |
+
+`update` is **full-replace** (same as `db.update`). `delete` is soft-delete.
+
+**Cap: 50 ops per call.** Larger workloads must chunk; chunks are atomic individually but not collectively. For Receptions Confirm and similar workflows the cap is generous (typical = 1 header update + N line movements where N ≪ 50).
+
+**Atomicity model.** All ops share one tenant-bound DB session — `commit()` runs once at the end. If any op fails (validation, EntityImmutable, RecordNotFound, etc.) the whole transaction rolls back; nothing you sent in that batch is persisted.
+
+**Error shape.** Errors carry the failing op's index so your app can surface a precise message:
+
+```json
+{ "detail": { "at": 2, "error": "EntityImmutable: entity 'journal' is immutable" } }
+```
+
+Status codes match the underlying single-op error: `400` for shape problems, `404` for record-not-found, `405` for immutable / no-soft-delete, `422` for entity / field validation.
+
 ### Wire format
 
 The SDK posts these messages; the shell forwards to `/api/app-data/...` under the parent's auth credentials. Iframe apps never see the user's bearer token.
@@ -431,6 +470,7 @@ The SDK posts these messages; the shell forwards to `/api/app-data/...` under th
 | `db.aggregate` | `manaurum:db-aggregate` | `GET /api/app-data/{app_slug}/{entity_type}/_aggregate?metrics=<URL-encoded JSON>&group_by=&where=<URL-encoded JSON>` |
 | `db.update` | `manaurum:db-update` | `PUT /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 | `db.delete` | `manaurum:db-delete` | `DELETE /api/app-data/{app_slug}/{entity_type}/{record_id}` |
+| `db.batch` | `manaurum:db-batch` | `POST /api/app-data/{app_slug}/_batch` (body `{ops: [...]}`) |
 
 Responses come back as `manaurum:db-response` with the SDK matching `_reqId` automatically — your app code only sees the resolved Promise.
 
@@ -456,6 +496,9 @@ All errors arrive as a rejected Promise. The SDK surfaces the raw HTTP error tex
 | `400 metrics_must_be_json` / `metrics_must_be_array` | `metrics=` query param is not a JSON array | SDK handles encoding; this means a hand-rolled HTTP call sent the wrong shape |
 | `400 include_must_be_json` / `include_must_be_array` | `include=` query param is not a JSON array | SDK handles encoding; means a hand-rolled HTTP call sent the wrong shape |
 | `422 InvalidIncludeError` | unknown child entity, missing/non-uuid/non-indexed `<parent>_id` field, duplicate or over-cap (>4) entries | Add the FK field to the child entity in the manifest, redeploy |
+| `400 batch_empty` | `db.batch([])` | Send at least one op |
+| `400 batch_too_large` | `db.batch` over 50 ops | Chunk client-side; chunks are atomic individually |
+| `400 invalid_op` / `missing_entity_type` / `missing_record_id` / `missing_data` / `record_id_forbidden_on_create` / `invalid_record_id` | Bad op shape — error includes `at: <index>` | Fix the offending op |
 
 ### Tenant isolation reminder
 

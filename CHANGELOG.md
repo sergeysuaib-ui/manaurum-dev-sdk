@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.11.0 (2026-04-28) — db.batch (atomic multi-write)
+
+### Added
+
+- **`manaurum.db.batch(ops)`** (Phase 3 slice 3.1). Run multiple writes in one transaction — all-or-nothing.
+  - `ops` is an array of up to **50** entries, each `{op: 'create'|'update'|'delete', entity_type, record_id?, data?}`.
+  - Single tenant-bound DB session, single `commit()` at the end. Any failure rolls the whole batch back.
+  - Errors include `at: <index>` so the app can point at the failing op precisely; status code matches the underlying single-op error (400 / 404 / 405 / 422).
+  - SDK build: **v1.8.0**.
+  - Documented in `references/sdk-api.md` → "Database API" → `db.batch` with op-shape table, atomicity model, error shape, and wire format.
+
+### Use cases
+
+Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-step status transitions, anything where a partial commit would corrupt an app-level invariant.
+
+### Notes
+
+- Forward-additive — existing single-op SDK calls are unchanged.
+- Larger workloads must chunk client-side; chunks are atomic individually but not collectively.
+
 ## 1.10.0 (2026-04-28) — db.list child-fetch via include
 
 ### Added
