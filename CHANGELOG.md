@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.10.0 (2026-04-28) — db.list child-fetch via include
+
+### Added
+
+- **`db.list` `include` option** (Phase 2 slice 2.4). Hydrate each parent record with its children in one round-trip:
+  - `include: ['<child_entity>', ...]` — array of distinct child entity names, max **4** per call.
+  - Convention-based FK: the child entity must declare `<parent_entity>_id` UUID with `indexed: true` in its manifest.
+  - Up to **100 children per parent** (sorted by `created_at` asc); extras dropped silently for v1.
+  - Implementation is N+1 (one child query per parent per include); promote to JOIN once we have planner data.
+  - Nested includes are not supported — hydrated child records always have `includes: null`.
+  - SDK build: **v1.7.0**.
+  - Documented in `references/sdk-api.md` → "Database API" with example, rules, and new errors (`InvalidIncludeError` 422, `include_must_be_json` / `include_must_be_array` 400).
+
+### Notes
+
+- Forward-additive — `db.list` calls without `include` keep working unchanged.
+- Phase 2 of the SDK roadmap is now fully shipped: 2.1 (db.list operators) + 2.2 (entity immutability) + 2.3 (db.aggregate) + 2.4 (child-fetch).
+
 ## 1.9.0 (2026-04-28) — db.aggregate
 
 ### Added

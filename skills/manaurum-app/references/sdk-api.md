@@ -324,6 +324,7 @@ var page = await app.db.list('note', {
 | `sort_by` | none | must reference an `indexed: true` field; else `422 FieldNotIndexedError` |
 | `sort_dir` | `'asc'` | `'asc'` or `'desc'`; else `422 InvalidSortDirectionError` |
 | `where` | `none` | structured filter map (v1.5+, see below) |
+| `include` | `none` | array of child entity names (v1.7+, see "Child-fetch" below) |
 
 **Filters (v1.5+, slice 2.1).** `where` is a map of `{field: <value-or-ops>}`.
 
@@ -338,6 +339,25 @@ var page = await app.db.list('note', {
 | `in` | list | non-empty, max **100** items; each item coerces to the field's type |
 
 Anything outside that enum (e.g. `between`, `like`, `not_eq`) returns `422 FilterOperatorError`. `null` values are not allowed (no `IS NULL` operator in v1).
+
+**Child-fetch (v1.7+, slice 2.4).** `include` hydrates each parent record with its children in one round-trip:
+
+```javascript
+const r = await app.db.list('reception', {
+  page_size: 50,
+  sort_by: 'created_at',
+  sort_dir: 'desc',
+  include: ['reception_line']
+});
+// r.rows[0].includes.reception_line = [{ id, data: { qty, reception_id }, ... }, ...]
+```
+
+Rules:
+- Convention-based FK: the child entity must declare a UUID field named `<parent_entity>_id` with `indexed: true`. There is no other relationship metadata in v1.
+- `include` is a non-empty list of distinct child-entity strings, max **4** entries.
+- Up to **100 children per parent** are returned (sorted by `created_at` ascending). If a parent has more, the extras are silently dropped — surface a server-side aggregate or paginate child-side instead.
+- Implementation is N+1 (one query per parent per include). Documented as such; will promote to a single `IN(...)` JOIN once we have planner data.
+- Nested includes are not supported. The hydrated child records always have `includes: null`.
 
 ### `manaurum.db.aggregate(entity_type, options)` (v1.6+, slice 2.3)
 
@@ -407,7 +427,7 @@ The SDK posts these messages; the shell forwards to `/api/app-data/...` under th
 |---|---|---|
 | `db.create` | `manaurum:db-create` | `POST /api/app-data/{app_slug}/{entity_type}` |
 | `db.get` | `manaurum:db-get` | `GET /api/app-data/{app_slug}/{entity_type}/{record_id}` |
-| `db.list` | `manaurum:db-list` | `GET /api/app-data/{app_slug}/{entity_type}?page=&page_size=&sort_by=&sort_dir=&where=<URL-encoded JSON>` |
+| `db.list` | `manaurum:db-list` | `GET /api/app-data/{app_slug}/{entity_type}?page=&page_size=&sort_by=&sort_dir=&where=<JSON>&include=<JSON>` |
 | `db.aggregate` | `manaurum:db-aggregate` | `GET /api/app-data/{app_slug}/{entity_type}/_aggregate?metrics=<URL-encoded JSON>&group_by=&where=<URL-encoded JSON>` |
 | `db.update` | `manaurum:db-update` | `PUT /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 | `db.delete` | `manaurum:db-delete` | `DELETE /api/app-data/{app_slug}/{entity_type}/{record_id}` |
@@ -434,6 +454,8 @@ All errors arrive as a rejected Promise. The SDK surfaces the raw HTTP error tex
 | `422 InvalidMetricError` | Unknown function (`MEDIAN`/`MIN`/`MAX`), `COUNT(field)`, `SUM(*)`, malformed string, or duplicate metric in `db.aggregate` | Use `COUNT(*)` / `SUM(field)` / `AVG(field)`; field must be indexed numeric |
 | `422 AggregateCardinalityExceeded` | `db.aggregate` produced > 1000 groups | Tighten `where`, or pre-bucket app-side |
 | `400 metrics_must_be_json` / `metrics_must_be_array` | `metrics=` query param is not a JSON array | SDK handles encoding; this means a hand-rolled HTTP call sent the wrong shape |
+| `400 include_must_be_json` / `include_must_be_array` | `include=` query param is not a JSON array | SDK handles encoding; means a hand-rolled HTTP call sent the wrong shape |
+| `422 InvalidIncludeError` | unknown child entity, missing/non-uuid/non-indexed `<parent>_id` field, duplicate or over-cap (>4) entries | Add the FK field to the child entity in the manifest, redeploy |
 
 ### Tenant isolation reminder
 
