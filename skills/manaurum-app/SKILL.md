@@ -71,6 +71,8 @@ Read `references/sdk-api.md` for the complete SDK reference.
 
 **Database (v1.6+)** — typed CRUD against entities declared in your manifest. Backed by `app_records` with RLS FORCE on `tenant_id`; cross-tenant access is structurally impossible. Methods: `app.db.create / get / list / update / delete`. Requires `db.read_own_entities` / `db.write_own_entities` permissions. See `references/sdk-api.md` → "Database API" for the full contract.
 
+**AI (v1.7+)** — workspace-scoped LLM via `app.ai.complete({prompt, system?})` and `app.ai.vision({prompt, image, system?})`. The platform picks the configured provider+model from the workspace's agent profile, runs the call server-side, and bills tokens to your `application_id`. Your app **never** sees the API key. If no agent is configured, calls reject with `AI_NOT_CONFIGURED`. See `references/sdk-api.md` → "AI API" for the full contract.
+
 **Legacy runtime APIs** (`storage.*`, `files.*`, `collections.*`, `toast.*`, `window.*`, `notifications.*`) — still callable from the SDK; not gated by the v1 manifest permission system. Use `db.*` for new persistent data; treat the rest as evolving.
 
 **Deep Links** — `app.onDeepLink(callback)` fires with `{ action, payload }` when the app is opened from a notification.
@@ -88,6 +90,7 @@ Create a single `index.html` (or multi-file bundle) that:
 - Reads `payload.tenant` from `manaurum:init` if you need tenant-aware behaviour (B2B kustomization, per-tenant branding, per-tenant config)
 - Sends `manaurum:ready` (the SDK does this automatically)
 - For data-backed apps: declare your entities in `manifest.entities[]` and call `app.db.create / get / list / update / delete` at runtime. See `references/sdk-api.md` → "Database API".
+- For AI-driven apps (summarisation, OCR, classification, vision): call `app.ai.complete(...)` or `app.ai.vision(...)`. No API key handling needed — the platform resolves it from the workspace's agent profile. See `references/sdk-api.md` → "AI API".
 
 ### Step 2: Apply design guidelines
 

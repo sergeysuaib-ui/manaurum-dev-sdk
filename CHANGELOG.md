@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.0 (2026-04-28) — runtime AI API
+
+### Added
+
+- **`manaurum.ai.*` runtime API documented end-to-end.** New "AI API" section in `references/sdk-api.md` covers:
+  - `app.ai.complete({ prompt, system? })` — text completion.
+  - `app.ai.vision({ prompt, image, system? })` — image+prompt completion. `image` accepts `{file_id}` (resolved server-side from the app's `stored_files`) or `{data_url}` (inline base64).
+  - Wire format: `manaurum:ai-complete` / `manaurum:ai-vision` postMessage verbs → `POST /api/app-ai/{slug}/complete` and `/vision`.
+  - Error codes: `AI_NOT_CONFIGURED`, `AI_DISABLED`, `VISION_UNSUPPORTED`, `IMAGE_INVALID`, `IMAGE_MIME_UNSUPPORTED`, `NOT_FOUND`, `TIMEOUT (90s)`.
+  - Vision provider support in v1: openai (gpt-4o family), openrouter, anthropic (claude-3 family), deepseek, glm. Gemini rejects with `VISION_UNSUPPORTED`.
+- **`SKILL.md` quick-overview updated** to surface `app.ai.*` as a first-class capability alongside `db.*`.
+
+### Notes
+
+- The iframe **never** sees the LLM API key. The platform resolves the workspace's configured provider+model from Settings → Agents and writes per-app `llm_token_usage` rows attributed to the calling `application_id` so workspace admins see per-app spend.
+- No manifest permission required in v1; the gate lives in Settings → Agents (a workspace admin can disable AI for a specific app, surfacing as `AI_DISABLED`). A formal `ai.use` manifest permission is on the roadmap and will be additive.
+
 ## 1.6.0 (2026-04-27) — runtime Database API
 
 ### Added

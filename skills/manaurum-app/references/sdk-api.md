@@ -375,6 +375,72 @@ All errors arrive as a rejected Promise. The SDK surfaces the raw HTTP error tex
 
 `manaurum.db.*` is automatically tenant-scoped server-side via RLS. You do not — and cannot — pass a `tenant_id` in your queries. The current tenant is bound by the platform from the user's session. If you need the tenant identifier for display (B2B kustomization), read `payload.tenant` from the `manaurum:init` message instead.
 
+## AI API — `manaurum.ai.*` (v1.7+, workspace LLM)
+
+Apps call the workspace's configured LLM through `manaurum.ai`. The platform resolves the right provider+model from the workspace's agent profile (Settings → Agents), runs the call server-side, and writes a `llm_token_usage` row attributed to your app's `application_id` so admins see per-app spend in Workspace Admin → Apps. The iframe never sees the LLM API key.
+
+If the workspace has no agent profile configured, calls reject with code `AI_NOT_CONFIGURED` so your app can prompt the user to set up AI in Settings. If the resolved provider doesn't support vision (e.g. Gemini in v1), `vision()` rejects with `VISION_UNSUPPORTED`.
+
+No manifest permission is required for `manaurum.ai` in v1; the gate already lives in Settings → Agents (a workspace admin can set `mode='disabled'` for an app there to block all AI calls — surfaces as `AI_DISABLED`). A formal `ai.use` manifest permission is on the roadmap and will be additive.
+
+### `manaurum.ai.complete({ prompt, system? })`
+
+```javascript
+const r = await app.ai.complete({
+  prompt: 'Summarise: ' + entryText,
+  system: 'Reply in one sentence.',
+});
+// r.text = "..."
+// r.prompt_tokens, r.completion_tokens — token counts
+// r.model, r.provider — what was actually used
+```
+
+### `manaurum.ai.vision({ prompt, image, system? })`
+
+`image` is one of:
+
+```javascript
+// (a) reference an already-uploaded file in your app's stored_files
+{ file_id: 'f_abc123' }
+
+// (b) inline data URL (jpeg/png/gif/webp; max ~6 MB raw)
+{ data_url: 'data:image/jpeg;base64,/9j/4AAQ...' }
+```
+
+```javascript
+const draft = await app.ai.vision({
+  prompt: 'Extract supplier and items as JSON. Schema: {"supplier_name": str, "lines": [{"name": str, "qty": num, "price": num}]}.',
+  image: { file_id: uploadedFileId },
+});
+// draft.text — model output (often JSON to parse)
+```
+
+When using `file_id`, the platform verifies the file's `app_id` matches your app's slug — app A cannot OCR app B's images.
+
+Provider support for `vision` in v1: openai (gpt-4o family), openrouter, anthropic (claude-3 family), deepseek, glm. Other providers reject with `VISION_UNSUPPORTED`.
+
+### Wire format
+
+| SDK method | postMessage `type` | HTTP route |
+|---|---|---|
+| `ai.complete` | `manaurum:ai-complete` | `POST /api/app-ai/{app_slug}/complete` |
+| `ai.vision` | `manaurum:ai-vision` | `POST /api/app-ai/{app_slug}/vision` |
+
+Responses come back as `manaurum:ai-response` with `_reqId` matched automatically. Default timeout is 90 seconds (provider round-trip).
+
+### Errors
+
+| Code | When |
+|------|------|
+| `AI_NOT_CONFIGURED` | Workspace has no agent profile and no legacy fallback |
+| `AI_DISABLED` | Admin set `mode='disabled'` for this app in Settings → Agents |
+| `VISION_UNSUPPORTED` | Resolved provider doesn't support vision in v1 |
+| `IMAGE_INVALID` | `vision()` got malformed `image` (missing both fields, bad data URL, oversized) |
+| `IMAGE_MIME_UNSUPPORTED` | Image is not jpeg/png/gif/webp |
+| `NOT_FOUND` | Slug not active in this tenant, or `file_id` doesn't belong to this app |
+| `TIMEOUT` | Provider didn't respond within 90s |
+| `NOT_READY` | Called before `onReady` fired |
+
 ## SDK Methods (wraps postMessage)
 
 ### Lifecycle
