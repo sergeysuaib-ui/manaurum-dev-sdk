@@ -339,6 +339,41 @@ var page = await app.db.list('note', {
 
 Anything outside that enum (e.g. `between`, `like`, `not_eq`) returns `422 FilterOperatorError`. `null` values are not allowed (no `IS NULL` operator in v1).
 
+### `manaurum.db.aggregate(entity_type, options)` (v1.6+, slice 2.3)
+
+Single-round-trip GROUP BY over an indexed field. Built for dashboards (sums by supplier, counts by status, etc.) where the alternative would be `db.list` + client-side reduce over many pages.
+
+```javascript
+const r = await app.db.aggregate('reception_line', {
+  metrics: ['COUNT(*)', 'SUM(qty)', 'SUM(line_total)'],
+  group_by: 'canonical_item_id',
+  where: { date: { gte: '2026-04-01' } }
+});
+// {
+//   groups: [
+//     { key: '<uuid>', metrics: { count: 12, sum_qty: '450.00', sum_line_total: '12345.67' } },
+//     ...
+//   ]
+// }
+```
+
+`options` fields:
+| Field | Notes |
+|---|---|
+| `metrics` | Required. Non-empty list (max **8**) of strings. v1 grammar: `COUNT(*)`, `SUM(<field>)`, `AVG(<field>)`. |
+| `group_by` | Required. Field name; must be `indexed: true`. |
+| `where` | Same shape as `db.list` (eq / gt / gte / lt / lte / in). |
+
+Rules:
+- `SUM` and `AVG` fields must be `indexed: true` AND numeric (`integer` or `decimal`).
+- `COUNT(field)` is **not** in v1 — use `COUNT(*)`.
+- `MIN`/`MAX` are deferred (will arrive once we have planner data on the JSONB-backed pivot path).
+- Hard cap of **1000 distinct groups**. Overflow rejects with `422 AggregateCardinalityExceeded` — refine your `where` or pre-bucket the data app-side.
+- Numeric metric values come back as **strings** (Decimal-safe, no float precision loss). Coerce with `Number(...)` or a Decimal lib if needed.
+- Group keys for UUID / timestamp fields come back as strings; numeric and string keys pass through as-is.
+
+Wire format: `GET /api/app-data/{slug}/{entity}/_aggregate?metrics=<json>&group_by=<field>&where=<json>`. The SDK and bridge handle URL encoding.
+
 ### `manaurum.db.update(entity_type, record_id, data)`
 
 **Full-replace** of the record's `data` field. Pass the entire object you want stored — fields you omit will be lost.
@@ -373,6 +408,7 @@ The SDK posts these messages; the shell forwards to `/api/app-data/...` under th
 | `db.create` | `manaurum:db-create` | `POST /api/app-data/{app_slug}/{entity_type}` |
 | `db.get` | `manaurum:db-get` | `GET /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 | `db.list` | `manaurum:db-list` | `GET /api/app-data/{app_slug}/{entity_type}?page=&page_size=&sort_by=&sort_dir=&where=<URL-encoded JSON>` |
+| `db.aggregate` | `manaurum:db-aggregate` | `GET /api/app-data/{app_slug}/{entity_type}/_aggregate?metrics=<URL-encoded JSON>&group_by=&where=<URL-encoded JSON>` |
 | `db.update` | `manaurum:db-update` | `PUT /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 | `db.delete` | `manaurum:db-delete` | `DELETE /api/app-data/{app_slug}/{entity_type}/{record_id}` |
 
@@ -395,6 +431,9 @@ All errors arrive as a rejected Promise. The SDK surfaces the raw HTTP error tex
 | `400 where_must_be_json` / `where_must_be_object` | `where=` query param is not valid JSON, or is an array/scalar | Pass a JSON object |
 | `405 EntityImmutable` | `update` on an entity declared `immutable: true` | Append a new record instead; do not mutate journal entries |
 | `405 EntityNotSoftDeletable` | `delete` on an entity declared `no_soft_delete: true` | Reverse the journal with a compensating record instead |
+| `422 InvalidMetricError` | Unknown function (`MEDIAN`/`MIN`/`MAX`), `COUNT(field)`, `SUM(*)`, malformed string, or duplicate metric in `db.aggregate` | Use `COUNT(*)` / `SUM(field)` / `AVG(field)`; field must be indexed numeric |
+| `422 AggregateCardinalityExceeded` | `db.aggregate` produced > 1000 groups | Tighten `where`, or pre-bucket app-side |
+| `400 metrics_must_be_json` / `metrics_must_be_array` | `metrics=` query param is not a JSON array | SDK handles encoding; this means a hand-rolled HTTP call sent the wrong shape |
 
 ### Tenant isolation reminder
 

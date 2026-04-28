@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.9.0 (2026-04-28) — db.aggregate
+
+### Added
+
+- **`manaurum.db.aggregate(entity, options)`** (Phase 2 slice 2.3). Single-round-trip GROUP BY for dashboards.
+  - `metrics`: list (max 8) of `COUNT(*)` / `SUM(<field>)` / `AVG(<field>)`. Numeric metric fields must be `indexed: true` and `integer`/`decimal`.
+  - `group_by`: any `indexed: true` field.
+  - `where`: same operator grammar as `db.list` (slice 2.1).
+  - Hard cap of 1000 distinct groups — `422 AggregateCardinalityExceeded` on overflow.
+  - Decimal metric values come back as JSON strings (Decimal-safe); UUID/timestamp keys also stringified. SDK build: **v1.6.0**.
+  - Documented in `references/sdk-api.md` → "Database API" with response shape, error table, and wire format. Errors: `InvalidMetricError`, `AggregateCardinalityExceeded`, `metrics_must_be_json`, `metrics_must_be_array`.
+
+### Notes
+
+- Forward-additive — existing `db.list` / `db.create` / etc. unchanged.
+- `MIN`/`MAX` and `COUNT(field)` deferred. Once we have planner data on real datasets, MIN/MAX are the next likely additions.
+
 ## 1.8.0 (2026-04-28) — db.list filter operators + entity immutability flags
 
 ### Added
