@@ -101,6 +101,9 @@ Only these are accepted by the validator. Anything else → `400 rejected_manife
 | `events.subscribe` | Subscribe to platform event streams |
 | `db.read_own_entities` | Read declared entities |
 | `db.write_own_entities` | Create / update / delete declared entities |
+| `ai.use` | Call `manaurum.ai.complete` / `.vision` against the workspace's configured LLM (added v1.7) |
+
+> **Note on `ai.use`:** in v1 the runtime does **not** enforce this permission — calls to `manaurum.ai.*` work whether you declare it or not. The declaration is for **transparency** (visible at install time, audit trails) and **forward compatibility** (when per-tier limits or a formal install-prompt are added, `ai.use` is the discriminator). Declare it if you call AI; the workspace admin's gate lives in Settings → Agents (`mode='disabled'` for an app surfaces as `AI_DISABLED` regardless of manifest).
 
 ## Entities
 

@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`ai.use` manifest permission.** New entry in the v1 permissions enum (`manifest-spec.md` → "Permissions enum (v1)"). Declare it if your app calls `manaurum.ai.complete` or `.vision`. v1 runtime doesn't enforce it (yet) — declaration is for transparency at install time and forward compatibility when per-tier limits arrive. Workspace admin's gate stays at Settings → Agents (`mode='disabled'` → `AI_DISABLED`).
 - **`manaurum.ai.*` runtime API documented end-to-end.** New "AI API" section in `references/sdk-api.md` covers:
   - `app.ai.complete({ prompt, system? })` — text completion.
   - `app.ai.vision({ prompt, image, system? })` — image+prompt completion. `image` accepts `{file_id}` (resolved server-side from the app's `stored_files`) or `{data_url}` (inline base64).
