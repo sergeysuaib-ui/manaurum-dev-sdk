@@ -124,7 +124,7 @@ A declared schema for your app's persistent data. The platform stores rows in a 
 
 Entity rules:
 - `type`: lowercase snake_case, `^[a-z][a-z0-9_]*$`.
-- `storage`: only `"shared"` is allowed in v1. (`"dedicated"` is reserved.)
+- `storage`: `"shared"` (default, EAV-pivot) or `"dedicated"` (real PG table — see below).
 - `fields`: object of field name → `{type, indexed?, required?}`.
 - Field types: `string`, `uuid`, `timestamp`, `integer`, `decimal`, `boolean`, `json`.
 - `indexed: true` makes a field queryable for equality, range, and IN (slice 2.1+).
@@ -144,6 +144,117 @@ Entity rules:
     }
   }]
 }
+```
+
+## Dedicated storage (`storage: "dedicated"`)
+
+`shared` storage (the default) writes every entity row into a single platform-wide `app_records` table — fast to set up, but every read/write goes through an EAV pivot. Fine for low-volume CRUD.
+
+`dedicated` storage gives your entity a real PostgreSQL table — real columns, real indexes, real foreign keys, real `UNIQUE` constraints, all under the same RLS-FORCE tenant isolation as the rest of the platform. You declare it in the manifest; the deploy pipeline issues the DDL automatically. **No Alembic. No Core PR.**
+
+Use `dedicated` when one of these is true:
+- You'll write more than ~10k rows per tenant for this entity.
+- You need a foreign key to another one of your entities.
+- You need a per-tenant `UNIQUE` constraint (e.g. invoice numbers).
+- You need a compound index (sort by `(vendor_id, issued_at)`).
+
+Stick with `shared` if you're just storing a handful of rows of config-like data — the EAV path has zero migration cost.
+
+### Full dedicated example
+
+```json
+{
+  "entities": [
+    {
+      "type": "vendor",
+      "storage": "dedicated",
+      "fields": {
+        "name":   { "type": "string", "required": true, "unique": true },
+        "tax_id": { "type": "string", "indexed": true }
+      }
+    },
+    {
+      "type": "invoice",
+      "storage": "dedicated",
+      "fields": {
+        "number":    { "type": "string",    "required": true, "unique": true, "indexed": true },
+        "vendor_id": {
+          "type": "uuid",
+          "required": true,
+          "indexed": true,
+          "references": { "entity": "vendor", "on_delete": "restrict" }
+        },
+        "amount":    { "type": "decimal",   "required": true },
+        "issued_at": { "type": "timestamp", "required": true, "indexed": true },
+        "notes":     { "type": "string" }
+      },
+      "indexes": [
+        { "on": ["vendor_id", "issued_at"] },
+        { "on": ["issued_at", "number"], "unique": true }
+      ]
+    }
+  ]
+}
+```
+
+### Field-level extras (dedicated only)
+
+| Property | Meaning |
+|---|---|
+| `unique: true` | Per-tenant `UNIQUE` (the platform always scopes uniqueness to `tenant_id` — your invoice numbers don't have to be unique against other tenants). Rejected on `shared`. |
+| `references` | Foreign key to another entity in the same manifest. Object: `{ "entity": "<other_type>", "on_delete": "restrict" \| "cascade" \| "set_null" }`. Target entity must also be `dedicated`. Rejected on `shared`. |
+
+### Entity-level `indexes[]` (dedicated only)
+
+Compound (multi-column) indexes for sort and filter combinations:
+
+```json
+"indexes": [
+  { "on": ["vendor_id", "issued_at"] },
+  { "on": ["issued_at", "number"], "unique": true }
+]
+```
+
+Each entry: `on` (array of field names) + optional `unique` (default false). Field names must exist on the same entity. Compound `unique` is also tenant-scoped.
+
+### Cross-field rules (R1–R7)
+
+These are checked by the validator post-schema; violations come back as `400 rejected_manifest_invalid`:
+
+| Rule | What it enforces |
+|---|---|
+| R1 | `unique: true` only on `dedicated` entities. |
+| R2 | `references` only on `dedicated` entities. |
+| R3 | Entity-level `indexes[]` only on `dedicated` entities. |
+| R4 | `references.entity` must point to a `dedicated` entity declared in the same manifest. |
+| R5 | `references.on_delete: "set_null"` requires the FK field to be `required: false` (you can't null a NOT NULL column). |
+| R6 | Every field listed in a compound `indexes[]` entry must exist on the entity. |
+| R7 | No FK cycles between dedicated entities (self-FK is allowed for tree-shaped data like `parent_id`). |
+
+### What you cannot change after first deploy
+
+The diff engine classifies operations as **additive** or **destructive**. Additive = applied automatically on redeploy. Destructive = rejected with `rejected_destructive_change` unless you opt in (and even then, you'll lose data — they exist for development, not for production):
+
+| Change | Class | Result |
+|---|---|---|
+| Add a new entity | additive | applied |
+| Add a new field | additive | applied (if `required: true`, your existing rows must allow NULL — the platform will reject the deploy if there's data) |
+| Add an index / unique / FK | additive | applied |
+| Drop an entity | destructive | rejected |
+| Drop a field | destructive | rejected |
+| Drop / loosen a constraint | destructive | rejected |
+| Change `storage` between `shared` and `dedicated` | always rejected | both directions |
+
+Plan your schema before the first deploy. Storage tier is a one-way decision per entity.
+
+### Runtime is the same
+
+You access dedicated entities through the **exact same** SDK methods as shared ones — `app.db.create / get / list / update / delete`. The platform routes the call to the right backend behind the unchanged interface. Your bundle never knows the difference.
+
+```js
+// Looks identical whether `invoice` is shared or dedicated.
+await app.db.create('invoice', { number: 'INV-001', vendor_id: vendorId, amount: 1234.56, issued_at: new Date().toISOString() });
+const recent = await app.db.list('invoice', { sort_by: 'issued_at', order: 'desc', limit: 20 });
 ```
 
 ## Integrations

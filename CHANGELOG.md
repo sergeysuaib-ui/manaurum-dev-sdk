@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.13.0 (2026-04-30) — graduated storage (`storage: "dedicated"`)
+
+### Added
+
+- **Dedicated storage tier documented.** New "Dedicated storage" section in `manaurum-app/references/manifest-spec.md`: when to use it (>10k rows / per-tenant `UNIQUE` / FKs / compound indexes), full example, the field-level extras (`unique`, `references`), the entity-level `indexes[]` array, the R1–R7 cross-field rules, additive vs destructive change classification, and the "runtime is the same" reminder.
+- **SKILL.md updated** so the Database quick overview surfaces both tiers (shared = EAV-pivot, default; dedicated = real PG table). Validation rules table updated — `entities[].storage` is no longer marked "only `shared`". The same `app.db.create / get / list / update / delete` works against either tier; the platform routes behind the unchanged interface.
+
+### Why this matters
+
+Until now `storage: "dedicated"` was reserved-but-rejected. Apps that grew past EAV-comfortable size had to either accept slow EAV reads or ask the platform team for an Alembic migration + Core PR. With the F1.5 graduated-storage path live (Manaurum PR #328 merged + deployed on prod 2026-04-30), an external developer writes one word in the manifest and gets a real table — real columns, real indexes, real FKs, real `UNIQUE` — auto-generated and migrated by the deploy pipeline. The boundary "go to Core via PR" moves from "I need one JOIN or index" up to "I need shell-level intervention".
+
+### Notes
+
+- Pure-documentation release — no template change. The runtime API and SDK build are unchanged.
+- Storage tier is a one-way decision per entity. Plan before first deploy: changing `storage` between `shared` and `dedicated` after deploy is rejected as a destructive transition.
+- (Plumbing only: 1.12.0 shipped the Component Library docs but missed the `plugin.json` version bump — this release lands at 1.13.0 to keep the cache directory layout monotonic.)
+
 ## 1.12.0 (2026-04-30) — manaurumOS Component Library
 
 ### Added
