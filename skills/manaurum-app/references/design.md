@@ -2,6 +2,8 @@
 
 ManAurum OS has two themes: **Smoothie** (macOS-like) and **XP** (Windows XP). Your app must adapt to both. This reference contains the exact styles used in built-in apps — copy them to look native.
 
+> **Don't design from scratch when you can borrow.** manaurumOS ships a 100-component library (buttons, cards, modals, empty states, dashboards, settings, forms, patterns…) that already uses the Aurora-lite token vocabulary and adapts to both themes. Browse at <https://manaurum.com/library> or fetch from your app: `app.mul.list()`, `app.mul.get('button-primary-01')`. See `sdk-api.md` → "Component Library (MUL)".
+
 ## Theme Detection
 
 ```javascript

@@ -3,7 +3,7 @@ name: manaurum-app
 description: Build apps for ManAurum OS — a multi-tenant browser-based virtual desktop. Use this skill whenever the user wants to create, build, generate, or develop an app for ManAurum OS, SeregaOS, or mentions building iframe apps for a virtual desktop. Also triggers when user mentions ManAurum SDK, manaurum.js, or postMessage bridge apps. Covers app generation from prompts, manifest creation, SDK integration, theme support, multi-tenant context, and the new manifest+bundle Deploy API.
 ---
 
-# Build ManAurum OS Apps (v1.5+ tenant-aware)
+# Build ManAurum OS Apps (v1.12+ tenant-aware, with Component Library)
 
 You are helping the user build an app that runs inside ManAurum OS — a **multi-tenant** browser-based virtual desktop. Each app is a standalone HTML/JS bundle loaded in a sandboxed iframe inside a tenant's workspace. The OS provides the window frame, theme, user info, and **tenant context** via a postMessage bridge.
 
@@ -73,6 +73,8 @@ Read `references/sdk-api.md` for the complete SDK reference.
 
 **AI (v1.7+)** — workspace-scoped LLM via `app.ai.complete({prompt, system?})` and `app.ai.vision({prompt, image, system?})`. The platform picks the configured provider+model from the workspace's agent profile, runs the call server-side, and bills tokens to your `application_id`. Your app **never** sees the API key. If no agent is configured, calls reject with `AI_NOT_CONFIGURED`. See `references/sdk-api.md` → "AI API" for the full contract.
 
+**Component Library (v1.9+)** — `app.mul.list / search / get` returns curated single-file HTML/CSS/JS components (100 atoms, blocks, screens, patterns) sharing the Aurora-lite token vocabulary. Use at build time to inline chosen components into your bundle. No permission required. Browse: <https://manaurum.com/library>. See `references/sdk-api.md` → "Component Library (MUL)".
+
 **Legacy runtime APIs** (`storage.*`, `files.*`, `collections.*`, `toast.*`, `window.*`, `notifications.*`) — still callable from the SDK; not gated by the v1 manifest permission system. Use `db.*` for new persistent data; treat the rest as evolving.
 
 **Deep Links** — `app.onDeepLink(callback)` fires with `{ action, payload }` when the app is opened from a notification.
@@ -95,6 +97,8 @@ Create a single `index.html` (or multi-file bundle) that:
 ### Step 2: Apply design guidelines
 
 Read `references/design.md` for theme details. Two themes: **Smoothie** (Inter font, `#f9f9ff`) and **XP** (Tahoma font, `#ece9d8`). Adapt to both. The OS provides the window title bar — do NOT render your own window chrome.
+
+**Before designing from scratch, check the Component Library.** 100 curated single-file components (buttons, modals, empty states, dashboards, settings, forms…) share the Aurora-lite token vocabulary used by the OS shell — drop them in and they look native. Browse at <https://manaurum.com/library> or call `app.mul.search('card', { level: 'block' })` from a build script. See `references/sdk-api.md` → "Component Library (MUL)".
 
 ### Step 3: Write the manifest (v1 schema)
 

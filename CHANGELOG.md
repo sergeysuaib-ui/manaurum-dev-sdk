@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.12.0 (2026-04-30) — manaurumOS Component Library
+
+### Added
+
+- **`manaurum.mul.*` documented end-to-end.** New "Component Library (MUL)" section in `manaurum-app/references/sdk-api.md` covers `mul.list()`, `mul.search(query, filters?)`, `mul.get(id)` — thin same-origin wrappers over the public read-only `/api/library/*` endpoints. Includes wire format, build-time vs runtime guidance, and the "no permission required" note (the library is curated and unauthenticated).
+- **`SKILL.md` quick overview** updated to surface the library as a first-class building block. Step 2 (design) now nudges devs to browse the catalogue before drawing from scratch.
+- **`design.md`** opens with a "don't design from scratch when you can borrow" pointer to the library.
+
+### Notes
+
+- Underlying surface ships in PRs #325 (HTTP API + catalogue UI at `/library`, merged), #326 (SDK v1.9.0 helpers, merged), #327 (App Builder catalogue injection under `experiment.app_builder_uses_library`, merged).
+- The library is curated, public, and read-only. No tenant scoping, no auth headers — same-origin fetch is enough. Iframe apps with strict CSP `connect-src` should bake chosen components into the bundle at build time rather than fetching at runtime.
+- Pure-documentation release — no template change.
+
 ## 1.11.0 (2026-04-28) — db.batch (atomic multi-write)
 
 ### Added
