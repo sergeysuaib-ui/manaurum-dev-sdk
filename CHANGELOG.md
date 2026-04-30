@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.14.0 (2026-04-30) — F1.5 hardening — R8 quotas + destructive add-NOT-NULL
+
+### Added
+
+- **R8 row** in the cross-field rules table (`manifest-spec.md`). Per-app quotas now enforced by the validator: max **50** entities per app, max **100** fields per entity, max **20** compound indexes per entity. Generous; you should not hit these in a real app — the point is to surface a clear early reject if a manifest is accidentally ballooning (codegen bug, abuse).
+
+### Changed
+
+- **Additive vs destructive table** in `manifest-spec.md` — adding a `required: true` field to an existing entity is now classified as **destructive** by the diff engine. Previously it would slip through as additive and PG would reject the ALTER on populated tables with a generic error. Now the deploy returns a clean `rejected_destructive_change` with a description pointing at the safe two-step pattern (add as optional → backfill → tighten to required), or the dev passes `allow_destructive=true` to make the intent explicit.
+
+### Notes
+
+- Pure-documentation release — runtime API and SDK build unchanged. Companion to Manaurum PR #339 (validator + diff engine + telemetry).
+
 ## 1.13.0 (2026-04-30) — graduated storage (`storage: "dedicated"`)
 
 ### Added

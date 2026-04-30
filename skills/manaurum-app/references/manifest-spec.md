@@ -217,7 +217,7 @@ Compound (multi-column) indexes for sort and filter combinations:
 
 Each entry: `on` (array of field names) + optional `unique` (default false). Field names must exist on the same entity. Compound `unique` is also tenant-scoped.
 
-### Cross-field rules (R1–R7)
+### Cross-field rules (R1–R8)
 
 These are checked by the validator post-schema; violations come back as `400 rejected_manifest_invalid`:
 
@@ -230,6 +230,7 @@ These are checked by the validator post-schema; violations come back as `400 rej
 | R5 | `references.on_delete: "set_null"` requires the FK field to be `required: false` (you can't null a NOT NULL column). |
 | R6 | Every field listed in a compound `indexes[]` entry must exist on the entity. |
 | R7 | No FK cycles between dedicated entities (self-FK is allowed for tree-shaped data like `parent_id`). |
+| R8 | Per-app quotas: max 50 entities per app, max 100 fields per entity, max 20 compound indexes per entity. Generous; you should not hit these in a real app. |
 
 ### What you cannot change after first deploy
 
@@ -238,7 +239,8 @@ The diff engine classifies operations as **additive** or **destructive**. Additi
 | Change | Class | Result |
 |---|---|---|
 | Add a new entity | additive | applied |
-| Add a new field | additive | applied (if `required: true`, your existing rows must allow NULL — the platform will reject the deploy if there's data) |
+| Add a new optional field | additive | applied |
+| Add a new `required: true` field on an existing entity | destructive | rejected (PG would fail the ALTER on populated tables). Use the safe two-step pattern: add as optional → backfill data → tighten to `required` in a follow-up deploy. Or pass `allow_destructive=true` to attempt anyway (still errors loudly if data exists). |
 | Add an index / unique / FK | additive | applied |
 | Drop an entity | destructive | rejected |
 | Drop a field | destructive | rejected |
