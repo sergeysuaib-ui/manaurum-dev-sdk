@@ -570,6 +570,63 @@ Responses come back as `manaurum:ai-response` with `_reqId` matched automaticall
 | `TIMEOUT` | Provider didn't respond within 90s |
 | `NOT_READY` | Called before `onReady` fired |
 
+## Component Library (MUL) — `manaurum.mul.*`
+
+manaurumOS ships a curated component library — 100 vanilla HTML/CSS/JS components (atoms, blocks, screens, patterns) sharing the Aurora-lite token vocabulary used by the OS shell. The SDK exposes thin read-only helpers (v1.9.0+) that wrap the public HTTP endpoints under `/api/library/*`.
+
+Browse the catalogue: <https://manaurum.com/library>.
+
+### `manaurum.mul.list()`
+
+Returns the full compact registry (~40 KB) — array of `{id, level, category, tags, priority, status, use_when, avoid_when, supports, path}`.
+
+```js
+const all = await app.mul.list();
+console.log(all.length); // 100
+```
+
+### `manaurum.mul.search(query, filters?)`
+
+Client-side filter over the registry. `query` matches case-insensitively against id, category, tags, and `use_when`. `filters.level` narrows to one of `'atom' | 'block' | 'screen' | 'pattern'`; `filters.priority` narrows to `'P0' | 'P1' | 'P2' | 'P3'`.
+
+```js
+const cards   = await app.mul.search('card', { level: 'block' });
+const buttons = await app.mul.search('button', { level: 'atom', priority: 'P0' });
+```
+
+### `manaurum.mul.get(id)`
+
+Returns one component's manifest plus its single-file HTML.
+
+```js
+const c = await app.mul.get('button-primary-01');
+// c.id, c.manifest, c.html (single-file HTML, paste-ready)
+```
+
+### Wire format
+
+| SDK call | HTTP request |
+|----------|--------------|
+| `app.mul.list()` | `GET /api/library/registry` |
+| `app.mul.get(id)` | `GET /api/library/components/{id}` |
+| `app.mul.search(...)` | `GET /api/library/registry` then client-side filter |
+
+### Build-time vs runtime
+
+These helpers are unauthenticated same-origin fetches with no postMessage hop. **Use them at build time** (skill plugin / tenant-dev tooling) and inline the chosen component HTML into your bundle. Iframe apps with strict CSP `connect-src` won't be able to reach `/api/library/*` at runtime — that's by design; the library is curated and immutable per deploy, so a build-time bake gives you a smaller, faster, offline-tolerant app.
+
+### Token rule
+
+Component CSS uses `var(--token)` exclusively. Load the design tokens once at the top of your app to inherit the active theme automatically:
+
+```html
+<link rel="stylesheet" href="/api/library/tokens.css">
+```
+
+### Permissions
+
+None. The library is curated and read-only — no permission needed in the v1 manifest enum.
+
 ## SDK Methods (wraps postMessage)
 
 ### Lifecycle
