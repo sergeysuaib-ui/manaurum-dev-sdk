@@ -203,6 +203,7 @@ Stick with `shared` if you're just storing a handful of rows of config-like data
 |---|---|
 | `unique: true` | Per-tenant `UNIQUE` (the platform always scopes uniqueness to `tenant_id` — your invoice numbers don't have to be unique against other tenants). Rejected on `shared`. |
 | `references` | Foreign key to another entity in the same manifest. Object: `{ "entity": "<other_type>", "on_delete": "restrict" \| "cascade" \| "set_null" }`. Target entity must also be `dedicated`. Rejected on `shared`. |
+| `renamed_from` | Tells the diff engine the field was renamed from a previous name. Emits `ALTER TABLE RENAME COLUMN` instead of DROP+ADD on next deploy (additive — no data loss). Drop the hint on the deploy after the rename. Rejected on `shared` (no-op there) and rejected if the source name is also a current field on the same entity. |
 
 ### Entity-level `indexes[]` (dedicated only)
 
@@ -231,6 +232,7 @@ These are checked by the validator post-schema; violations come back as `400 rej
 | R6 | Every field listed in a compound `indexes[]` entry must exist on the entity. |
 | R7 | No FK cycles between dedicated entities (self-FK is allowed for tree-shaped data like `parent_id`). |
 | R8 | Per-app quotas: max 50 entities per app, max 100 fields per entity, max 20 compound indexes per entity. Generous; you should not hit these in a real app. |
+| R9 | `renamed_from` only on `dedicated` entities; target name must differ from the source name; the source name must NOT also be a current field (renames don't merge two fields). |
 
 ### What you cannot change after first deploy
 

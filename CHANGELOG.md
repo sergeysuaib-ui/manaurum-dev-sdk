@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.15.0 (2026-04-30) — F1.5 evolution — `renamed_from` + dedicated `include`
+
+### Added
+
+- **`renamed_from` field-level hint** documented in `manifest-spec.md`. Set `"renamed_from": "<old_name>"` on a dedicated field and the diff engine emits `ALTER TABLE RENAME COLUMN` instead of the default DROP+ADD on next deploy. Additive — no data loss. Drop the hint on the deploy after the rename. Validator R9 rejects shared-only use, self-rename, and source-name-still-exists collisions.
+- **R9 row** in the cross-field rules table.
+- **`include` for dedicated entities** documented in `sdk-api.md`. The shared-storage `include` had a convention-based FK lookup (child must have `<parent>_id` field); dedicated uses the explicit `references` declaration. Single indexed `IN(...)` query per child type — no N+1. Caps unchanged: 4 includes max, 100 children per parent.
+
+### Notes
+
+- Pure-documentation release. Backend changes shipped in Manaurum PR #341 (merged + deployed 2026-04-30). Runtime API and SDK build unchanged — same `app.db.list('parent', { include: [...] })` works against either tier.
+
 ## 1.14.0 (2026-04-30) — F1.5 hardening — R8 quotas + destructive add-NOT-NULL
 
 ### Added
