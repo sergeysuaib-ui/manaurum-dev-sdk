@@ -353,10 +353,10 @@ const r = await app.db.list('reception', {
 ```
 
 Rules:
-- Convention-based FK: the child entity must declare a UUID field named `<parent_entity>_id` with `indexed: true`. There is no other relationship metadata in v1.
+- **Shared entities (default):** convention-based FK — the child entity must declare a UUID field named `<parent_entity>_id` with `indexed: true`.
+- **Dedicated entities (v1.13+):** explicit FK via the manifest's `references` declaration. The child entity must have exactly one field with `references: { entity: "<parent>" }` — ambiguity (two FKs to the same parent) is rejected with `400 invalid_include`. Dedicated `include` runs as **one** indexed `IN(...)` query per child type — no N+1.
 - `include` is a non-empty list of distinct child-entity strings, max **4** entries.
-- Up to **100 children per parent** are returned (sorted by `created_at` ascending). If a parent has more, the extras are silently dropped — surface a server-side aggregate or paginate child-side instead.
-- Implementation is N+1 (one query per parent per include). Documented as such; will promote to a single `IN(...)` JOIN once we have planner data.
+- Up to **100 children per parent** are returned. If a parent has more, the extras are silently dropped — surface a server-side aggregate or paginate child-side instead.
 - Nested includes are not supported. The hydrated child records always have `includes: null`.
 
 ### `manaurum.db.aggregate(entity_type, options)` (v1.6+, slice 2.3)
