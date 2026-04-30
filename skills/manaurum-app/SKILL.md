@@ -69,7 +69,11 @@ Read `references/sdk-api.md` for the complete SDK reference.
 
 **Window, Toast, Notifications** — see `references/sdk-api.md`.
 
-**Database (v1.6+)** — typed CRUD against entities declared in your manifest. Backed by `app_records` with RLS FORCE on `tenant_id`; cross-tenant access is structurally impossible. Methods: `app.db.create / get / list / update / delete`. Requires `db.read_own_entities` / `db.write_own_entities` permissions. See `references/sdk-api.md` → "Database API" for the full contract.
+**Database (v1.6+, graduated storage in v1.13+)** — typed CRUD against entities declared in your manifest. Two storage tiers, picked per entity in the manifest, same SDK API:
+- **`storage: "shared"` (default)** — EAV-pivot in `app_records`. Zero setup, fine for low-volume CRUD.
+- **`storage: "dedicated"`** — real per-app PG table with real columns, indexes, foreign keys, and `UNIQUE` constraints. Use when you'll have >10k rows per tenant for an entity, need an FK between your entities, or need a per-tenant `UNIQUE`. The platform issues the DDL on deploy — no Alembic, no Core PR. See `references/manifest-spec.md` § "Dedicated storage" for fields, indexes, and the R1–R7 cross-field rules.
+
+Both tiers run under RLS FORCE on `tenant_id`; cross-tenant access is structurally impossible. Methods: `app.db.create / get / list / update / delete`. Requires `db.read_own_entities` / `db.write_own_entities` permissions. See `references/sdk-api.md` → "Database API" for the full runtime contract.
 
 **AI (v1.7+)** — workspace-scoped LLM via `app.ai.complete({prompt, system?})` and `app.ai.vision({prompt, image, system?})`. The platform picks the configured provider+model from the workspace's agent profile, runs the call server-side, and bills tokens to your `application_id`. Your app **never** sees the API key. If no agent is configured, calls reject with `AI_NOT_CONFIGURED`. See `references/sdk-api.md` → "AI API" for the full contract.
 
@@ -225,7 +229,7 @@ Only these values are accepted by the manifest validator in v1. Anything else �
 - `entry_point`: path inside the bundle (e.g. `index.html`), not a URL
 - `window.default_width` / `default_height`: 320–4000 / 240–4000
 - `entities[].type`: lowercase snake_case
-- `entities[].storage`: `"shared"` (only allowed value in v1)
+- `entities[].storage`: `"shared"` (default, EAV-pivot) or `"dedicated"` (real PG table — see `references/manifest-spec.md` § Dedicated storage)
 - Bundle: max 50 MB, zip with `index.html` at the root
 
 ## Common Failures
