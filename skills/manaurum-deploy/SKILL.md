@@ -27,7 +27,10 @@ description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platfo
 
 ```bash
 cd my-app
-tar cf /tmp/ctx.tar Dockerfile $(ls -A | grep -v '^\.env')
+tar cf /tmp/ctx.tar \
+  --exclude='.env*' --exclude='.git' --exclude='node_modules' \
+  --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
+  .
 
 B64=$(base64 -w0 /tmp/ctx.tar)
 jq -n \
@@ -247,8 +250,13 @@ fi
 
 echo "Bundling build context…"
 tar cf /tmp/ctx.tar \
-  Dockerfile \
-  $(ls -A | grep -vE '^(\.env|\.git|node_modules|deploy\.sh)')
+  --exclude='.env*' \
+  --exclude='.git' \
+  --exclude='node_modules' \
+  --exclude='deploy.sh' \
+  --exclude='*.tar' \
+  --exclude='*.zip' \
+  .
 
 echo "Deploying…"
 B64=$(base64 -w0 /tmp/ctx.tar)

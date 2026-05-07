@@ -159,7 +159,10 @@ The deploy is a single API call. Bundle the build context, base64-encode, post:
 
 ```bash
 cd my-app
-tar cf /tmp/ctx.tar Dockerfile $(ls -A | grep -v '^\.env')
+tar cf /tmp/ctx.tar \
+  --exclude='.env*' --exclude='.git' --exclude='node_modules' \
+  --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
+  .
 
 B64=$(base64 -w0 /tmp/ctx.tar)
 jq -n --arg b "$B64" --argjson m "$(cat manifest_v2.json)" \
