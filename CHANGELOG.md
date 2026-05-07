@@ -1,5 +1,60 @@
 # Changelog
 
+## 2.0.0 (2026-05-07) — Platform v2 is the default flow
+
+This is a **major** release. The skill defaults flip: every new app is now scaffolded, taught, and deployed as a Platform v2 containerized hosted app. The v1 (iframe + `manaurum.js` + `mnu_*` token + `/api/dev/apps/deploy`) flow is preserved as a legacy section in each skill, only used when an existing v1 app needs maintenance.
+
+### Why
+
+Platform v2 shipped to production on 2026-05-06/07. New apps have access to the capability gateway (KV / files / AI / OCR / notifications / events / RPC / HTTP egress / audit), per-tenant isolation via FORCE-RLS on every Core table, and a one-command deploy that yields `https://<slug>.apps.manaurum.com` with TLS in ~7–10 seconds. There is no Core PR for any of this. v1 cannot match those primitives — every v1 app is a static iframe with permission-gated `postMessage` calls, and per-tenant deploys are independent.
+
+The team's working assumption from now on: **all new app work goes on v2**. v1 is feature-frozen for existing apps. This skill release reflects that.
+
+### Added
+
+- **`manaurum-app/SKILL.md`** rewritten with v2 as the primary flow. Teaches: container model, env vars, capability gateway contract, manifest v2 minimum, common rejection codes, what NOT to do. Legacy v1 path preserved as a brief section at the bottom with pointers to the v1 references.
+- **`manaurum-deploy/SKILL.md`** rewritten. v2 flow first (`POST /api/dev/v2/deploy`, build context as base64 tarball, sync response shape, rollback, version listing). Legacy v1 deploy preserved.
+- **`manaurum-setup/SKILL.md`** rewritten. v2 project scaffolding first (`Dockerfile` + `manifest_v2.json` + `.env.manaurum` with `mna_*` token). v1 scaffolding preserved.
+- **`references/v2-platform.md`** — long-form companion. Manifest field reference, runtime modes, capability contract, token issuance/revocation, deploy lifecycle (build → push → swarm → traefik), rollback, migrations + dedicated app schemas, visibility + App Store v2.
+- **`references/capabilities-reference.md`** — input/output reference for every capability shipped in v2: `os.kv.*`, `os.tenant_config.get`, `os.secrets.*`, `os.files.*`, `os.ai.*`, `os.ocr.extract`, `os.notifications.send_to_user`, `os.events.emit`, `os.http.fetch`, `os.compliance.audit_query`, `os.apps.call`, `os.apps.bulk_export`.
+
+### Changed
+
+- Plugin `description` updated to mention v2-as-default + legacy v1 support.
+- Banner added at the top of all three SKILL files explaining "v2 is the new default" and how to decide between v2 and v1 for a given task.
+
+### Preserved (no behavior change)
+
+- `references/manifest-spec.md` — v1 manifest schema reference. Still authoritative for v1 apps.
+- `references/sdk-api.md` — v1 SDK API (`storage.*`, `files.*`, `db.*`, `ai.*`, `mul.*`, etc.). Still authoritative for v1 apps.
+- `references/design.md` — Smoothie + XP themes for v1 iframe apps.
+- `references/publishing.md` — App Store v1 submission flow.
+
+### Tokens — `mna_*` vs `mnu_*` vs `mdev_*`
+
+| Format | What it's for | Endpoint |
+|---|---|---|
+| `mna_*` | **v2 default**. Capability gateway + hosted-runtime deploy. | `/api/capability/<name>`, `/api/dev/v2/deploy`. |
+| `mnu_*` | Legacy v1 deploy. | `/api/dev/apps/deploy`. |
+| `mdev_*` | Legacy App Builder (deprecated; migrated to `mna_*` 2026-05-07). | removed. |
+
+The three are NOT interchangeable; using one against the other's endpoint returns 401.
+
+### Migration path for skill consumers
+
+If you have a Claude Code instance with this plugin installed at v1.15 and you upgrade to v2.0:
+
+- Existing v1 apps continue to work — v1 deploy endpoints + tokens are unchanged on the platform side.
+- New `/manaurum-app`, `/manaurum-deploy`, `/manaurum-setup` invocations now teach v2 by default. To explicitly target v1, ask: "scaffold a v1 (legacy iframe) app".
+- The `manaurum.js` SDK is unchanged. Static URL `https://manaurum.com/sdk/manaurum.js` continues to serve.
+
+### Reference
+
+- Manaurum PRs that shipped v2 to prod: #418 (capability gateway core), #420 (`os.files.*`), #422 (`os.tenant_config` + `os.secrets`), #425 (`os.ai.*`), #429 (`os.ocr.*`), #430 (`os.events.emit`), #431 (`os.compliance.audit_query`), #432 (`os.apps.call`), #439 (R-4 hosted runtime backbone), #450 (DevHub `mna_*` token UI), #458 (R-4 production wiring — registry + swarm + traefik), and hot-fixes #451, #453, #454, #455, #456, #459.
+- First v2-deployed app on prod: `https://v2-smoke.apps.manaurum.com` (2026-05-07, deployed via `POST /api/dev/v2/deploy` from cold start in ~8s).
+
+---
+
 ## 1.15.0 (2026-04-30) — F1.5 evolution — `renamed_from` + dedicated `include`
 
 ### Added

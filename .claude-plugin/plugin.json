@@ -1,7 +1,7 @@
 {
   "name": "manaurum-dev-sdk",
-  "description": "Build, test, and deploy apps for ManAurum OS. Generate iframe apps from prompts, create manifests, preview in the OS shell, and publish to the App Store.",
-  "version": "1.15.0",
+  "description": "Build, test, and deploy apps for ManAurum OS. Default flow as of v2.0.0: Platform v2 (containerized hosted apps with capability gateway). Legacy v1 (iframe + manaurum.js) supported for existing apps. Covers manifest authoring, Dockerfile patterns, capability use, deploy API, rollback, and the legacy v1 path.",
+  "version": "2.0.0",
   "author": {
     "name": "ManAurum OS"
   }
