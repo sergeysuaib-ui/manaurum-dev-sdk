@@ -1,80 +1,207 @@
 ---
 name: manaurum-setup
-description: Set up a ManAurum OS development environment for tenant-aware apps (v1.5+). Use when user wants to start building for ManAurum/SeregaOS, needs to set up their project, scaffold an app, or initialize a new ManAurum app project from scratch.
+description: Scaffold a new ManAurum OS app project. As of 2026-05, the default flow is Platform v2 (containerized hosted apps); v1 (iframe bundles) is supported for legacy apps. Use when the user wants to start building a new ManAurum/SeregaOS app, scaffold a project from scratch, or initialize a fresh app directory.
 ---
 
-# Set Up ManAurum OS App Project (v1.5+)
+# Set Up a ManAurum App Project
 
-Help the user scaffold a new ManAurum OS app project from scratch, ready to deploy to a specific tenant via the Deploy API.
+> ## ⚡ v2 is the new default (2026-05)
+>
+> This skill scaffolds **v2 (containerized hosted)** projects by default. For legacy v1 (iframe bundle) projects, jump to the "Legacy v1 setup" section at the bottom.
 
-## Quick Setup
+---
 
-Create a minimal project structure:
+## v2 setup (default)
+
+### Project structure
 
 ```
-my-manaurum-app/
-├── index.html         ← Your app (loaded in ManAurum iframe)
-├── manifest.json      ← v1 manifest (REQUIRED for deploy)
-├── style.css          ← Optional
-├── app.js             ← Optional
-├── deploy.sh          ← Optional CLI helper (see /manaurum-deploy)
-├── .env.manaurum      ← Token (gitignored)
+my-app/
+├── manifest_v2.json    ← REQUIRED — v2 manifest schema
+├── Dockerfile          ← REQUIRED — produces the runtime image
+├── index.html          ← (or whatever your runtime serves)
+├── deploy.sh           ← Optional CLI helper (see /manaurum-deploy)
+├── .env.manaurum       ← Token (gitignored)
 └── .gitignore
 ```
 
-## Starter `index.html`
+### Starter `manifest_v2.json` (minimal)
+
+```json
+{
+  "manifest_version": "2",
+  "manaurum_sdk_version": "2",
+  "app_id": "my-app",
+  "name": "My App",
+  "version": "1.0.0",
+  "runtime": {
+    "mode": "hosted",
+    "egress_allowed_hosts": []
+  },
+  "visibility": {
+    "mode": "private"
+  }
+}
+```
+
+Validation rules:
+
+- `app_id`: slug `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`. Becomes `<app_id>.apps.manaurum.com`.
+- `version`: semver `MAJOR.MINOR.PATCH`. Bump on every redeploy.
+- `runtime.mode`: `hosted` for default; `byo` (you host elsewhere, platform proxies) and `dev` (in-browser editor) are advanced.
+- `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`. Default-deny.
+
+To use AI / declare a dedicated DB schema / migrations, see `manaurum-app/SKILL.md` and `references/v2-platform.md`.
+
+### Starter `Dockerfile` (static page on nginx)
+
+```dockerfile
+FROM nginx:1.27-alpine
+COPY index.html /usr/share/nginx/html/index.html
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -qO- http://localhost/ >/dev/null || exit 1
+```
+
+For a Node app:
+
+```dockerfile
+FROM node:22-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY . .
+EXPOSE 8080
+CMD ["node", "server.js"]
+```
+
+For a Python (FastAPI):
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+The platform reads your `EXPOSE` line and routes Traefik to that port. Port 80 is conventional for static sites; pick whatever your runtime listens on.
+
+### Starter `index.html` (for a static `nginx` app)
 
 ```html
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>My App</title>
-  <script src="https://manaurum.com/sdk/manaurum.js"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { padding: 24px; transition: all 0.2s; }
-    body.smoothie { font-family: 'Inter', -apple-system, sans-serif; background: #f9f9ff; color: #181c23; font-size: 14px; }
-    body.xp { font-family: Tahoma, sans-serif; background: #ece9d8; color: #000; font-size: 12px; }
-    h1 { margin-bottom: 12px; }
-    .tenant-badge { font-size: 12px; opacity: 0.6; margin-top: 8px; }
+    body { font-family: -apple-system, sans-serif; padding: 24px; }
   </style>
 </head>
-<body class="smoothie">
-  <h1 id="title">Loading…</h1>
-  <p id="info"></p>
-  <p class="tenant-badge" id="tenant-badge"></p>
-
-  <script>
-    var app = ManaurumSDK.init();
-
-    app.onReady(function (ctx) {
-      document.body.className = ctx.theme;
-      document.getElementById('title').textContent = 'Hello, ' + ctx.user.nickname + '!';
-      document.getElementById('info').textContent = 'Theme: ' + ctx.theme;
-    });
-
-    app.onThemeChange(function (theme) {
-      document.body.className = theme;
-      document.getElementById('info').textContent = 'Theme: ' + theme;
-    });
-
-    // v1.5: read tenant context from raw init payload (B2B kustomization)
-    app.onMessage(function (type, payload) {
-      if (type === 'manaurum:init' && payload.tenant) {
-        document.getElementById('tenant-badge').textContent =
-          'Tenant: ' + payload.tenant.slug;
-      }
-    });
-  </script>
+<body>
+  <h1>My App</h1>
+  <p>Running on Manaurum Platform v2.</p>
 </body>
 </html>
 ```
 
-## Starter `manifest.json`
+### Calling capabilities (for dynamic apps)
 
-Use this v1 schema as the baseline. Read `manaurum-app/references/manifest-spec.md` for the full reference.
+If your app needs to call the OS (KV, files, AI, etc.), the platform passes these env vars to your container at startup:
+
+| Env var | Use it for |
+|---|---|
+| `MANAURUM_TENANT_ID` | `X-Manaurum-Tenant-Id` header on capability calls. |
+| `MANAURUM_APP_ID` | `X-Manaurum-App-Id` header on capability calls. |
+| `MANAURUM_VERSION` | (optional) which version is running. |
+| `MANAURUM_BROKER_URL` / `DATABASE_URL` | Postgres broker DSN for dedicated app schemas. |
+
+You also need a developer-credential token (`mna_*`) — set it as a v2 secret via `os.secrets.set` after first deploy, or pass it as an env var via `manifest.runtime.env_secrets`.
+
+```javascript
+// inside your container
+const RESP = await fetch('https://manaurum.com/api/capability/os.kv.set', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${process.env.MANAURUM_V2_TOKEN}`,
+    'X-Manaurum-Tenant-Id': process.env.MANAURUM_TENANT_ID,
+    'X-Manaurum-App-Id':    process.env.MANAURUM_APP_ID,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ key: 'foo', value: { bar: 1 } }),
+});
+```
+
+Full capability list + input schemas: `references/capabilities-reference.md`.
+
+### `.env.manaurum`
+
+```
+MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
+```
+
+Get the token via Manaurum desktop → **Dev Hub → "v2 Tokens (Beta)" → Generate**. Shown ONCE — save immediately. Bound to the tenant of whoever issued it (today: typically `seregaos` while v2 is being rolled out).
+
+### `.gitignore`
+
+```
+.env*
+node_modules/
+*.zip
+*.tar
+.DS_Store
+__pycache__/
+.venv/
+```
+
+### `deploy.sh`
+
+See `manaurum-deploy/SKILL.md` § "deploy.sh template (v2)" for the canonical version.
+
+### Local testing
+
+For static apps, just `python -m http.server 8000` in the project dir and open `http://localhost:8000`.
+
+For Dockerized apps, build and run locally:
+
+```bash
+docker build -t my-app:dev .
+docker run --rm -p 8080:80 \
+  -e MANAURUM_TENANT_ID=00000000-0000-0000-0000-000000000000 \
+  -e MANAURUM_APP_ID=00000000-0000-0000-0000-000000000000 \
+  my-app:dev
+```
+
+The platform-set env vars are placeholder UUIDs in dev; capability calls will fail with `412 app_id_must_be_uuid` if the placeholder isn't a real registered app — that's fine for offline UI work, just keep capability calls behind feature checks.
+
+For full handshake testing on the platform, deploy with `manaurum-deploy/SKILL.md` and inspect at `https://<slug>.apps.manaurum.com`.
+
+### After scaffolding
+
+1. Build your app (any language, any framework — anything Docker can build).
+2. Deploy with `/manaurum-deploy`. ~7–10s end-to-end.
+3. Visit `https://<slug>.apps.manaurum.com`.
+4. Iterate: bump `manifest_v2.json.version`, redeploy. Same URL, new version.
+
+---
+
+## Legacy v1 setup (iframe — for existing apps only)
+
+> Don't use this for new apps. v1 is for maintaining existing iframe-based apps.
+
+```
+my-v1-app/
+├── manifest.json       ← v1 schema (manifest_version: "1")
+├── index.html          ← MUST be at the bundle root
+├── style.css / app.js  ← optional
+└── .env.manaurum       ← MANAURUM_TENANT_TOKEN=mnu_…
+```
+
+### Starter v1 `manifest.json`
 
 ```json
 {
@@ -84,110 +211,42 @@ Use this v1 schema as the baseline. Read `manaurum-app/references/manifest-spec.
   "name": "My App",
   "version": "1.0.0",
   "entry_point": "index.html",
-  "window": { "default_width": 800, "default_height": 600 },
   "permissions": []
 }
 ```
 
-To use server-side data, declare entities and add `db.*` permissions:
+### Starter v1 `index.html`
 
-```json
-{
-  "manifest_version": "1",
-  "manaurum_sdk_version": "1",
-  "slug": "my-notes",
-  "name": "Notes",
-  "version": "1.0.0",
-  "entry_point": "index.html",
-  "permissions": ["db.read_own_entities", "db.write_own_entities"],
-  "entities": [
-    {
-      "type": "note",
-      "fields": {
-        "title":   { "type": "string", "required": true },
-        "body":    { "type": "string" },
-        "created": { "type": "timestamp", "indexed": true }
-      }
-    }
-  ]
-}
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>My App</title>
+  <script src="https://manaurum.com/sdk/manaurum.js"></script>
+</head>
+<body>
+  <h1 id="title">Loading…</h1>
+  <script>
+    var app = ManaurumSDK.init();
+    app.onReady(function (ctx) {
+      document.getElementById('title').textContent = 'Hello, ' + ctx.user.nickname + '!';
+    });
+  </script>
+</body>
+</html>
 ```
 
-Manifest validation rules:
-- `manifest_version` must be the literal `"1"` (string, not number)
-- `slug`: 3–50 chars, `^[a-z][a-z0-9-]{2,49}$`
-- `version`: semver `MAJOR.MINOR.PATCH`
-- `permissions`: only the v1 enum (see manifest-spec.md)
+### v1 deploy
 
-## `.gitignore`
+`/manaurum-deploy` → "Legacy v1 deploy" section. Token is `mnu_*` (not `mna_*`), endpoint is `/api/dev/apps/deploy`, body is a manifest+zip.
 
-```
-.env*
-node_modules/
-*.zip
-.DS_Store
-```
+For the full v1 surface (SDK API, theming, design rules, App Store submission), see `references/sdk-api.md`, `references/design.md`, `references/manifest-spec.md`, `references/publishing.md`. Those references describe v1 only.
 
-## `.env.manaurum`
+---
 
-```
-MANAURUM_TENANT_TOKEN=mnu_prod_<32-chars>
-```
+## Next
 
-Get the token at `https://manaurum.com` → Developer Console → Tokens → "Issue new token". Token is shown ONCE and bound to your active tenant.
-
-## Local Development
-
-```bash
-# Serve locally
-python -m http.server 8000
-# or
-npx serve .
-```
-
-Open `http://localhost:8000` in a browser to verify the page renders without errors. The SDK won't fully initialise outside the ManAurum shell — `onReady` won't fire — but you'll see syntax errors / asset 404s here.
-
-For full handshake testing, use the Test Harness:
-```
-https://manaurum.com/sdk/test-harness.html?url=http://localhost:8000
-```
-
-## Multi-tenant context (v1.5+)
-
-The shell sends a `tenant` block inside `manaurum:init`. Read it via `app.onMessage()`:
-
-```javascript
-app.onMessage(function (type, payload) {
-  if (type === 'manaurum:init' && payload.tenant) {
-    // payload.tenant.id, payload.tenant.slug
-    // payload.workspace.id
-    // payload.app.slug, payload.app.version_id
-  }
-});
-```
-
-Use it for B2B branding (per-tenant logo, copy, theme overrides). Do NOT use it as a security filter — RLS already enforces tenant isolation server-side.
-
-## Using Frameworks
-
-ManAurum apps work with any framework. Just load the SDK and follow the protocol.
-
-### React / Vue / Svelte / vanilla JS
-
-Same pattern: load `manaurum.js`, call `init()`, wire `onReady` / `onThemeChange` / `onMessage`. Bundle with whatever toolchain you like; just make sure `index.html` is at the root of your `bundle.zip`.
-
-## Deploy Setup
-
-To deploy directly from CLI:
-
-1. Issue a tenant token (see `manaurum-deploy/SKILL.md` Step 1).
-2. Save it in `.env.manaurum` as `MANAURUM_TENANT_TOKEN=...`.
-3. Run `/manaurum-deploy`.
-
-## Next Steps
-
-After setup:
-1. Build your app features.
-2. Test locally / in the Test Harness.
-3. Use `/manaurum-deploy` to deploy to your tenant.
-4. Have a workspace owner install the app from AppStore so end users can open it.
+- `/manaurum-app` — full v2 app development guide (capability list, manifest reference, common patterns).
+- `/manaurum-deploy` — deploy contract, rollback, version listing.
+- For deeper v2 platform docs: `references/v2-platform.md` (this skill's plugin) covers manifest fields, capability schemas, deploy ops.

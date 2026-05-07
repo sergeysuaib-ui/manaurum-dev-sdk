@@ -1,138 +1,164 @@
 ---
 name: manaurum-deploy
-description: Deploy a ManAurum OS app to a tenant via the Deploy API (manifest+bundle). Use when the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers tenant API-token issuance, manifest+bundle.zip preparation, the POST /api/dev/apps/deploy contract, rejection codes, and post-deploy install/open flow.
+description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platform v2 (containerized — `POST /api/dev/v2/deploy` with an `mna_*` token). Legacy v1 (iframe bundle — `POST /api/dev/apps/deploy` with an `mnu_*` token) is supported for existing apps. Use whenever the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers token issuance, build context preparation, deploy contract, rejection codes, rollback, and the post-deploy install/open flow.
 ---
 
-# Deploy ManAurum OS App (v1.5+ tenant-aware)
+# Deploy ManAurum App
 
-Help the user deploy their ManAurum OS app to a specific **tenant** via the Deploy API.
+> ## ⚡ v2 is the default (2026-05)
+>
+> Two paths exist. Pick by **token format the user has**:
+>
+> - **`mna_*`** → v2 hosted runtime. `POST /api/dev/v2/deploy`. Builds a Docker image from a tarball, pushes to a private registry, runs as a Swarm service, exposes at `https://<slug>.apps.manaurum.com`. **Default for all new work.**
+> - **`mnu_*`** → v1 iframe runtime. `POST /api/dev/apps/deploy`. Uploads a zip bundle, served in an iframe at `/t/<tenant>/apps/<slug>`. **Legacy — only for existing v1 apps.**
+>
+> If unsure or the user has neither, ask them to mint an `mna_*` from Dev Hub → "v2 Tokens (Beta)" → Generate. **The two surfaces are not interchangeable** — a `mnu_*` token will be rejected by the v2 endpoint and vice versa.
 
-In v1.5 there is one canonical deploy path: a tenant-scoped `mnu_*` token authorises a `POST /api/dev/apps/deploy` request carrying a manifest object and a base64-encoded bundle. The same payload format is used for first deploy and every subsequent version.
+---
 
-> **One token = one tenant.** A `mnu_*` token is bound to the tenant of the user who issued it. To deploy the same app to another tenant, get a separate token from THAT tenant's Developer Console.
+## v2 deploy (default)
 
-## Quickstart (assuming you already have `MANAURUM_TENANT_TOKEN`)
+### Prereqs
+
+- An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → "v2 Tokens (Beta)" → Generate. Shown ONCE, save immediately.
+- A project directory containing `manifest_v2.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
+
+### Quickstart
 
 ```bash
 cd my-app
-zip -r bundle.zip .
+tar cf /tmp/ctx.tar Dockerfile $(ls -A | grep -v '^\.env')
 
-B64=$(base64 -w0 bundle.zip)
-jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
-  | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
-      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d @- | jq .
+B64=$(base64 -w0 /tmp/ctx.tar)
+jq -n \
+  --arg b "$B64" \
+  --argjson m "$(cat manifest_v2.json)" \
+  '{manifest_json: $m, archive_b64: $b}' > /tmp/deploy.json
+
+curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @/tmp/deploy.json | jq .
 ```
 
-Success response:
+Successful response (sync — usually returns in ~7–10s):
+
+```json
+{ "deploy_job_id": "...", "status": "succeeded" }
+```
+
+If `status: pending` (rare for hosted runtime), poll the job:
+
+```bash
+curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" | jq .
+```
+
+Final response carries the URL:
+
 ```json
 {
-  "application_id": "...",
-  "version_id": "...",
-  "version_number": "1.0.0",
-  "deployed_at": "2026-04-27T19:00:00Z",
-  "url": "/t/<your-tenant-slug>/apps/<your-app-slug>"
+  "status": "succeeded",
+  "result": {
+    "app_id":     "<uuid>",
+    "version_id": "<uuid>",
+    "image_tag":  "manaurum-registry:5000/v2-app-my-app:1.0.0",
+    "url":        "https://my-app.apps.manaurum.com"
+  }
 }
 ```
 
-The app is now in your tenant's catalog. To make it visible to users, a workspace owner must install it (see "After Deploy — Install in Workspace" below).
+The URL is live with a Let's Encrypt cert within seconds of the deploy completing.
+
+### What the platform does on v2 deploy
+
+1. Validates the manifest against the v2 JSON Schema.
+2. Validates any migration SQL via the R-1.5 AST validator (additive-only unless `migration.breaking: true`).
+3. Builds the Docker image **inside the backend container** from your tar (`POST /build` to the engine API).
+4. Pushes the image to the local `manaurum-registry`.
+5. Inserts/updates `v2_apps` + `v2_app_versions` rows under the home tenant (FORCE-RLS).
+6. Creates or updates the swarm service `v2-app-<slug>-<tenant_short>` on `dokploy-network`.
+7. Writes a Traefik dynamic-config YAML at `/etc/dokploy/traefik/dynamic/v2-app-<slug>.yml` so the URL routes to the service.
+
+### Bump version + redeploy
+
+```bash
+jq '.version = "1.0.1"' manifest_v2.json > /tmp/m && mv /tmp/m manifest_v2.json
+# rerun the curl above — the platform updates the swarm service in-place
+```
+
+The URL stays the same. Existing connections drain; new requests hit the new version.
+
+### Rollback
+
+```bash
+curl -sS -X POST https://manaurum.com/api/dev/v2/apps/<app_id>/rollback \
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+```
+
+Restores the previous version's image. Same URL, no traffic interruption.
+
+### List versions / inspect / logs
+
+```bash
+# describe
+curl -sS https://manaurum.com/api/dev/v2/apps/<app_id> -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+
+# version history
+curl -sS https://manaurum.com/api/dev/v2/apps/<app_id>/versions -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+
+# tail logs (stub — full streaming TBD)
+curl -sS https://manaurum.com/api/dev/v2/apps/<app_id>/logs -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+```
+
+### v2 rejection codes
+
+| HTTP | `error` | Meaning | Fix |
+|---|---|---|---|
+| 401 | `invalid_credential` | Bad/expired/revoked `mna_*` token, or not an `mna_*`. | Mint a fresh one in Dev Hub. |
+| 401 | `missing_authorization` | No `Authorization` header. | Add `-H "Authorization: Bearer $MANAURUM_V2_TOKEN"`. |
+| 412 | `missing_tenant_id_header` | (capability calls only) `X-Manaurum-Tenant-Id` not set. | Set it from `process.env.MANAURUM_TENANT_ID`. |
+| 422 | `manifest validation failed` | Manifest fails v2 JSON Schema. | Read `errors[]`. Common: bad `app_id` slug, non-semver `version`. |
+| 422 | `migration_validation_failed` | Destructive DDL without `migration.breaking: true`. | Make additive-only or set `breaking: true`. |
+| 422 | `invalid_archive_b64` | Bundle isn't valid base64. | Use `base64 -w0` (no line wrapping). |
+| 502 | (in `result.error`) | Image build failed. | Inspect the error string — usually a Dockerfile issue (`COPY src not found`, missing `EXPOSE`, etc.). |
+
+### Multi-tenant deploys (v2 visibility)
+
+The v2 manifest's `visibility.mode` controls which tenants can install the app:
+
+- `private` (default) — only the home tenant (the one tied to your `mna_*` token) sees it.
+- `public` — any tenant can install it via App Store v2.
+- `allow_list` with a `tenants` array — explicit list of tenant UUIDs.
+
+For `public` / `allow_list`, the install itself is initiated by a **tenant admin** in the consuming tenant via `POST /api/app-store/v2/install`. The deploy is a separate operation done once by the developer.
+
+This is fundamentally different from v1, where each tenant requires its own deploy. v2 has a global app registry; v1 had per-tenant catalogs.
 
 ---
 
-## Step 1 — Issue a tenant token
+## v1 deploy (legacy — iframe apps only)
 
-The user needs a `mnu_*` token. Two ways:
+> **Don't use this for new apps.** v1 is for maintaining existing iframe-based builtins.
 
-### A) Self-serve via API (recommended)
+### v1 prereqs
 
-The user is signed in to the platform (has a SESSION_JWT). They mint a token bound to their active tenant:
+- An `mnu_*` token (NOT `mna_*`). Mint via:
+  ```bash
+  curl -sS -X POST https://manaurum.com/api/developer/tenant-tokens \
+    -H "Authorization: Bearer $SESSION_JWT" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "ci-deploy"}'
+  ```
+  Or via Dev Hub → "API Tokens" tab in the UI. Default scopes `["app.deploy", "app.read"]`.
+- A `manifest.json` (v1 schema — `manifest_version: "1"`) + a zip bundle with `index.html` at the root.
 
-```bash
-curl -sS -X POST https://manaurum.com/api/developer/tenant-tokens \
-  -H "Authorization: Bearer $SESSION_JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "ci-deploy"}'
-```
-
-Default scopes are `["app.deploy", "app.read"]`. To customise:
-
-```bash
-curl -sS -X POST https://manaurum.com/api/developer/tenant-tokens \
-  -H "Authorization: Bearer $SESSION_JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "deploy-only", "scopes": ["app.deploy"]}'
-```
-
-Response is shown ONCE:
-```json
-{
-  "token_id": "...",
-  "name": "ci-deploy",
-  "prefix": "mnu_",
-  "raw_token": "mnu_prod_<32-chars>",
-  "scopes": ["app.deploy", "app.read"],
-  "expires_at": null,
-  "created_at": "..."
-}
-```
-
-Save the `raw_token` immediately. Cap is 5 active tokens per user per tenant; revoke an old one first if you hit `409 max_active_tokens_reached`.
-
-### B) Through the Developer Console UI
-
-Sign in → Developer Console → Tokens → "Issue new token". The UI calls the same endpoint and shows `raw_token` once.
-
-### Token housekeeping
-
-```bash
-# List active tokens (no raw_token returned)
-curl -sS https://manaurum.com/api/developer/tenant-tokens \
-  -H "Authorization: Bearer $SESSION_JWT"
-
-# Revoke a token
-curl -sS -X DELETE "https://manaurum.com/api/developer/tenant-tokens/<token_id>" \
-  -H "Authorization: Bearer $SESSION_JWT"
-```
-
-## Step 2 — Store the token locally
-
-```bash
-# .env.manaurum (already gitignored if you used /manaurum-setup)
-MANAURUM_TENANT_TOKEN=mnu_prod_<32-chars>
-
-# or in shell
-export MANAURUM_TENANT_TOKEN=mnu_prod_<32-chars>
-```
-
-## Step 3 — Prepare the bundle
-
-Bundle is a single zip file with `index.html` at the root.
-
-```
-my-app/
-├── manifest.json
-├── index.html        ← MUST be at the root of the zip
-├── style.css         ← optional
-├── app.js            ← optional
-└── assets/           ← optional
-```
+### v1 quickstart
 
 ```bash
 cd my-app
 zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
-```
 
-Hard limits:
-- **Max bundle size:** 50 MB
-- **File extensions whitelist:** `.html .htm .js .mjs .jsx .ts .tsx .css .svg .png .jpg .jpeg .gif .webp .ico .avif .woff .woff2 .ttf .otf .eot .txt .md .map .webmanifest`
-- **Anti-Lovable scanner** rejects bundles containing credentials (`sk_live_`, `AKIA`, `ghp_`, etc.), undeclared 3rd-party SDKs (Supabase, Firebase, Auth0, Clerk, Stripe...), or disallowed URLs.
-
-To use a 3rd-party SDK legitimately, declare it in `manifest.integrations[]` (see manifest-spec.md).
-
-## Step 4 — Deploy
-
-```bash
 B64=$(base64 -w0 bundle.zip)
 jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
   | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
@@ -141,120 +167,113 @@ jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}'
       -d @- | jq .
 ```
 
-Note the response `url` — that's where users in your tenant will open the app once installed.
-
-## Step 5 — Bump and redeploy
-
-To ship a new version, bump `manifest.json` `version` (semver) and rerun the same `POST /api/dev/apps/deploy`. The platform creates a new `application_versions` row and atomically updates `current_version_id` to the new one. Existing users get the new version on next iframe load.
-
-```bash
-# bump version
-jq '.version = "1.0.1"' manifest.json > /tmp/m && mv /tmp/m manifest.json
-
-# rebuild + redeploy
-zip -r bundle.zip . -x "*.DS_Store" ".git/*" ".env*"
-# ... same curl as Step 4
-```
-
-## After Deploy — Install in workspace
-
-Deploy puts the app in your tenant's **catalog**. It is NOT yet visible to end users. A workspace owner inside the same tenant must install it via AppStore:
-
-1. Sign in as a workspace owner of any workspace in your tenant.
-2. Open AppStore.
-3. Find your app, click "Install".
-4. The install creates a `workspace_app_installs` row that grants the app to that workspace's members.
-
-Members can now open `/t/<tenant_slug>/apps/<app_slug>`.
-
-## Rejection Codes
-
-| HTTP | `rejection` | Meaning | Fix |
-|---|---|---|---|
-| 401 | `rejected_missing_bearer` | No `Authorization` header | Add `-H "Authorization: Bearer $MANAURUM_TENANT_TOKEN"` |
-| 401 | `rejected_token_invalid` | Bad / expired / revoked token | Issue a fresh token |
-| 403 | `rejected_insufficient_scope` | Token lacks `app.deploy` | Issue with scopes including `app.deploy` |
-| 400 | `rejected_manifest_invalid` | Manifest fails v1 schema | Read `findings`; fix and retry |
-| 400 | `rejected_bundle_not_base64` | `bundle` field is not valid base64 | Use `base64 -w0` (no line wrapping) |
-| 400 | `rejected_version_conflict` | A version with this `version` already exists | Bump semver |
-| 413 | `rejected_bundle_too_large` | > 50 MB | Trim assets |
-| 422 | `rejected_bundle_extension_blocked` | File with disallowed extension in bundle | Remove or convert |
-| 422 | `rejected_bundle_credential_detected` | Scanner found a credential pattern | Remove the credential |
-| 422 | `rejected_bundle_sdk_undeclared` | Undeclared 3rd-party SDK import | Declare in `manifest.integrations[]` |
-| 422 | `rejected_bundle_url_disallowed` | URL outside platform CDN whitelist | Use `jsdelivr`/`unpkg`/`cdnjs` or declare integration |
-
-The response body always carries:
+Success body:
 ```json
 {
-  "rejection": "<code>",
-  "message": "<human description>",
-  "findings": [...optional details...]
+  "application_id": "...",
+  "version_id":     "...",
+  "version_number": "1.0.0",
+  "url": "/t/<tenant_slug>/apps/<app_slug>"
 }
 ```
 
-## Verify the live app
+After deploy, a workspace owner inside the same tenant must install the app via the AppStore desktop app. Members can then open `/t/<tenant_slug>/apps/<app_slug>` and the iframe loads.
 
-After deploy + install, sanity-check the app loads in the shell:
+### v1 hard limits
+
+- Max bundle: 50 MB.
+- Allowed extensions: `.html .htm .js .mjs .jsx .ts .tsx .css .svg .png .jpg .jpeg .gif .webp .ico .avif .woff .woff2 .ttf .otf .eot .txt .md .map .webmanifest`.
+- The bundle scanner rejects credential patterns (`sk_live_`, `AKIA`, `ghp_`, …), undeclared 3rd-party SDKs, disallowed URLs.
+
+### v1 rejection codes
+
+| HTTP | `rejection` | Fix |
+|---|---|---|
+| 401 | `rejected_token_invalid` | Issue a fresh `mnu_*`. |
+| 403 | `rejected_insufficient_scope` | Token needs `app.deploy`. |
+| 400 | `rejected_manifest_invalid` | Read `findings[]`; fix manifest. |
+| 400 | `rejected_version_conflict` | Bump semver. |
+| 413 | `rejected_bundle_too_large` | > 50 MB — trim. |
+| 422 | `rejected_bundle_credential_detected` | Remove the credential. |
+| 422 | `rejected_bundle_sdk_undeclared` | Declare in `manifest.integrations[]`. |
+
+### v1 multi-tenant
+
+A `mnu_*` token is bound to ONE tenant. Deploying the same app to a second tenant requires a separate `mnu_*` from THAT tenant.
+
+### v1 token housekeeping
 
 ```bash
-# Replace <session_jwt> with a logged-in user's token
-curl -sS -I https://manaurum.com/t/<tenant_slug>/apps/<app_slug> \
-  -H "Authorization: Bearer <session_jwt>"
+# list (no raw_token returned)
+curl -sS https://manaurum.com/api/developer/tenant-tokens \
+  -H "Authorization: Bearer $SESSION_JWT"
+
+# revoke
+curl -sS -X DELETE "https://manaurum.com/api/developer/tenant-tokens/<token_id>" \
+  -H "Authorization: Bearer $SESSION_JWT"
 ```
 
-Expected:
-- `200 OK` if user is in the right tenant + workspace install exists
-- `401` / `403` if user not authenticated
-- `404` if user is in a different tenant, or the workspace doesn't have the app installed (uniform 404 — no info leak)
+Cap: 5 active tokens per (user, tenant). Revoke an old one if you hit `409 max_active_tokens_reached`.
 
-Open the URL in a browser to load the iframe and verify `manaurum:init` arrives in your app (use devtools → Console).
+---
 
-## Multi-tenant deploys
+## `deploy.sh` template (v2)
 
-If the same app must be available in multiple tenants, **deploy it independently to each tenant** with a token from THAT tenant. The platform does not support cross-tenant publishing — each tenant has its own catalog.
-
-```bash
-# tenant 1
-export MANAURUM_TENANT_TOKEN=mnu_prod_<acme-token>
-# ...deploy
-
-# tenant 2
-export MANAURUM_TENANT_TOKEN=mnu_prod_<beta-token>
-# ...deploy (same bundle, different tenant)
-```
-
-## Deploy script helper
-
-When generating an app, also create a `deploy.sh`:
+When scaffolding a new project, drop this in:
 
 ```bash
 #!/bin/bash
-# Deploy to ManAurum OS — tenant-scoped manifest+bundle Deploy API
+# Deploy a v2 ManAurum app — POST /api/dev/v2/deploy
 set -e
 
 if [ -f .env.manaurum ]; then
   set -a; source .env.manaurum; set +a
 fi
 
-if [ -z "$MANAURUM_TENANT_TOKEN" ]; then
-  echo "Error: MANAURUM_TENANT_TOKEN not set."
-  echo "Issue one at https://manaurum.com (Developer Console → Tokens)."
-  echo "Save as MANAURUM_TENANT_TOKEN=mnu_prod_<32> in .env.manaurum"
+if [ -z "$MANAURUM_V2_TOKEN" ]; then
+  echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://manaurum.com (Dev Hub → v2 Tokens)."
+  echo "Save as MANAURUM_V2_TOKEN=mna_<...> in .env.manaurum"
   exit 1
 fi
 
-echo "Bundling..."
-zip -r /tmp/bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*" "deploy.sh" >/dev/null
+if [ ! -f manifest_v2.json ]; then
+  echo "Error: manifest_v2.json missing. See manaurum-app/SKILL.md."
+  exit 1
+fi
+if [ ! -f Dockerfile ]; then
+  echo "Error: Dockerfile missing. v2 apps build images."
+  exit 1
+fi
 
-echo "Deploying..."
-B64=$(base64 -w0 /tmp/bundle.zip)
-jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
-  | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
-      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
+echo "Bundling build context…"
+tar cf /tmp/ctx.tar \
+  Dockerfile \
+  $(ls -A | grep -vE '^(\.env|\.git|node_modules|deploy\.sh)')
+
+echo "Deploying…"
+B64=$(base64 -w0 /tmp/ctx.tar)
+RESP=$(jq -n --arg b "$B64" --argjson m "$(cat manifest_v2.json)" \
+  '{manifest_json: $m, archive_b64: $b}' \
+  | curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
+      -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
       -H "Content-Type: application/json" \
-      -d @- | jq .
+      -d @-)
 
-rm -f /tmp/bundle.zip
+JOB_ID=$(echo "$RESP" | jq -r .deploy_job_id)
+STATUS=$(echo "$RESP" | jq -r .status)
+echo "Job: $JOB_ID — status: $STATUS"
+
+if [ "$STATUS" != "succeeded" ]; then
+  curl -sS https://manaurum.com/api/dev/v2/deploy/$JOB_ID \
+    -H "Authorization: Bearer $MANAURUM_V2_TOKEN" | jq .
+  exit 1
+fi
+
+curl -sS https://manaurum.com/api/dev/v2/deploy/$JOB_ID \
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
+  | jq -r '.result | "✓ Live at \(.url)"'
+
+rm -f /tmp/ctx.tar
 ```
 
-When creating an app, generate this script with the right name set in `manifest.json`.
+Make executable: `chmod +x deploy.sh`.
