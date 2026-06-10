@@ -111,6 +111,8 @@ Your container can call the capability gateway at `https://manaurum.com/api/capa
 
 Body shape: a JSON object matching the capability's input schema (no wrapper). Read `references/capabilities-reference.md` for the canonical input/output for every capability.
 
+**Working with the user's Drive (Files app):** `os.files.*` is your app's PRIVATE scratch — the user never sees it. To put a document into the USER's file system, read a user-picked file, or work in a folder the user granted you, use the `os.drive.*` capabilities + `app.pickFromDrive()` (SDK v2.1) — all consent-gated and requiring the forwarded `X-Manaurum-User-Context` header. Full contract in `references/capabilities-reference.md` § os.drive.
+
 ```javascript
 // inside your container — Node example
 async function setKV(key, value) {

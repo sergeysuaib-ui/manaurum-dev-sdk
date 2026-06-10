@@ -1,3 +1,11 @@
+# 2.1.0 — 2026-06-10
+
+- **Drive bridge (MAN-608)**: documented the `os.drive.*` capability family
+  (stage/publish "Save to Files", list/read/write in granted folders), the
+  `drive.{slug}.file.*` change events, and the `app.pickFromDrive()` SDK
+  helper (manaurum-v2.mjs 2.1.0). Reframed `os.files.*` as per-app private
+  scratch + documented the new `os.files.list`.
+
 # Changelog
 
 ## 2.0.0 (2026-05-07) — Platform v2 is the default flow

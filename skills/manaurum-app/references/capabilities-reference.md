@@ -133,6 +133,67 @@ URL is valid for 5 minutes. The app then `PUT`s the bytes directly with the `Con
 
 ---
 
+## `os.files.list` — list your own objects
+
+**Input:** `{ "prefix": "user-uploads/", "max_keys": 100, "cursor": null }` (all optional)
+
+**Output:** `{ "files": [{ "key", "size", "last_modified" }], "cursor": "<next page or null>" }`
+
+Keys are app-relative (what you passed to upload). NOTE: `os.files.*` is your
+app's PRIVATE SCRATCH — the user never sees these objects in their Files app.
+For user-facing documents use `os.drive.*` below.
+
+---
+
+## `os.drive.*` — the user's Drive (consent-gated, user-context required)
+
+The file system the USER owns and sees in the Files app. All five capabilities
+are `auth_mode: user`: every call MUST forward the inbound
+`X-Manaurum-User-Context` JWT (60s TTL — forward immediately, never store).
+Declare each in `requires_capabilities`. Missing/invalid context → 403/401.
+
+### `os.drive.stage` — presigned PUT to a user-scoped staging key
+
+**Input:** `{ "content_type": "image/png", "expires_in": 600 }` (expires optional)
+
+**Output:** `{ "staging_key", "upload_url", "expires_at" }`
+
+The staging key is server-built and scoped to (your app, tenant, acting user) —
+unaddressable by anyone else. PUT your bytes to `upload_url`, then publish.
+
+### `os.drive.publish` — publish the staged artefact into the user's Drive
+
+**Input:** `{ "staging_key": "...", "filename": "report.csv", "folder_name": "optional" }`
+
+**Output:** `{ "file_id", "filename", "folder_id", "folder_name", "size_bytes" }`
+
+The document becomes the user's OWN file (folder named after your app by
+default), they get a notification, your app keeps no residual access. Limits:
+5 MB; extensions `md txt csv json pdf png jpg jpeg webp` (no svg/html);
+binary types magic-byte-sniffed; per-user rate limit (429).
+
+### `os.drive.list` / `os.drive.read` / `os.drive.write` — granted folders
+
+Standing access after the folder owner grants your app viewer/editor in
+Files → Share. Effective access = the grant INTERSECTED with the acting
+user's own access; ungranted folders read as 404.
+
+- `os.drive.list` **Input:** `{ "folder_id" }` → `{ folder, folders[], files[] }`
+- `os.drive.read` **Input:** `{ "file_id" }` → `{ file, download_url, expires_at }` (signed, ~5 min, attachment-pinned)
+- `os.drive.write` **Input:** `{ "staging_key", "filename", "folder_id" }` → create-only; requires editor grant AND the acting user owns the folder (403 `write_requires_folder_owner`)
+
+### Drive events + the picker
+
+- Subscribe to `drive.{your_slug}.file.{created|updated|deleted}` in
+  `consumes.events` — metadata-only change events for granted subtrees.
+- Frontend: `app.pickFromDrive({ accept: ['image/'] })` (SDK v2.1+) opens the
+  OS picker; the user picks; you get a ~5-min signed URL for that one file.
+
+Full chapter: `docs/handoff/V2_DEVELOPER_GUIDE.md` ("Two storages", "Saving a
+document into the user's Drive", "Working in a granted folder").
+
+---
+
 ## `os.ai.complete` — LLM completion (BYOK)
 
 The tenant's API key is used (configured in Settings → Workspace → Интеграции). Five providers supported: `openai`, `anthropic`, `gemini`, `deepseek`, `groq`.
