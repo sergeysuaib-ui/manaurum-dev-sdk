@@ -82,6 +82,7 @@ The URL is live with a Let's Encrypt cert within seconds of the deploy completin
 5. Inserts/updates `v2_apps` + `v2_app_versions` rows under the home tenant (FORCE-RLS).
 6. Creates or updates the swarm service `v2-app-<slug>-<tenant_short>` on `dokploy-network`.
 7. Writes a Traefik dynamic-config YAML at `/etc/dokploy/traefik/dynamic/v2-app-<slug>.yml` so the URL routes to the service.
+8. **Retains the build context** (your uploaded tar) in object storage, per version (MAN-990). Your source is no longer single-copy on your machine, and a version stays rebuildable even after its image is pruned. A rolling window is kept (newest ~10 per app + the live one); download any retained version's source via the route below or `manaurum app fetch-source` (see "Source retention").
 
 ### Bump version + redeploy
 
@@ -113,6 +114,24 @@ curl -sS https://manaurum.com/api/dev/v2/apps/<app_id>/versions -H "Authorizatio
 # tail logs (stub — full streaming TBD)
 curl -sS https://manaurum.com/api/dev/v2/apps/<app_id>/logs -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
 ```
+
+### Source retention (recover a version's source)
+
+Every deploy's build context is retained per version (MAN-990), so you can
+recover the exact source a version was built from. `…/versions` flags which
+versions still have a retained archive (`has_source`).
+
+```bash
+# returns a short-TTL signed download URL: {available, url, sha256, size_bytes, expires_in}
+curl -sS https://manaurum.com/api/dev/v2/apps/<app_id>/versions/<version>/source \
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+```
+
+`404 source_not_retained` means the version predates retention or its archive
+aged out of the rolling window (newest ~10 per app + the live version are kept).
+The archive is scoped to your tenant — never exposed to tenants that install your
+app. From the CLI this is `manaurum app fetch-source <version> --app-id <slug>`;
+in DevHub it's the per-version "Download source" button.
 
 ### v2 rejection codes
 
