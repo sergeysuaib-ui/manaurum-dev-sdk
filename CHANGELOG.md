@@ -1,3 +1,14 @@
+# 2.2.0 — 2026-06-24
+
+- **Source retention (MAN-990 / MAN-993)**: the deploy skill now documents
+  that the platform retains each version's build context (your uploaded tar)
+  in object storage instead of discarding it — your source is no longer
+  single-copy on your machine, and a version stays rebuildable after its
+  image is pruned. Added the `GET /apps/{app_id}/versions/{version}/source`
+  signed-download route, the `has_source` flag on the versions list, the
+  rolling-window retention policy, and the `manaurum app fetch-source` /
+  DevHub "Download source" surfaces.
+
 # 2.1.0 — 2026-06-10
 
 - **Drive bridge (MAN-608)**: documented the `os.drive.*` capability family
