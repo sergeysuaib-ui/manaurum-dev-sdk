@@ -455,8 +455,9 @@ a second call (it re-passes the allow-list checks).
 - `412 host_not_in_allow_list` — URL host isn't in the declared list.
 - `400 unsafe_url` — non-https scheme, loopback / private-range target, or
   a hostname resolving to one.
-- `400 body_and_body_base64_exclusive` — both body fields sent (newer
-  platforms reject this at schema validation as `422 input_schema_violation`).
+- `422 input_schema_violation` — both body fields sent (rejected at schema
+  validation; older platforms surface it as the handler's
+  `400 body_and_body_base64_exclusive`).
 - `400 invalid_body_base64` — `body_base64` undecodable.
 - `502 upstream_unreachable` — DNS / connect / TLS failure.
 - `502 upstream_response_too_large` — response over the 5 MB cap.
