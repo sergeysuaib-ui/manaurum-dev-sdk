@@ -39,6 +39,7 @@ The manifest is one JSON object. Top-level required fields: `manifest_version`, 
     { "name": "os.kv.get",     "version": "1" },
     { "name": "os.files.upload","version": "1" }
   ],
+  "permissions": ["microphone"],
   "migrate_command": ["python", "-m", "myapp.migrate"],
   "migration": {
     "breaking":          false,
@@ -71,6 +72,7 @@ The manifest is one JSON object. Top-level required fields: `manifest_version`, 
 | `description` | string | Shown in App Store listings. |
 | `visibility` | object | `mode: "private" \| "public" \| "allow_list"`, optional `tenants: [uuid…]`. Default `private`. |
 | `requires_capabilities` | array | Manifest-declared capability scope. The gateway can enforce this (when wired); also useful for App Store install prompts. |
+| `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `["microphone"]` (MAN-1316). Required to record audio inside the shell iframe; the user still sees the browser's own mic prompt. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
 | `migrate_command` | string[] | argv invoked once per `(app, tenant)` install/upgrade. The platform runs this with `MANAURUM_TARGET_SCHEMA` + broker DSN pre-set so your migrations land in the per-tenant app schema. |
 | `migration.breaking` | bool | If `true`, the R-1.5 SQL validator allows destructive DDL (drop table, drop column, alter type). Default `false`. |
 | `metadata` | object | Free-form for App Store rendering: `category`, `icon_url`, `support`, screenshots, etc. |
