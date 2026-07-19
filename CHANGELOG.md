@@ -1,3 +1,29 @@
+# 2.3.0 — 2026-07-19
+
+- **Voice-app platform surfaces (MAN-1316, docs work item MAN-1323)** —
+  the skill can now build a working voice app end-to-end:
+  - `os.ai.transcribe` documented (capabilities-reference + the SKILL.md
+    capability table): BYOK speech-to-text on the tenant's **OpenAI** key,
+    ≤ 25 MB decoded audio, default model `gpt-4o-transcribe`, real error
+    codes verified against the handlers (`invalid_audio_base64`,
+    `audio_too_large`, 412 `integration_not_configured`, and the fact that
+    every upstream failure is 502 `upstream_error:openai` — never 504).
+  - Manifest `permissions[]` (browser Permissions-Policy delegation, enum
+    `["microphone"]`) added to the manaurum-setup scaffold + validation
+    rules, the manaurum-app manifest steps, and the v2-platform.md § 1
+    field reference — a scaffolded mic app no longer ships broken inside
+    the shell iframe.
+  - `os.http.fetch` section REWRITTEN against the actual handler: the old
+    text taught a text-only `body` (which corrupts binary payloads) and a
+    nonexistent `timeout_seconds` field. Now documents `body_base64` /
+    `response_format: "base64"` (~5 MB each way), `timeout_ms`, the real
+    output shape (`content_length`, `elapsed_ms`), and the real error
+    codes (`unsafe_url`, `host_not_in_allow_list`,
+    `upstream_response_too_large`, …).
+- Version note: the 2.2.0 changelog entry below shipped on 2026-06-24 but
+  `plugin.json` was never bumped past 2.1.0; this release corrects the
+  drift by moving straight to 2.3.0.
+
 # 2.2.0 — 2026-06-24
 
 - **Source retention (MAN-990 / MAN-993)**: the deploy skill now documents

@@ -261,6 +261,59 @@ Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding
 
 ---
 
+## `os.ai.transcribe` — speech-to-text (BYOK, OpenAI only)
+
+Base64 audio in → transcript text out (MAN-1316). BYOK with the tenant's
+**OpenAI** key specifically — an Anthropic key alone does not cover STT.
+This is the platform STT path: the tenant's key never reaches your
+container, so BYOK transcription goes through this capability only
+(`os.http.fetch` can carry binary but caps at ~5 MB and would need your
+own API key + an egress declaration).
+
+To RECORD audio inside the OS shell iframe, the app must also declare
+`"permissions": ["microphone"]` in its manifest (see `v2-platform.md` § 1)
+— without it the browser blocks `getUserMedia` in the iframe.
+
+**Input:**
+
+```json
+{
+  "audio_base64": "<base64, standard alphabet>",
+  "mime_type":    "audio/webm",
+  "model":        "gpt-4o-transcribe",
+  "language":     "ru",
+  "prompt":       "ManAurum, SeregaOS"
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `audio_base64` | yes | Max **25 MB decoded** (the upstream upload limit). |
+| `mime_type` | optional | Default `audio/webm`. Pass what you actually recorded — Chrome MediaRecorder emits `audio/webm`, iOS Safari `audio/mp4`. |
+| `model` | optional | Default `gpt-4o-transcribe`; `whisper-1` and `gpt-4o-mini-transcribe` also work. |
+| `language` | optional | ISO-639-1 hint, e.g. `"ru"`. |
+| `prompt` | optional | Vocabulary-biasing prompt (names, domain terms), ≤ 4000 chars. |
+
+**Output:**
+
+```json
+{ "text": "…transcript…", "provider": "openai", "model": "gpt-4o-transcribe" }
+```
+
+**Errors:**
+- `400 invalid_audio_base64` — undecodable or empty base64.
+- `400 audio_too_large` — decoded audio over the 25 MiB cap.
+- `412 integration_not_configured` (`provider: "openai"`) — tenant has no
+  OpenAI key in Settings → Workspace → Интеграции.
+- `502 upstream_error:openai` — EVERY upstream failure (non-2xx, timeout,
+  transport) surfaces as this; the capability never returns 504.
+
+Privacy note: the platform logs only the audio size + MIME for audit —
+never the audio or the transcript. Keep your own transcript record if you
+need one.
+
+---
+
 ## `os.ocr.extract` — OCR via vision LLM (BYOK)
 
 Two providers: `anthropic-vision` (claude-3-5-sonnet), `openai-vision` (gpt-4o).
@@ -351,25 +404,63 @@ Writes to `events_outbox` in the caller's transaction. The dispatcher picks it u
 ## `os.http.fetch` — external HTTP (egress allow-list)
 
 Hosts must appear in `manifest.runtime.egress_allowed_hosts`. Default-deny.
+HTTPS only.
 
 **Input:**
 
 ```json
 {
-  "method":  "GET",
   "url":     "https://api.example.com/foo",
+  "method":  "GET",
   "headers": { "Accept": "application/json" },
-  "body":    null,
-  "timeout_seconds": 10
+  "body":    "<string body>",
+  "timeout_ms": 10000
 }
 ```
 
-**Output:** `{ "status": 200, "headers": {...}, "body": "..." }`
+| Field | Required | Notes |
+|---|---|---|
+| `url` | yes | `https://` only. |
+| `method` | optional | `GET` (default) / `POST` / `PUT` / `DELETE`. |
+| `headers` | optional | Plain object. |
+| `body` | optional | **String** body — for text/JSON payloads. |
+| `body_base64` | optional | **Binary** request body, base64-encoded (MAN-1316). Mutually exclusive with `body` — sending both is an error. Max ~5 MB decoded. |
+| `response_format` | optional | `"text"` (default — response `body` is UTF-8 with replacement, LOSSY for binary) or `"base64"` (lossless — exact bytes in `body_base64`, `body` comes back empty). |
+| `timeout_ms` | optional | 1–30000, default 10000. (Milliseconds — there is no `timeout_seconds` field.) |
+
+**Binary payloads — the rule:** the default `text` wire corrupts binary
+data in BOTH directions. To send raw bytes (file uploads, audio), base64
+them into `body_base64`; to receive raw bytes (file downloads), pass
+`response_format: "base64"` and read `body_base64` from the output.
+
+**Output:**
+
+```json
+{
+  "status": 200,
+  "headers": { ... },
+  "content_length": 1234,
+  "elapsed_ms": 87,
+  "body": "…text (or empty string in base64 mode)…",
+  "body_base64": "…only present when response_format is base64…"
+}
+```
+
+Upstream 4xx/5xx are NOT errors — they come back in `status` and your app
+handles them. Redirects are not followed; handle `Location` yourself with
+a second call (it re-passes the allow-list checks).
 
 **Errors:**
-- `412 egress_not_declared` — host isn't in manifest egress.
-- `400 invalid_url` — URL doesn't parse / isn't `http(s)`.
-- `502 upstream_5xx`, `504 upstream_timeout`.
+- `412 egress_not_declared` — manifest declares no egress hosts at all.
+- `412 host_not_in_allow_list` — URL host isn't in the declared list.
+- `400 unsafe_url` — non-https scheme, loopback / private-range target, or
+  a hostname resolving to one.
+- `400 body_and_body_base64_exclusive` — both body fields sent (newer
+  platforms reject this at schema validation as `422 input_schema_violation`).
+- `400 invalid_body_base64` — `body_base64` undecodable.
+- `502 upstream_unreachable` — DNS / connect / TLS failure.
+- `502 upstream_response_too_large` — response over the 5 MB cap.
+- `504 upstream_timeout` — upstream didn't answer within `timeout_ms`.
 
 ---
 

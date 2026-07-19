@@ -72,6 +72,14 @@ Validation rules (key ones):
 - `runtime.mode`: `hosted` (the platform runs the container — what this skill teaches), `byo` (you host your own and the platform proxies — advanced), or `dev` (in-browser Monaco editor — App Builder v2 internal).
 - `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`. Default-deny for everything else.
 - `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
+- `permissions`: optional top-level array of BROWSER features the OS shell
+  delegates to your iframe via the `allow` attribute (Permissions-Policy).
+  Enum today: `["microphone"]`. **Required for any app that records audio
+  inside the shell** — without it `getUserMedia` is blocked in the iframe
+  (your standalone `<app_id>.apps.manaurum.com` URL is unaffected). The user
+  still sees the normal browser mic prompt. This is separate from
+  capabilities: a voice app declares BOTH `"permissions": ["microphone"]`
+  and `os.ai.transcribe` in `requires_capabilities`.
 
 For declaring custom capabilities, secrets, migrations, see `references/v2-platform.md` § Manifest reference.
 
@@ -140,10 +148,11 @@ Capabilities available today:
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
 | `os.files.upload` / `.download` / `.delete` | R2 (presigned URLs). |
 | `os.ai.complete` / `os.ai.embed` | LLM (BYOK — tenant configures keys in Settings → Интеграции). |
+| `os.ai.transcribe` | Speech-to-text (BYOK — needs the tenant's **OpenAI** key). ≤ 25 MB decoded audio. Pair with manifest `"permissions": ["microphone"]` to record in the shell iframe. |
 | `os.ocr.extract` | OCR via vision LLM (BYOK). |
 | `os.notifications.send_to_user` | In-app / Resend / Twilio. |
 | `os.events.emit` | Inter-app events (transactional outbox). |
-| `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. |
+| `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. Binary payloads via `body_base64` / `response_format: "base64"` (~5 MB each way). |
 | `os.compliance.audit_query` | Read your own capability call audit log. |
 | `os.apps.call` | Sync RPC to another v2 app. |
 
