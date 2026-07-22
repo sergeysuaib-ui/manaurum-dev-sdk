@@ -21,9 +21,11 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 A v2 app is a Docker image that:
 
-- Listens on a port (typically `:80`) — that port serves whatever HTTP your app needs.
-- Receives `MANAURUM_TENANT_ID`, `MANAURUM_APP_ID`, `MANAURUM_VERSION` (and `MANAURUM_BROKER_URL` if you opted into a dedicated DB schema) as env vars at startup.
-- Calls back to the OS via the **capability gateway** at `POST https://manaurum.com/api/capability/<name>` for everything: KV storage, files (R2), AI, notifications, events, audit, etc.
+- Listens on **port 80, bound to `0.0.0.0`** — or on whatever port it declares in `runtime.port`. Nothing else is routable (see Step 2).
+- Serves only the `/api/*` paths it declared in `runtime.api_routes`. Undeclared API paths never reach the container (see Step 1).
+- Receives `MANAURUM_TENANT_ID`, `MANAURUM_APP_ID`, `MANAURUM_VERSION`, `MANAURUM_TARGET_SCHEMA`, and the runtime credential pair `MANAURUM_RUNTIME_TOKEN` + `MANAURUM_CORE_URL` as env vars at startup (plus `DATABASE_URL` when it uses the default managed DB mode).
+- Calls back to the OS via the **capability gateway** at `POST ${MANAURUM_CORE_URL}/api/capability/<name>` for everything: KV storage, files (R2), AI, notifications, events, audit, etc.
+- Answers the shell's `manaurum:ready` handshake, or it has no usable desktop window (see Step 2.5).
 
 When you deploy:
 1. Your build context is tarred + uploaded as base64 in the request body.
@@ -39,12 +41,24 @@ There is **no Core PR** for any of this. The platform team does not need to be i
 ## Required project structure
 
 ```
-my-app/
-├── manifest_v2.json   ← REQUIRED — see below
-├── Dockerfile         ← REQUIRED — produces the runtime image
-├── ... your source files (any language, any framework) ...
-└── .env.manaurum      ← (gitignored) MANAURUM_V2_TOKEN=mna_…
+workspace/
+├── .env.manaurum      ← (gitignored) MANAURUM_V2_TOKEN=mna_… — OUTSIDE the deployed dir, on purpose
+└── my-app/            ← this is what you deploy; everything below is packed and uploaded
+    ├── manifest_v2.json   ← REQUIRED — see below
+    ├── Dockerfile         ← REQUIRED — produces the runtime image
+    ├── .dockerignore      ← strongly recommended — keep .env*, .git, node_modules out of the image
+    ├── migrations/        ← optional — plain *.sql, run once per (app, tenant) in filename order
+    │   └── 0001_init.sql
+    └── ... your source files (any language, any framework) ...
 ```
+
+**The token file lives one level up, and that placement is the point.** The packager tars the directory containing your `manifest_v2.json`, excluding only these exact names:
+
+```
+__pycache__  .venv  venv  .git  .pytest_cache  .ruff_cache  .mypy_cache  node_modules  dist  build
+```
+
+That is an exact-name match list with **no glob support and no `.env*` entry** — a `.env.manaurum` sitting next to your `Dockerfile` is packed verbatim into the build context, baked into an image layer, retained per-version in object storage, downloadable later via `manaurum app fetch-source`, and committed to a per-app append-only git history. There is no practical way to un-leak it. Keep every `.env*` outside the deployed directory, and ship a `.dockerignore` as a second line of defence.
 
 ## Step 1 — Manifest v2 (minimal)
 
@@ -57,7 +71,18 @@ my-app/
   "version": "1.0.0",
   "runtime": {
     "mode": "hosted",
+    "port": 8000,
+    "api_routes": [
+      { "path": "/api/items/*", "auth": "user" },
+      { "path": "/api/items",   "auth": "user" },
+      { "path": "/api/kiosk/today", "auth": "anonymous" }
+    ],
     "egress_allowed_hosts": []
+  },
+  "data": { "none": true },
+  "frontend": {
+    "entry_point": "/index.html",
+    "icon": "📋"
   },
   "visibility": {
     "mode": "private"
@@ -70,7 +95,12 @@ Validation rules (key ones):
 - `app_id`: slug `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`. Becomes the URL: `<app_id>.apps.manaurum.com`.
 - `version`: semver MAJOR.MINOR.PATCH (no pre-release, no build metadata). Each redeploy must be a NEW version.
 - `runtime.mode`: `hosted` (the platform runs the container — what this skill teaches), `byo` (you host your own and the platform proxies — advanced), or `dev` (in-browser Monaco editor — App Builder v2 internal).
+- `runtime.port`: the port your container listens on. Default **80**. This is the *only* thing that decides where the gateway sends traffic — see Step 2.
+- **`runtime.api_routes`: the default-deny declaration of every `/api/*` path your container serves.** Get this wrong and your app is broken in a way that looks like a backend bug. Details below.
 - `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`. Default-deny for everything else.
+- `data`: your storage mode. If your app has **no Postgres of its own** — which includes every app that persists only through `os.kv` / `os.files` — declare `"data": {"none": true}`. Omitting the block selects managed mode, which tries to provision a per-(app, tenant) schema + login role and needs a DDL-capable DSN on Core. Other modes: `{"byo": true}` (your own connection string, no isolation guarantees), `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`, and tenant admins see an isolation warning at install).
+- `frontend.entry_point`: the URL the **desktop shell** loads in your app's window, normally `/index.html`. Without it your app has a live URL but no window on the desktop. Declaring it is also what makes the `manaurum:ready` handshake (Step 2.5) apply to you.
+- `frontend.icon`: an emoji (`"📋"`, and Libi ships `"🍼"`), a full URL, or an absolute `/api/catalog/media/...` path. Omit it and the launcher serves a generic placeholder. A **relative** path such as `"icons/app.svg"` is not resolved — it is painted into the tile as literal text.
 - `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
 - `permissions`: optional top-level array of BROWSER features the OS shell
   delegates to your iframe via the `allow` attribute (Permissions-Policy).
@@ -80,6 +110,32 @@ Validation rules (key ones):
   still sees the normal browser mic prompt. This is separate from
   capabilities: a voice app declares BOTH `"permissions": ["microphone"]`
   and `os.ai.transcribe` in `requires_capabilities`.
+
+### `runtime.api_routes` — read this before you write a single route
+
+Every request to `https://<slug>.apps.manaurum.com` goes through the Core gateway. For any path starting with `/api/`, the gateway looks the path up in `runtime.api_routes` **before** touching your container. No match → **`404 route_not_declared`**, and your container never sees the request. There is no implicit fallback, not even to anonymous.
+
+Each entry is `{ "path": …, "auth": … }`:
+
+- `path` must start with `/`. A trailing `/*` matches anything **below** that prefix.
+- `auth` is `"user"` or `"anonymous"` — both required, both explicit.
+  - `"user"`: the gateway mints a 60-second RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`. The end user's own bearer token is **never** forwarded to you.
+  - `"anonymous"`: proxied with no user context. This is how you expose a kiosk/public endpoint, and it must be declared — a route you forget is unreachable, not open.
+- Optional `"streaming": true` for `text/event-stream` routes, so the gateway passes chunks through instead of buffering the response.
+- **There is no `method` field.** One rule covers GET, POST, PATCH, DELETE alike. You cannot declare `/api/items` anonymous for reads and `user` for writes — enforce that inside your app.
+
+The two failure modes that will actually catch you:
+
+1. **`/api/tasks/*` does NOT match the bare `/api/tasks`.** The wildcard means "everything below `/api/tasks/`" and requires at least one more character. A collection endpoint plus its item endpoints needs **both** rules:
+   ```json
+   { "path": "/api/tasks",   "auth": "user" },
+   { "path": "/api/tasks/*", "auth": "user" }
+   ```
+2. **Adding a route to your code is not enough.** New endpoint → new manifest entry → redeploy. Otherwise it 404s while your logs stay silent, because nothing reached you.
+
+Precedence: the longer literal prefix wins, ties break by declaration order. That lets you carve one path out of a wildcard — `{"path": "/api/orders/*", "auth": "user"}` plus `{"path": "/api/orders/public", "auth": "anonymous"}` does what it looks like.
+
+Static assets (HTML/JS/CSS, `/healthz`, anything not under `/api/`) are **not** declared here and are always served anonymously.
 
 For declaring custom capabilities, secrets, migrations, see `references/v2-platform.md` § Manifest reference.
 
@@ -103,31 +159,82 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY . .
-EXPOSE 8080
-CMD ["node", "server.js"]
+EXPOSE 80
+CMD ["node", "server.js"]   # server.js must listen on 0.0.0.0:80
 ```
 
-Whatever you pick: **the container must serve HTTP on the port you EXPOSE**. The platform doesn't care which port — it reads `EXPOSE` and routes Traefik to it. Default is 80.
+### The port rule
+
+**`EXPOSE` is never parsed.** Nothing in Core reads it; it is documentation for humans. The gateway resolves your upstream as `<swarm-service>:<port>` where `port` is `manifest.runtime.port` if present and **80** otherwise. That is the only input.
+
+Two consequences, both of which produce the same symptom — a deploy that reports `succeeded` and then 502s on every single request:
+
+- **Wrong or missing `runtime.port`.** If your framework listens on 8000 and your manifest says nothing, the gateway dials port 80 and finds nobody. Either bind 80, or declare the port you actually use. Reference apps declare it: `libi/manifest.json` ships `"runtime": {"mode": "hosted", "port": 8000, …}`.
+- **Bound to `127.0.0.1`.** Many frameworks default to loopback, which is unreachable from outside the container. Bind `0.0.0.0` explicitly:
+  ```dockerfile
+  CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+  ```
+  and set `"port": 8000` in the manifest to match. `app.listen(80)` in Node binds all interfaces by default, but `app.listen(80, 'localhost')` does not.
+
+Note `runtime.port` validates because the `runtime` sub-object is not strict — which cuts both ways. Unknown `runtime` keys (`replicas`, anything you invent) also validate and are then **silently ignored**, so a typo'd `"prot": 8000` deploys green and 502s.
+
+Traffic path: `https://<slug>.apps.manaurum.com` → Traefik → **Core backend** (which adds the `/apps/<slug>` prefix) → Core gateway → your container. Traefik never talks to your container directly, so publishing ports in the Dockerfile changes nothing.
+
+## Step 2.5 — The `manaurum:ready` handshake (MANDATORY)
+
+If your app declares `frontend.entry_point` — i.e. it has a window on the desktop — this is not optional.
+
+When the desktop opens your app it loads your URL in an iframe and posts `manaurum:init` into it. **Your page must post `manaurum:ready` back within 10 seconds.** If it doesn't, the shell covers your UI with "App is not responding — no `manaurum:ready` received within 10s". This is enforced for v2 exactly as for v1; there is no version branch on this path.
+
+**The trap:** opening `https://<slug>.apps.manaurum.com` directly works perfectly without the handshake. There is no parent frame, so nothing times out. Your app looks fine in every browser tab you test it in and is unusable in the only place your users open it. This is not hypothetical — the first-party app *Libi* shipped exactly this way and needed a follow-up release (MAN-1321: "Libi's SPA never replied, making the app unusable as a desktop window or from the mobile home screen").
+
+Minimal correct answer, inline in `<head>` of your entry point:
+
+```html
+<script>
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'manaurum:init') {
+      window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+    }
+  });
+</script>
+```
+
+Inline in `<head>` matters: for an SPA with a deferred module bundle, `manaurum:init` can arrive before your bundle has parsed. Put the listener in the HTML **and** fire one proactive `manaurum:ready` after mount — that belt-and-braces pair is what MAN-1321 landed:
+
+```js
+// src/main.tsx, after render
+try { window.parent.postMessage({ type: 'manaurum:ready' }, '*'); } catch { /* not embedded */ }
+```
+
+The `manaurum:init` payload carries the app's `granted_capabilities`. **For a v2 app, postMessage is for this handshake and window framing only.** Never send the v1 data verbs (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app — v2 data flows from your own `/api` routes to the capability gateway, server-side.
+
+Full message contract: `references/sdk-api.md` § "`manaurum:ready` — the shell handshake".
 
 ## Step 3 — Use capabilities (from inside your container)
 
-Your container can call the capability gateway at `https://manaurum.com/api/capability/<name>`. Three required headers:
+Your container calls the gateway at `${MANAURUM_CORE_URL}/api/capability/<name>` (singular `capability`). **The platform injects the credential for you.** You never mint one, never bake one into the image, and never use your own `mna_*` developer token at runtime — that token is for `POST /api/dev/v2/deploy` from your laptop and nothing else.
 
-- `Authorization: Bearer <mna_*>` — your developer credential.
-- `X-Manaurum-Tenant-Id: <uuid>` — `process.env.MANAURUM_TENANT_ID`.
-- `X-Manaurum-App-Id: <uuid>` — `process.env.MANAURUM_APP_ID`.
+Headers:
+
+- `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` — an app-scoped `mna_*` runtime credential the platform mints fresh on every deploy and injects as an env var. It is scoped to this one app; it is not your developer token.
+- `X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}`.
+- `X-Manaurum-App-Id` — the **UUID** (`MANAURUM_APP_ID`) for `os.kv.*` and `os.events.emit`; the slug is rejected there with `412 app_id_must_be_uuid`.
+- `X-Manaurum-User-Context` — forward it **unchanged** for user-scoped capabilities (`os.drive.*`, `os.calendar.*`), exactly as your `auth: "user"` route received it. Omitting it is `403 user_context_required`. It is optional on app-scoped capabilities, where it only enriches the audit log.
 
 Body shape: a JSON object matching the capability's input schema (no wrapper). Read `references/capabilities-reference.md` for the canonical input/output for every capability.
 
-**Working with the user's Drive (Files app):** `os.files.*` is your app's PRIVATE scratch — the user never sees it. To put a document into the USER's file system, read a user-picked file, or work in a folder the user granted you, use the `os.drive.*` capabilities + `app.pickFromDrive()` (SDK v2.1) — all consent-gated and requiring the forwarded `X-Manaurum-User-Context` header. Full contract in `references/capabilities-reference.md` § os.drive.
+**Working with the user's Drive (Files app):** `os.files.*` is your app's PRIVATE scratch — the user never sees it. To put a document into the USER's file system, read a user-picked file, or work in a folder the user granted you, use the `os.drive.*` capabilities plus the browser-side `app.pickFromDrive()` picker — all consent-gated and requiring the forwarded `X-Manaurum-User-Context` header. Gateway contract in `references/capabilities-reference.md` § os.drive; the browser-side picker is in `references/sdk-api.md` § "Platform v2 — frontend SDK (`manaurum-v2.mjs`)".
 
 ```javascript
 // inside your container — Node example
+const CORE = process.env.MANAURUM_CORE_URL;
+
 async function setKV(key, value) {
-  const resp = await fetch('https://manaurum.com/api/capability/os.kv.set', {
+  const resp = await fetch(`${CORE}/api/capability/os.kv.set`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${process.env.MANAURUM_V2_TOKEN}`,
+      'Authorization': `Bearer ${process.env.MANAURUM_RUNTIME_TOKEN}`,
       'X-Manaurum-Tenant-Id': process.env.MANAURUM_TENANT_ID,
       'X-Manaurum-App-Id':    process.env.MANAURUM_APP_ID,
       'Content-Type':         'application/json',
@@ -155,6 +262,8 @@ Capabilities available today:
 | `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. Binary payloads via `body_base64` / `response_format: "base64"` (~5 MB each way). |
 | `os.compliance.audit_query` | Read your own capability call audit log. |
 | `os.apps.call` | Sync RPC to another v2 app. |
+| `os.drive.stage` / `.publish` / `.list` / `.read` / `.write` | The USER's file system (Files app), consent-gated. **User-scoped — forward `X-Manaurum-User-Context`.** |
+| `os.calendar.list_events` / `os.calendar.create_event` | The user's calendar. **User-scoped — forward `X-Manaurum-User-Context`.** |
 
 See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
 
@@ -166,7 +275,9 @@ You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → "v2 Tokens (B
 MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
 ```
 
-The deploy is a single API call. Bundle the build context, base64-encode, post:
+This is a **deploy-time** credential only. Your container never sees it and must never contain it — at runtime it uses the injected `MANAURUM_RUNTIME_TOKEN` (Step 3).
+
+The deploy is one API call plus a poll. Bundle the build context, base64-encode, post:
 
 ```bash
 cd my-app
@@ -175,7 +286,7 @@ tar cf /tmp/ctx.tar \
   --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
   .
 
-B64=$(base64 -w0 /tmp/ctx.tar)
+B64=$(base64 < /tmp/ctx.tar | tr -d '\n')
 jq -n --arg b "$B64" --argjson m "$(cat manifest_v2.json)" \
   '{manifest_json: $m, archive_b64: $b}' > /tmp/deploy.json
 
@@ -185,16 +296,16 @@ curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -d @/tmp/deploy.json | jq .
 ```
 
-Response on success (returned synchronously when the deploy finishes — usually ~7-10s):
+**The deploy endpoint is asynchronous.** It always returns HTTP **202** with `status: "pending"` — never `succeeded`. Build, push, swarm, Traefik and migrations all run on a background job:
 
 ```json
 {
   "deploy_job_id": "<uuid>",
-  "status": "succeeded"
+  "status": "pending"
 }
 ```
 
-Then poll the job for the URL:
+So a 202 tells you nothing except that the request was accepted; the manifest has not even been validated yet. Poll the job until it reaches `succeeded` or `failed`:
 
 ```bash
 curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
@@ -213,7 +324,13 @@ curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
 }
 ```
 
-A `deploy.sh` template for the project: see `manaurum-deploy/SKILL.md`.
+**`succeeded` does not mean "serving".** It means Docker accepted the service spec. There is no readiness probe on the hosted path, so the job can go green while your container is crash-looping or listening on the wrong port. Always finish a deploy by hitting the app yourself:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://my-app.apps.manaurum.com/healthz
+```
+
+A `deploy.sh` template with the polling loop, the live NDJSON progress stream, and the failure-triage table: see `manaurum-deploy/SKILL.md`.
 
 ## Step 5 — Update + rollback
 
@@ -232,7 +349,11 @@ A `deploy.sh` template for the project: see `manaurum-deploy/SKILL.md`.
 | 422 `manifest validation failed` | Manifest fails the v2 schema. | Read `errors[]`; fix and retry. |
 | 422 `migration_validation_failed` | Migration SQL contains destructive DDL and `migration.breaking` is not set. | Either set `migration.breaking: true` (deliberate), or rewrite to additive-only. |
 | 422 `egress_not_declared` | App tried `os.http.fetch` to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
-| 502 (during deploy) | Image build failed. | Look at `result.error` for the Docker stderr. Common: `EXPOSE` missing, `COPY` source doesn't exist. |
+| 404 `route_not_declared` | An `/api/*` path is missing from `runtime.api_routes`. Default-deny — the container never saw the request. | Declare the path. Remember `/api/x/*` does not cover `/api/x`. |
+| 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
+| 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
+| 502 (serving, after a green deploy) | Nothing is listening where the gateway dials. | Bind `0.0.0.0` on port 80, or set `runtime.port` to the port you actually listen on. |
+| 502 (during deploy) | Image build failed. | Look at `result.error` for the Docker stderr. Common: `COPY` source doesn't exist, dependency install failed. |
 
 ## Tenant context inside the container
 
@@ -243,17 +364,43 @@ The platform sets these env vars on every task:
 | `MANAURUM_TENANT_ID` | UUID of the tenant your app is installed in. |
 | `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. Use as `X-Manaurum-App-Id`. |
 | `MANAURUM_VERSION` | The semver of the running version. |
-| `MANAURUM_BROKER_URL` / `DATABASE_URL` | Postgres broker DSN (only meaningful when you opt into a dedicated app schema). |
+| `MANAURUM_TARGET_SCHEMA` | Your Postgres schema, `app_<slug>__<tenant_hex>`. |
+| `MANAURUM_RUNTIME_TOKEN` | App-scoped `mna_*` credential for the capability gateway. Minted fresh every deploy. |
+| `MANAURUM_CORE_URL` | Base URL of the capability gateway. Build your call URLs from it, don't hardcode. |
+| `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` | RSA public key for verifying the `X-Manaurum-User-Context` JWT. |
+| `DATABASE_URL` | Present **only** in the default managed data mode. A per-(app, tenant) login role, `NOSUPERUSER NOBYPASSRLS`, scoped to your one schema, with **no CREATE** — so no DDL at runtime, including `CREATE TABLE IF NOT EXISTS` on boot. Write plain unqualified SQL. Absent under `data.none` / `data.byo`. |
+
+That table is the complete set. Two names that are **not** in it and that older guidance wrongly told you to read:
+
+- **`MANAURUM_V2_TOKEN`** — this is the name these skills use for *your own* deploy credential in `.env.manaurum` on your machine, and it is a plain shell variable in the `curl` examples. The platform never injects it into your container. If your app code reads `MANAURUM_V2_TOKEN` at runtime it will find nothing; the runtime credential is `MANAURUM_RUNTIME_TOKEN`.
+- **`MANAURUM_BROKER_URL`** — never injected. MAN-163 removed it because the shared broker DSN carried grants on every app's schema, so any container holding it could read other tenants' data. Anything built on it will fail.
 
 Your data is **automatically tenant-scoped** by the platform's RLS policies on `app_kv`, `app_secrets`, audit log, etc. You don't need to filter by `tenant_id` in your queries — the platform does it server-side. Use `MANAURUM_TENANT_ID` only for display/branding ("welcome to <tenant>", per-tenant theming, etc.), never as a security filter.
 
 ## What NOT to do
 
-- **Don't bake the `mna_*` token into the image.** Pass it via env at deploy time or as a v2 secret (`os.secrets.set` once, `os.secrets.get` at runtime).
+- **Don't bake your developer `mna_*` token into the image, and don't pass one at deploy.** You don't need to: the platform injects `MANAURUM_RUNTIME_TOKEN`. Your own token is a laptop credential for `POST /api/dev/v2/deploy`; an image containing it hands every future reader your deploy rights. (`os.secrets.get` is not an alternative here — it is itself a capability call that needs the runtime token first.)
 - **Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
+- **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql`, which the pipeline runs once per (app, tenant).
 - **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
+
+## What will bite you
+
+Everything here shares one property: it works when you open `https://<slug>.apps.manaurum.com` in a tab, and breaks inside the desktop — or breaks silently with a green deploy. Testing the standalone URL is not evidence.
+
+**No native dialogs.** The shell's iframe sandbox is `allow-scripts allow-forms allow-same-origin`. `allow-modals` is not granted anywhere on the platform, so `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` prompts are dead — Chrome returns `undefined` / `false` / `null` and logs a warning. A `confirm()`-gated delete button becomes a button that does nothing. Use an in-app modal for confirm, an in-app input for prompt, a toast for alert.
+
+**Don't set your own framing headers.** Core force-assigns the CSP `frame-ancestors` and deletes `X-Frame-Options` on every `/apps/*` response, so setting either is pointless. But only the *framing* directives are rewritten: the rest of your CSP survives verbatim, so a `connect-src 'self'` that forgets your API origin will still break your app inside the shell.
+
+**`frontend.icon` takes an emoji, a full URL, or an absolute `/api/catalog/media/...` path.** A relative path like `icons/app.svg` is not resolved — it renders as that literal string in the tile. Omit the field entirely and you get a clean generic placeholder, which is better than a broken one.
+
+**Keep `.env*` out of the app directory.** The packager excludes `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.venv` — not `.env*`. Anything else you don't want in the image needs a `.dockerignore`.
+
+**Unknown `runtime` keys validate and do nothing.** The `runtime` sub-object isn't strict, so `"prot": 8000` or an invented `env_secrets` passes the schema, deploys green, and is silently ignored. Typos here cost you a debugging session, not a 422.
+
+**A capability in your manifest is not a capability you may call.** Grants are enforced per-install ahead of dispatch; an empty grant list is a deny, not a pass. Adding a capability and redeploying still 403s until the tenant's install grants are extended.
 
 ---
 
@@ -264,7 +411,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 A v1 app is a static HTML+JS bundle loaded in a sandboxed iframe by the OS shell. The bundle is uploaded as a zip via `POST /api/dev/apps/deploy` with an `mnu_*` (NOT `mna_*`) token. The bundle communicates with the OS over `postMessage` via the `manaurum.js` SDK.
 
 If you genuinely need to update a v1 app, see:
-- `references/sdk-api.md` — full v1 SDK reference (storage, files, db, ai, mul, …)
+- `references/sdk-api.md` § "Legacy v1" — the v1 SDK surface (storage, files, db, ai, mul, …). Note that the same file's `manaurum:ready` and "Platform v2 — frontend SDK" sections are **not** v1-only; they apply to v2 apps too.
 - `references/manifest-spec.md` — v1 manifest schema
 - `references/design.md` — Smoothie + XP themes
 - `references/publishing.md` — App Store v1 submission

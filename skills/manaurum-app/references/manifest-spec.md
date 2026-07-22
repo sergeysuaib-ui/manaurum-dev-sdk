@@ -1,5 +1,24 @@
 # ManAurum App Manifest v1 (frozen)
 
+> ## ⚠ This page documents **v1 only**. It is not the contract for a new app.
+>
+> **Platform v2 is the default for every new app.** Its manifest is a *different, incompatible* contract — read `references/v2-platform.md` instead, and validate against the canonical schema `frontend/public/sdk/manifest_v2.schema.json` in the manaurum repo (served at `https://manaurum.com/sdk/manifest_v2.schema.json`). Use this page only when you are maintaining an existing v1 iframe-bundle app.
+>
+> **Do not carry fields from this page into a v2 manifest.** The v2 root sets `"additionalProperties": false`, so any key it does not know is a hard `422 manifest validation failed` — there is no forward-compatible ignore. The v2 root accepts exactly **23** keys, **6** of them required (`manifest_version`, `manaurum_sdk_version`, `app_id`, `name`, `version`, `runtime`). Fields taught below that are **rejected outright at a v2 root**:
+>
+> | v1 root field | Under v2 |
+> |---|---|
+> | `slug` | rejected — v2 uses `app_id` |
+> | `icon` | rejected — moves to `frontend.icon` |
+> | `entry_point` | rejected — moves to `frontend.entry_point` |
+> | `window` | rejected — moves to `frontend.window` |
+> | `entities` | rejected — v2 apps own their own Postgres schema via `migrations/*.sql` |
+> | `integrations` | rejected — v2 uses `runtime.egress_allowed_hosts` + `os.http.fetch` |
+>
+> Same trap for the two free-text fields authors reach for by reflex: a root `description` or a root `category` is a 422 under v2. They belong in `metadata.description` / `metadata.category` (which is where v1 already puts `category`, below).
+>
+> `permissions` exists in **both** versions and means **different things**. In v1 it is the platform-permission enum below (`auth.read_user`, `db.read_own_entities`, …). In v2 it is a browser-feature delegation array for the iframe `allow` attribute, and `"microphone"` is the only value the enum accepts today — a v1 permission string there is a 422 at `permissions/0`.
+
 This is the exact contract validated by `POST /api/dev/apps/deploy`. It mirrors `https://manaurum.com/standards/manifest_v1.schema.json`. Anything not in this document will be rejected by the deploy validator.
 
 ## Minimal manifest
@@ -79,7 +98,7 @@ This is the exact contract validated by `POST /api/dev/apps/deploy`. It mirrors 
 
 | Field | Notes |
 |---|---|
-| `icon` | Either an emoji or a path inside the bundle (e.g. `"icons/app.svg"`). |
+| `icon` | Either an emoji or a path inside the bundle (e.g. `"icons/app.svg"`). **v1 only — see the note below before reusing this in a v2 app.** |
 | `window.default_width` | Integer, 320–4000. |
 | `window.default_height` | Integer, 240–4000. |
 | `permissions` | Array of strings, unique. Only values from the v1 enum (below). |
@@ -87,6 +106,8 @@ This is the exact contract validated by `POST /api/dev/apps/deploy`. It mirrors 
 | `integrations` | External dependencies (below). |
 | `metadata.category` | Free string. |
 | `metadata.tags` | Array of strings. |
+
+> **Icons under v2 — a bundle-relative path is the worst option.** In v1 the bundle is served by the platform, so `"icons/app.svg"` resolves. In v2 there is no bundle to be relative to: the field is `frontend.icon`, an unconstrained string that the launcher hands to the shell as `icon_url` (`launcher.py:117-121`; omit it and you get the `/icons/app-default.svg` placeholder). Every shell surface then runs the same test — `!icon.startsWith('/') && !icon.startsWith('http')` → treat it as an emoji and render it as **text** (`app/app/[slug]/page.tsx:102`, `settings/NavigationSettings.tsx:125`, `settings/NotificationSettings.tsx:264`). A relative path fails both checks, so `"icons/app.svg"` is painted as the literal string `icons/app.svg` in the tile — no broken-image icon, no 404 in the console, just text. Valid v2 values: an **emoji** (`"🍼"`), an **absolute URL** (`"https://…/icon.png"`), or an **absolute `/api/catalog/media/…` path** (what Core's own icon upload writes — `routes/developer/__init__.py:835`).
 
 ## Permissions enum (v1)
 
@@ -284,7 +305,8 @@ If your bundle imports `@stripe/stripe-js` or fetches from `js.stripe.com` witho
 These were in v0 / legacy docs but are NOT part of v1:
 
 - `runtime.entrypoint` (URL) — replaced by bundle-relative `entry_point`.
-- `runtime.sandbox` — sandbox attributes are set by the shell, not the manifest.
+- `runtime.sandbox` — sandbox attributes are set by the shell, not the manifest. The shell's default token list is `allow-scripts allow-forms allow-same-origin` (`IframeAppHost.tsx:211`). Consequence for v1 and v2 alike: **`allow-modals` is never emitted anywhere in the platform**, so `alert()`, `confirm()` and `prompt()` are dead inside the desktop — Chrome silently returns `undefined` / `false` / `null` and logs a warning. Use in-app DOM (a modal for confirm, an input for prompt, a toast for alert). They all still work when you open the app's standalone URL directly during dev, so "it worked in my browser" is not evidence.
+  Under v2 the stance holds but the enforcement does not: `runtime.sandbox` is absent from `manifest_v2.schema.json` yet still validates, because the `runtime` subschema omits `additionalProperties: false`. The shell then uses whatever you wrote **verbatim, replacing the whole default list** — so `"sandbox": ["allow-modals"]` costs you `allow-scripts` and your app renders blank. Don't set it.
 - `description.short` / `description.long` — moved to `metadata` only as free fields, no validation.
 - `compatibility.min_shell_version` — not validated in v1.
 - Permissions like `theme.read`, `storage.read`, `storage.write`, `files.read`, `files.write`, `toast.send`, `notifications.send`, `window.manage`, `tasks.suggest` — runtime SDK methods may still work but are NOT covered by v1 manifest validation. Use `db.*` for data; treat the rest as evolving.

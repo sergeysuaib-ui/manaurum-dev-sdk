@@ -1,5 +1,254 @@
 # ManAurum SDK API Reference
 
+## Which runtime is this? (read first)
+
+Two runtimes ship today with **different client SDKs on different transports**. Most of this file is v1. Pick your half before writing a line of code.
+
+| | **Platform v2** (default for new apps) | **Legacy v1** (frozen) |
+|---|---|---|
+| Client SDK | `https://manaurum.com/sdk/manaurum-v2.mjs` — ES module, exports `ManaurumV2`, internal `VERSION = '2.2.0'` | `https://manaurum.com/sdk/manaurum.js` — classic script, global `ManaurumSDK` |
+| Where the app runs | your own container, served at `https://<app_id>.apps.manaurum.com` | static bundle uploaded to Core, served same-origin |
+| Data + capabilities | HTTP only: browser → your backend → `POST {MANAURUM_CORE_URL}/api/capability/<name>` | postMessage bridge (`manaurum:storage-*`, `db-*`, `file-*`, `ai-*`) |
+| postMessage is used for | the ready handshake, window framing, and the Drive picker — **nothing else** | everything |
+
+Section map:
+
+| Section | Runtime |
+|---|---|
+| `manaurum:ready` — the shell handshake | **v1 and v2** (mandatory for both) |
+| Platform v2 — frontend SDK (`manaurum-v2.mjs`) | v2 |
+| Everything below the *Legacy v1* divider — Protocol, Shell → App Events, Storage, Database, AI, MUL, SDK Methods, Permissions List | v1 |
+
+---
+
+## `manaurum:ready` — the shell handshake (v1 AND v2, mandatory)
+
+**If your app never replies `manaurum:ready`, it is unusable as a desktop window.** This is enforced by `frontend/src/components/window/IframeAppHost.tsx`, which hosts *both* runtimes — there is no `isV2` branch on this path.
+
+### What the shell sends
+
+The desktop renders `<iframe src="<entrypoint>">` and, on the iframe's `load` event, posts `manaurum:init` into it (`IframeAppHost.tsx:316-371`, `:699-702`) with `targetOrigin` set to the exact origin of your entrypoint.
+
+For a v2 app the entrypoint is **derived by the platform**, not read from your manifest: `https://<app_id>.apps.manaurum.com/` (`lib/v2/deriveEntrypoint.ts:31-42`; the domain comes from `NEXT_PUBLIC_MANAURUM_APPS_DOMAIN`, default `apps.manaurum.com`). The one exception is `runtime.mode: "byo"`, where the manifest's `runtime.entrypoint` is used verbatim.
+
+The payload as actually posted today (v1 and v2 share `sendInit`):
+
+```json
+{
+  "type": "manaurum:init",
+  "payload": {
+    "theme": "smoothie",
+    "appearance": "light",
+    "accent": "core-blue",
+    "device": "desktop",
+    "platform": "desktop",
+    "screen": { "width": 1440, "height": 900 },
+    "safeAreaInsets": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+    "navigationMode": "window",
+    "shell": { "hasTabBar": false, "hasBackButton": false, "tabBarHeight": 0 },
+    "user": { "nickname": "User" },
+    "permissions": ["microphone"],
+    "appId": "my-app",
+    "offline_token": "",
+    "granted_capabilities": ["os.kv.set", "os.kv.get"],
+    "windowId": "win_42"
+  }
+}
+```
+
+- `theme` is **always** `"smoothie"` inside an iframe — the XP easter egg stops at the window frame (MAN-235). Style off `appearance` (`light` / `dark`) and `accent` instead.
+- `granted_capabilities` is sent **only to v2 apps** — the install's admin-approved grant list. `permissions` carries the manifest's `permissions[]` array (v2: browser features such as `microphone`; v1: the platform-permission enum).
+- `offline` appears only when the manifest declares an `offline` block; `deepLink` only when the window was opened from a notification.
+
+### What your app must reply
+
+```js
+window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+```
+
+**Within 10 seconds of the window opening** — `READY_TIMEOUT_MS = 10_000` (`IframeAppHost.tsx:24`), timer at `:682-696`. Miss it and the shell paints an overlay across your UI: *"App is not responding — No `manaurum:ready` received within 10s"* (`:814-836`). Your app is still running underneath; the user just cannot see or use it.
+
+For the shell to accept the reply, all of these must hold (`:394-409`):
+
+1. `event.origin` equals the origin the shell derived for your entrypoint. Serve from the host the platform expects; a BYO app on a host that doesn't match `runtime.entrypoint` has every message silently dropped.
+2. `event.source` is the iframe's own `contentWindow`. Post from your top-level document — a message relayed from a nested iframe or a worker is rejected.
+3. `data.type` is a string starting with `manaurum:`.
+
+A `payload` is optional; the shell reads none. (The v2 SDK sends `{ sdk_version: '2.2.0' }`.)
+
+### The pattern that actually shipped
+
+An SPA whose bundle is deferred can miss `manaurum:init` entirely — the listener does not exist yet when the shell posts. The fix that landed for the first-party app **Libi** (MAN-1321) is belt-and-braces: an inline listener in `<head>`, plus one proactive announcement after mount.
+
+```html
+<!-- index.html <head> — alive before the deferred module bundle loads -->
+<script>
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'manaurum:init') {
+      window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+    }
+  });
+</script>
+```
+
+```ts
+// main.tsx — after ReactDOM.createRoot(...).render(...)
+try {
+  window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+} catch {
+  /* not embedded in the shell */
+}
+```
+
+A proactive `manaurum:ready` is safe: the shell registers its listener when the host component mounts, before it sends `init`.
+
+If you load `manaurum-v2.mjs` (v2) or `manaurum.js` (v1) and call `init()`, the SDK answers for you — but only *after* `manaurum:init` arrives, because it replies to `event.origin`. Keep the inline listener anyway if your bundle is deferred.
+
+> **The trap.** Your standalone URL `https://<slug>.apps.manaurum.com/` works perfectly without the handshake — no shell, no timeout, no overlay. The failure appears *only* inside the desktop window and the mobile home screen, which is where your users are. Libi shipped this way and needed a follow-up release (MAN-1321). Test from the desktop, not just from the tab.
+
+### Cross-origin rules (v2 specifically)
+
+A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from the shell at `manaurum.com`. Consequences:
+
+- postMessage is the only channel. No shared DOM, no shared `localStorage`, no `document.domain` tricks.
+- You cannot read the shell's origin from inside the frame. Either reply with `'*'` (fine — `manaurum:ready` carries nothing secret), or capture `event.origin` off `manaurum:init` and reply to exactly that, which is what both SDKs do.
+- The shell posts `manaurum:init` with your origin as `targetOrigin`, so no other embedder can receive it.
+- The iframe sandbox is `allow-scripts allow-forms allow-same-origin` (`IframeAppHost.tsx:211`). `allow-modals` is never emitted — `alert()` / `confirm()` / `prompt()` are dead in the shell (and work fine on your standalone URL, so "it worked in my browser" proves nothing).
+- Browser features are delegated through the iframe `allow` attribute only when your manifest declares them in `permissions[]` (`:210`, `:218-222`, `:919`). See `references/v2-platform.md`.
+
+### Which messages a v2 app may send
+
+Window framing only. `V2_ALLOWED_MESSAGES` (`IframeAppHost.tsx:71-85`):
+
+| Type | Effect |
+|---|---|
+| `manaurum:ready` | the handshake above |
+| `manaurum:set-title` | `{ title }` — rename the window |
+| `manaurum:resize` | `{ width, height }` — resize the window |
+| `manaurum:close` | close the window |
+| `manaurum:toast` | `{ type: 'success' \| 'error' \| 'info', message }` |
+| `manaurum:active-record` | `{ entity_type, record_id, record_title? }` — tell the OS which record the user is looking at (camelCase also tolerated) |
+| `manaurum:drive-pick` | open the shell's Drive picker — see `app.pickFromDrive()` below |
+
+None of these are permission-gated for v2 — they are framing, not data access.
+
+**Rejected outright** — every type starting with `manaurum:storage-`, `manaurum:file-`, `manaurum:db-`, `manaurum:share-`, `manaurum:shared-`, `manaurum:notification`, `manaurum:reminder`, `manaurum:task-suggestion` (`:93-102`). Those are the v1 bridge. From a v2 iframe the shell refuses them and, when the message carried a `_reqId`, replies on the matching `*-response` channel with:
+
+```json
+{ "ok": false, "error": "v2 apps call capabilities via app.fetch() to their own backend, not via postMessage. (manaurum:storage-get)" }
+```
+
+`manaurum:notification` / `reminder` / `task-suggestion` have no response channel, so they are dropped with nothing sent back — the call just never resolves. Do the equivalent work over HTTP: your container calls the capability gateway.
+
+`manaurum:ai-complete` / `manaurum:ai-vision` are in neither list, so from a v2 frame they fall through to the v1 bridge. That is an accident of the routing, not a contract — use `os.ai.*` through the gateway instead.
+
+---
+
+## Platform v2 — frontend SDK (`manaurum-v2.mjs`)
+
+An ES module served from `https://manaurum.com/sdk/manaurum-v2.mjs` (also at `/sdk/manaurum-v2.mjs` on any Manaurum host). It is **thin on purpose**: it does the handshake, exposes the shell's theme/device context, wraps `fetch` with sane defaults, and opens the Drive picker. It has **no** capability client — v2 capabilities are called by your *container*, not by your page.
+
+```js
+import { ManaurumV2 } from 'https://manaurum.com/sdk/manaurum-v2.mjs';
+
+const app = ManaurumV2.init();   // singleton; safe to call repeatedly
+
+app.onReady((ctx) => {
+  document.documentElement.dataset.appearance = ctx.appearance; // 'light' | 'dark'
+  render(ctx.user?.nickname);
+});
+
+const res    = await app.fetch('/api/orders');
+const orders = await res.json();
+```
+
+`ManaurumV2.init()` constructs the app instance on first call and returns the same instance thereafter. The constructor immediately registers the `message` listener, so calling `init()` early (before your UI mounts) is what makes the handshake land in time.
+
+### Exported surface
+
+`ManaurumV2` (the module's only export) has exactly two members: `init()` and the `version` getter.
+
+**Callbacks** — all fire-and-forget; a throwing callback is caught and logged as `[ManaurumV2]`, it does not break the SDK.
+
+| Method | Fires |
+|---|---|
+| `app.onReady(cb)` | once `manaurum:init` arrives, with the context object. **If init already arrived, `cb` runs immediately** — registering late is safe. |
+| `app.onThemeChange(cb)` | on `manaurum:theme-change`, with the theme name. Note: the SDK listens for `manaurum:theme-change`, not the legacy `manaurum:theme`. |
+| `app.onDeviceChange(cb)` | on `manaurum:device-change`, with `{ device, platform, screen, safeAreaInsets, navigationMode }`. The shell fires it only when the mobile/desktop classification or the safe-area insets actually change — a same-class resize is a no-op. |
+| `app.onAuthFailure(cb)` | when an `app.fetch(...)` response has status **401**, with the `Response`. The SDK does **not** redirect — you own the "session expired, reload to log in" UX. The caller still receives the Response. |
+
+**Context and getters**
+
+| Member | Value |
+|---|---|
+| `app.context` | the whole context object, or `null` before init |
+| `app.theme` | `'smoothie'` (always, inside the shell) or `null` |
+| `app.appearance` | `'light'` / `'dark'` or `null` |
+| `app.accent` | e.g. `'core-blue'` or `null` |
+| `app.device` | `'mobile'` / `'desktop'` — defaults to `'desktop'` before init |
+| `app.platform` | `'mobile'` / `'desktop'` — mirrors `device` today, kept separate for a future native/web split |
+| `app.isMobile` | `true` only when `device === 'mobile'`; `false` before init |
+| `ManaurumV2.version` | the SDK version string — useful in diagnostic logs |
+
+`app.context` is built from the init payload with defaults: `{ theme, appearance, accent, user, permissions, windowId, appId, device, platform, screen, safeAreaInsets, navigationMode, shell }`.
+
+Two gaps worth knowing:
+
+- **`granted_capabilities` is not in `app.context`.** The shell sends it; SDK 2.2.0 does not read it. Same for `offline` and `deepLink`. If you need them, add your own `window.addEventListener('message', …)` for `manaurum:init` / `manaurum:deep-link` alongside the SDK.
+- `appId` falls back to parsing `<slug>.apps.manaurum.com` out of `window.location.hostname` when the shell omits it — so a hand-loaded test page on any other host gets `appId: null`.
+
+### `app.fetch(path, init?)`
+
+Calls your own backend through the Core gateway. Returns a normal `Response`, so `.json()` / `.text()` / `.blob()` all work.
+
+```js
+const res = await app.fetch('/api/orders', {
+  method: 'POST',
+  body: JSON.stringify({ sku: 'A1' }),
+  headers: { 'Content-Type': 'application/json' },
+});
+```
+
+- `path` must be a `/`-rooted relative path (stays same-origin, so Traefik routes it to Core → your container) **or** an absolute `https://` URL (passes through unchanged; external hosts are still subject to the gateway's egress rules). Anything else throws `TypeError`.
+- Defaults applied: `credentials: 'include'` so the Manaurum session cookie reaches Core, and `Accept: application/json` unless you set it. Pass `{ credentials: 'omit' }` for an explicit anonymous probe.
+- **Your relative path must be declared in `manifest.runtime.api_routes`** or the gateway answers `404 route_not_declared` and your container never sees the request. Routes declared `auth: "user"` get a 60s `user_context` JWT minted by Core and injected as `X-Manaurum-User-Context`; `auth: "anonymous"` routes are proxied with none. The end user's own bearer is never forwarded to your container.
+- **Retries are off by default.** Opt in per call with an SDK-specific `retry` key, which is stripped before the init dict reaches `window.fetch`:
+
+  ```js
+  await app.fetch('/api/report', { retry: { attempts: 3, baseDelayMs: 200 } });
+  ```
+
+  Only `GET` / `HEAD` / `OPTIONS` retry unless you pass `retry: { …, force: true }` — replaying a POST without an idempotency key risks a double write. Only 5xx and 429 are treated as transient; other 4xx return immediately. Backoff is exponential with full jitter (`200ms`, `400ms`, `800ms`…), capped at 5s per wait. A thrown network error is re-thrown on the last attempt.
+- On a 401 the `onAuthFailure` callbacks fire before the Response is returned.
+
+### `app.pickFromDrive({ accept? })`
+
+Opens the OS file picker over the **user's** Drive (MAN-608 B3). The *shell* renders the picker and the *user* chooses; your app never enumerates the Drive and never needs a Drive-listing capability for this path.
+
+```js
+const res = await app.pickFromDrive({ accept: ['image/', 'application/pdf'] });
+if (!res.cancelled) {
+  const bytes = await fetch(res.files[0].download_url);
+}
+```
+
+- `accept` is an optional list of MIME types or prefixes ending in `/`. The shell truncates it to 20 entries.
+- Resolves to `{ cancelled: true }` if the user cancels, if another pick is already open (`picker_busy`), or if nothing answers within **120 s**. Otherwise `{ files: [...] }`.
+- Each handle is `{ file_id, filename, mime_type, size_bytes, download_url, expires_at }`. `download_url` is attachment-pinned and short-lived (~5 min) — fetch it promptly and ask again rather than caching it.
+- Wire: the SDK posts `manaurum:drive-pick` with a `_reqId` and awaits `manaurum:drive-pick-response`. It only works inside the shell — outside it there is no shell to post to and the promise resolves `{ cancelled: true }` after the timeout.
+
+### What this SDK deliberately does not do
+
+- **No capability client.** There is no `app.capability(...)`. Capabilities are called server-side by your container with `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` against `{MANAURUM_CORE_URL}/api/capability/<name>`. See `references/capabilities-reference.md`.
+- **No storage / db / files / ai bridge.** Every `manaurum:storage-*`, `manaurum:db-*`, `manaurum:file-*` message documented below is v1 and is rejected for v2 frames.
+- **No window-framing helpers.** `set-title` / `resize` / `close` / `toast` are allowed for v2 apps, but SDK 2.2.0 exposes no methods for them — post them yourself with `window.parent.postMessage({ type, payload }, shellOrigin)`.
+
+---
+
+## Legacy v1 — `manaurum.js` postMessage SDK
+
+> Everything from here to the end of the file — **Protocol**, **Shell → App Events**, **App → Shell Events**, **Storage API**, **Database API**, **AI API**, **Component Library**, **SDK Methods**, **Permissions List** — describes **v1 only**. v1 is feature-frozen for existing apps. The `manaurum:ready` handshake and the window-framing messages are the only parts that also apply to v2, and they are documented above.
+
 ## Protocol
 
 All communication uses postMessage. Message format: `{ type: "manaurum:<event>", payload: { ... } }`
@@ -51,7 +300,7 @@ The exact payload depends on which shell loads the iframe:
 }
 ```
 
-Your app MUST respond with `manaurum:ready` within 10 seconds in both cases.
+Your app MUST respond with `manaurum:ready` within 10 seconds in both cases — see "`manaurum:ready` — the shell handshake" above for the enforced contract. The main-desktop sample above is the v1-era shape; the shell has added `appearance`, `accent`, `appId`, `offline_token` and (for v2) `granted_capabilities` since, and the authoritative payload is the one listed in that section.
 
 To read the `tenant` block (only present in the tenant-shell variant), register a generic message callback — the SDK's `onReady(ctx)` does not yet expose `tenant`:
 
@@ -89,6 +338,7 @@ Use `payload.tenant` for B2B kustomization (per-tenant branding, copy, config). 
 ```json
 { "type": "manaurum:ready", "payload": {} }
 ```
+Required for v2 too — full contract in "`manaurum:ready` — the shell handshake" above.
 
 ### `manaurum:set-title` (requires `window.manage`)
 ```json

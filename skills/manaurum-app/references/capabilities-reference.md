@@ -1,23 +1,63 @@
 # Capabilities — input/output reference
 
-The exhaustive reference for every Platform v2 capability. Every entry below documents:
+The exhaustive reference for every Platform v2 capability. All **26** capabilities
+registered in `backend/app/services/capabilities/` are documented below. Every entry
+documents:
 
 - The capability name + version.
 - Required input fields (JSON Schema-derived).
 - Output shape on success.
 - Common error codes specific to that capability.
 
-The contract for **every** capability call:
+## The call contract
+
+Your **container** makes the call, using credentials the platform injects for it:
 
 ```
-POST https://manaurum.com/api/capability/<name>
-Authorization: Bearer mna_*
-X-Manaurum-Tenant-Id: <uuid>
-X-Manaurum-App-Id:    <uuid>
+POST ${MANAURUM_CORE_URL}/api/capability/<name>
+Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}
+X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}
+X-Manaurum-App-Id:    ${MANAURUM_APP_ID}
+X-Manaurum-User-Context: <the JWT your route received>   # auth_mode: user only
 Content-Type: application/json
 ```
 
-Universal error codes (any capability): see `v2-platform.md` § 3.
+- `MANAURUM_CORE_URL` and `MANAURUM_RUNTIME_TOKEN` are **injected at deploy** by the
+  platform. `MANAURUM_RUNTIME_TOKEN` *is* an `mna_*` token, but it is a per-(tenant, app)
+  runtime credential minted fresh on every deploy — **not** your developer CLI token.
+  Never bake an `mna_*` you created yourself into the image; that one is deploy-time only.
+  In production `MANAURUM_CORE_URL` resolves to `https://manaurum.com`, but read the env
+  var rather than hardcoding it.
+- **App-id form matters.** `os.kv.*` and `os.events.emit` key their tables by UUID and
+  return `412 app_id_must_be_uuid` if you send the slug. Always send `MANAURUM_APP_ID`
+  (the UUID); every other capability accepts either form.
+
+Success response: `{ "output": { … }, "correlation_id": "<uuid>" }`. Streaming
+capabilities (`os.apps.bulk_export`) return `application/x-ndjson` instead.
+
+## Gates that run before your capability does
+
+These fire in the gateway, before any handler code, so they apply to **every** capability.
+
+| HTTP | `detail.error` | When |
+|---|---|---|
+| 403 | `capability_not_granted` | The capability is not in the tenant install's `granted_capabilities`. **An install with an EMPTY grant list denies everything** — declaring a capability in your manifest and redeploying is not enough on its own. |
+| 403 | `tenant_mismatch` | `X-Manaurum-Tenant-Id` is not the tenant your credential was issued for. The header is no longer trusted on its own. |
+| 403 | `user_context_required` | The capability is `auth_mode: "user"` (`os.drive.*`, `os.calendar.*`) and you sent no `X-Manaurum-User-Context`. |
+| 401 | `invalid_user_context` | The forwarded JWT failed verification, or its `tenant_id` / `app_id` doesn't match the call. |
+| 403 | `capability_denied_in_dev_mode` | App Builder dev-mode app calling a capability outside the dev allow-list. Publish the app. |
+
+Grant enforcement is **unconditional** — it is not "when wired". It runs ahead of quota,
+dispatch and audit, and only dev-mode apps and active BYO hosts short-circuit it. A
+wildcard `"*"` grant allows everything.
+
+The gateway **accepts** `X-Manaurum-User-Context` on `/api/capability/<name>` and
+**requires** it for `auth_mode: "user"` capabilities. On `auth_mode: "app"` capabilities
+it is optional and only enriches `acting_user_id` in the audit log. (If you read anywhere
+that the gateway *rejects* a user context on this path, that statement is wrong.)
+
+Universal error codes for the rest (credential, headers, schema, quota): see
+`v2-platform.md` § 3.
 
 ---
 
@@ -52,13 +92,30 @@ A missing key returns `value: null`, not 404.
 
 ---
 
-## `os.tenant_config.get` — read tenant config / feature flags
+## `os.tenant_config.get` — read tenant config — ⚠️ DO NOT RELY ON THIS TODAY
 
-Reads from `tenants.features` jsonb. Useful for per-tenant branding, behavior flags, feature gates.
+**Input:** `{ "key": "some-key" }`
 
-**Input:** `{ "key": "experiment.my-flag" }`
+**Output:** `{ "value": <value, or null> }` — a missing key is `null`, never a 404.
 
-**Output:** `{ "value": <feature value, or null if unset> }`
+**What it actually reads.** Not `tenants.features`, and not the `tenant_config` values a
+tenant supplied at install (those land in `v2_app_installs.config`, which nothing under
+`capabilities/` reads). The handler calls `get_config_for_tenant` against the
+`tenants.app_builder_config` jsonb column and does a plain `getattr(config, key, None)` on
+the resulting Pydantic model. That model (`TenantAppBuilderConfig`, v0) has **exactly one
+field — `prompt_extension`** — and is declared `extra: "ignore"`, so every other key in
+the column is dropped on load.
+
+Consequences, both of them surprising:
+
+- **Any key other than `prompt_extension` returns `{"value": null}`.** Timezone, locale,
+  branding, feature flags, your manifest's `tenant_config.schema` keys — all null.
+- **`app_id` is ignored.** The lookup is per-tenant only, so two apps in the same tenant
+  read the same value; you cannot scope config to your app.
+
+Treat this capability as **unreliable until the read path is repointed**. If you need
+per-tenant configuration today, keep it in your own schema and seed it from your app's
+settings UI, or use `os.secrets.*` for credentials.
 
 ---
 
@@ -191,6 +248,87 @@ user's own access; ungranted folders read as 404.
 
 Full chapter: `docs/handoff/V2_DEVELOPER_GUIDE.md` ("Two storages", "Saving a
 document into the user's Drive", "Working in a granted folder").
+
+---
+
+## `os.calendar.*` — the user's calendar (user-context required)
+
+Two capabilities over the OS calendar store — the same service the builtin Calendar UI
+and the OS Assistant's agent tools write through, never a second copy. Both are
+`auth_mode: "user"`: every call MUST forward the inbound `X-Manaurum-User-Context` JWT
+(60s TTL — forward immediately, never store), or you get `403 user_context_required`.
+Declare each one you use in `requires_capabilities`.
+
+Events are owned by the **acting user**, not by your app. Your `app_id` is recorded as the
+event's `source_app` so the calendar can show provenance, but it does not scope reads.
+
+### `os.calendar.create_event` — create (or idempotently upsert) an event
+
+**Input:**
+
+```json
+{
+  "title":       "Delivery window",
+  "start_at":    "2026-07-24T09:00:00Z",
+  "end_at":      "2026-07-24T11:00:00Z",
+  "all_day":     false,
+  "location":    "Warehouse 3",
+  "description": "Pallets 41–48",
+  "source_ref":  "order-8821"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `title` | string | yes | |
+| `start_at` | string | yes | ISO8601 date-time. `Z` is accepted. |
+| `end_at` | string | yes | ISO8601 date-time. |
+| `all_day` | boolean | optional | Default `false`. |
+| `location` | string | optional | |
+| `description` | string | optional | |
+| `source_ref` | string | optional | **Your** id for the thing the event represents. |
+
+`additionalProperties: false` — an unlisted field is `422 input_schema_violation`.
+
+**Output:** the created event —
+
+```json
+{
+  "id": "<uuid>", "title": "Delivery window",
+  "start_at": "2026-07-24T09:00:00+00:00", "end_at": "2026-07-24T11:00:00+00:00",
+  "all_day": false, "location": "Warehouse 3",
+  "source_app": "<your app>", "source_ref": "order-8821"
+}
+```
+
+**Use `source_ref` for anything you may re-sync.** With it, the write is an idempotent
+upsert keyed by `(user, your app, source_ref)` — call it again with new times and the same
+row is updated. Without it, every call creates a NEW event, so a retry duplicates.
+
+### `os.calendar.list_events` — read the user's events
+
+**Input:** `{ "start": "2026-07-01T00:00:00Z", "end": "2026-08-01T00:00:00Z" }` — both
+optional, `additionalProperties: false`. Omitting a bound makes that side open-ended.
+
+**Output:** `{ "events": [ <same shape as above>, … ] }`, ordered by `start_at`.
+
+Three things to know before you build on it:
+
+- **Overlap, not containment.** An event is returned when `start_at < end` AND
+  `end_at > start`, so multi-day and in-progress events appear.
+- **You see the user's WHOLE calendar**, not just events your app created — including
+  Google-synced ones. Filter on `source_app` yourself if you only want your own.
+- **No pagination and no server-side cap.** An open-ended range returns every event the
+  user has. Always pass a bounded `start`/`end`.
+
+**Errors:** the gateway gates above, plus `422 input_schema_violation`. A malformed
+date-time surfaces as `500 handler_exception`, not a 422 — validate your ISO8601 before
+sending.
+
+> **App Builder caveat.** `os.calendar.*`, `os.drive.*` and `os.files.list` are absent
+> from App Builder's capability auto-detector (`KNOWN_CAPABILITIES`), so generated code
+> calling them will NOT be reconciled into the generated manifest and will `403
+> capability_not_granted` at runtime. Add them to `requires_capabilities` by hand.
 
 ---
 
@@ -551,3 +689,19 @@ NDJSON streaming response. 100 MB hard cap; if reached, the last line is `{"_err
 Daily quotas per `(app, capability)` are tracked in `capability_quota_daily`. Default limits TBD (currently `null` = unlimited; will be set per-tenant config). When tripped: `429 quota_exceeded`.
 
 For local dev / heavy testing, ask the platform team or use a separate test tenant.
+
+---
+
+## Keeping this file honest
+
+The registry is the source of truth: `backend/app/services/capabilities/` in the monorepo —
+`grep -rn 'name="os\.' backend/app/services/capabilities/` enumerates every capability that
+exists, and each `CapabilityDefinition` carries the `auth_mode` and input schema this page
+describes.
+
+When a capability is added or changed in the monorepo, the checklist that must be walked is
+`docs/standards/ADDING_A_V2_CAPABILITY.md` (active standard since 2026-07-19). Its § 9
+covers this plugin explicitly — this file, `manaurum-app/SKILL.md`, `v2-platform.md` § 1 and
+`manaurum-setup/SKILL.md` all have to move with the code, because a stale skill actively
+generates broken apps. There is **no** automated parity check between the registry and any
+documentation surface (this one included); the checklist is the mechanism.

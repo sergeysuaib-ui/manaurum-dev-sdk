@@ -1,3 +1,165 @@
+# 2.4.0 — realignment with the monorepo (MAN-1330)
+
+### Why
+
+The skills documented several mechanisms that **do not exist in the platform**, so an
+app authored strictly from this plugin could not work:
+
+- **Its API 404s.** `runtime.api_routes` was never mentioned anywhere in the plugin. The
+  gateway is default-deny on `/api/*`: an undeclared path returns `404 route_not_declared`
+  and never reaches the container, so the app looks like it has a backend bug with silent
+  logs.
+- **Its container 502s.** The plugin taught *"the platform reads your `EXPOSE` line and
+  routes Traefik to it"*. Nothing in Core parses `EXPOSE`. The upstream is
+  `<swarm-service>:<port>` where `port` is `manifest.runtime.port`, default **80** — so the
+  Node/FastAPI Dockerfiles we shipped (`EXPOSE 8080` / `EXPOSE 8000`, no `runtime.port`)
+  produced a green deploy that 502s on every request.
+- **It is unusable as a desktop window.** `manaurum:ready` was never taught for v2 at all.
+  The shell hard-enforces the handshake for both runtimes (`READY_TIMEOUT_MS = 10_000`) and
+  covers the app with "App is not responding" when it is missed — and the standalone
+  `<slug>.apps.manaurum.com` URL works fine without it, so the omission is invisible until
+  someone opens the app on the desktop. This is not hypothetical: MAN-1321 shipped exactly
+  that bug in the first-party app Libi.
+
+On top of that, the deploy flow was taught as synchronous (`{"status": "succeeded"}` from
+the POST) when it is 202-plus-poll, and the runtime credential was taught as a
+developer-token env var (`MANAURUM_V2_TOKEN`) that the platform has never injected.
+
+**`permissions[]` is correct and was deliberately kept.** An audit during this work flagged
+the `permissions[]` documentation added in 2.3.0 as an error; **that flag was itself wrong**.
+MAN-1316 added `permissions` to `manifest_v2.schema.json` (enum `["microphone"]`, drives the
+iframe `allow=` Permissions-Policy delegation) and 2.3.0 documents it accurately. Do not
+"re-fix" it.
+
+### Fixed — mechanisms that did not exist
+
+- **`EXPOSE` → `runtime.port`.** Removed the "platform reads your `EXPOSE`" claim from
+  `manaurum-app/SKILL.md` and `manaurum-setup/SKILL.md`. `EXPOSE` is documentation only;
+  `runtime.port` (default 80) is the sole input, and the three numbers that must agree are
+  `runtime.port`, your `CMD`'s port, and `EXPOSE`. Added the `127.0.0.1`-vs-`0.0.0.0` trap,
+  and made the starter Dockerfiles declare a matching `runtime.port`.
+- **`MANAURUM_V2_TOKEN` → `MANAURUM_RUNTIME_TOKEN` + `MANAURUM_CORE_URL`.** The container
+  never carries a developer token: the platform injects a per-(tenant, app) `mna_*` runtime
+  credential, minted fresh on every deploy. The call contract in
+  `capabilities-reference.md` and the worked examples in `manaurum-app/SKILL.md` and
+  `manaurum-setup/SKILL.md` now build the URL from `${MANAURUM_CORE_URL}` and authenticate
+  with `${MANAURUM_RUNTIME_TOKEN}`.
+- **`runtime.env_secrets` deleted** — it is not in the schema and Core never reads it. It
+  appeared to work only because the `runtime` sub-object is not strict, so it validated and
+  did nothing.
+- **`MANAURUM_BROKER_URL` deleted** — never injected (MAN-163 removed it because the shared
+  broker DSN had grants on every app's schema). Every recipe built on it is gone.
+- **`migrate_command` is documented as dead.** It is in the schema, but Core has **no call
+  site** for it — an app whose schema depends on it deploys green with no tables. The
+  migration path is `migrations/*.sql`, run once per (app, tenant).
+- **Deploy is asynchronous.** `POST /api/dev/v2/deploy` always returns **202** with
+  `{"deploy_job_id", "status": "pending"}` — never `succeeded`. Replaced the "sync response,
+  ~7–10s" text in `manaurum-app/SKILL.md` and `manaurum-deploy/SKILL.md`, and rewrote the
+  `deploy.sh` template around a real polling loop. Added: only `401` / `403
+  app_id_out_of_scope` / `422 invalid_archive_b64` fail synchronously; manifest, migration
+  and Docker failures surface as `status: "failed"` on the job.
+- **`succeeded` ≠ serving.** There is no readiness probe in the hosted path, so a
+  crash-looping or wrong-port container still produces a green job. Every deploy path now
+  ends in an explicit `/healthz` check.
+- **`runtime.byo_endpoint_url` → `runtime.entrypoint`.** The old spelling appears nowhere in
+  Core and (non-strict sub-object again) validates cleanly while leaving a BYO app with no
+  URL.
+- **Root `description` removed from the v2 example manifest** in `v2-platform.md` — the v2
+  root is `additionalProperties: false`, so it is a hard rejection. It belongs in
+  `metadata.description`; likewise `icon` → `frontend.icon`, `category` → `metadata.category`.
+- **`os.tenant_config.get` re-documented against the handler.** It does not read
+  `tenants.features` or install-time `tenant_config`; it reads `tenants.app_builder_config`
+  through a Pydantic model with one field (`prompt_extension`) and `extra: "ignore"`, so
+  every other key returns `null` and `app_id` is ignored. Flagged as unreliable.
+- **v1 status codes corrected** in `publishing.md`: version reuse is `409
+  rejected_version_conflict` (not 400); an over-50 MB bundle is `413
+  rejected_bundle_too_large`.
+
+### Added
+
+- **`runtime.api_routes`** — a full section in `manaurum-app/SKILL.md`, the field reference
+  in `v2-platform.md` § 2, the scaffold in `manaurum-setup/SKILL.md`, the `app.fetch` note in
+  `sdk-api.md`, and a triage row in `manaurum-deploy/SKILL.md`. Covers default-deny, `auth:
+  "user"` vs `"anonymous"`, the 60s `user_context` JWT injected as `X-Manaurum-User-Context`,
+  `streaming: true`, precedence, that there is **no `method` field**, and that `/api/x/*` does
+  not match the bare `/api/x`.
+- **The `manaurum:ready` handshake.** New "Step 2.5 (MANDATORY)" in `manaurum-app/SKILL.md`,
+  a full contract section in `sdk-api.md` (the real `manaurum:init` payload, the 10s timeout,
+  the three origin/source/type checks the shell applies, the belt-and-braces inline-listener +
+  post-mount pattern that shipped for Libi in MAN-1321), and the listener baked into the
+  starter `index.html` in `manaurum-setup/SKILL.md`.
+- **`sdk-api.md` now covers v2.** New runtime-selector table at the top, a
+  "Platform v2 — frontend SDK (`manaurum-v2.mjs`)" section (`init()`, `onReady` /
+  `onThemeChange` / `onDeviceChange` / `onAuthFailure`, context getters, `app.fetch` with its
+  opt-in `retry` semantics, `app.pickFromDrive()`, and what the SDK deliberately does *not*
+  do), the `V2_ALLOWED_MESSAGES` framing list, and the v1 bridge verbs a v2 frame is refused.
+  Everything below the new "Legacy v1" divider is explicitly marked v1-only.
+- **Migrations documented end-to-end** (`v2-platform.md` § 7, plus summaries in the setup and
+  deploy skills): `migrations/*.sql`, flat and SQL-only, run once per (app, tenant) in lexical
+  order, sha256-pinned; and the DDL validator's **four** classes —
+  `additive` / `neutral` pass, `destructive` needs `migration.breaking: true`, `forbidden`
+  (`DO $$`, `COPY`, `CREATE EXTENSION`, `BEGIN`/`COMMIT`, any `SET`, role/database DDL) is
+  never allowed — with **default-deny** as the master rule. Includes the context-sensitive
+  additives (`CREATE INDEX` / `SET NOT NULL` on a fresh object) and the real-world `DO $$`
+  rejection that hit Libi (MAN-1327).
+- **Runtime DB reality**: `DATABASE_URL` is a per-(app, tenant) `appusr_*` login,
+  `NOSUPERUSER NOBYPASSRLS`, **no CREATE** — so `CREATE TABLE IF NOT EXISTS` on boot dies with
+  `permission denied for schema app_<slug>__<hex>`. Plus `MANAURUM_TARGET_SCHEMA` and
+  `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` in every env-var table.
+- **`data` modes.** `{"none": true}` for an app with no Postgres of its own — omitting the
+  block selects managed mode and provisions a schema + role. Added to the setup scaffold and
+  both manifest references.
+- **The rest of the v2 root surface** in `v2-platform.md`: the complete 23-key list plus
+  `platforms`, `provides`, `consumes`, `optional_capabilities`, `offline`, `tenant_config`,
+  and `agent_capabilities[]` (with the server-to-server `POST /agent/<name>` dispatch, which
+  bypasses `runtime.api_routes`). `webhooks` and `schedules` are marked shape-validated only —
+  Core does not invoke them in v2.x.
+- **`os.calendar.list_events` / `os.calendar.create_event`** in `capabilities-reference.md`
+  (idempotent upsert via `source_ref`, overlap-not-containment range semantics, no pagination),
+  and a pre-dispatch gate table covering `capability_not_granted`, `tenant_mismatch`,
+  `user_context_required`, `invalid_user_context`, `capability_denied_in_dev_mode`. Grant
+  enforcement is unconditional — an install with an **empty** grant list denies everything, so
+  adding a capability and redeploying is not sufficient.
+- **A "What will bite you" section** in `manaurum-app/SKILL.md`, for the failures that only
+  appear inside the desktop: no `alert()` / `confirm()` / `prompt()` (the sandbox is
+  `allow-scripts allow-forms allow-same-origin`; `allow-modals` is never emitted), Core
+  force-assigns `frame-ancestors` and strips `X-Frame-Options` on `/apps/*` (but leaves the
+  rest of your CSP), a **relative** `frontend.icon` paints as literal text, unknown `runtime`
+  keys validate and are ignored, and `.env*` is **not** excluded by the CLI packager.
+- **`publishing.md` rewritten** around a v2 section: publish-vs-deploy (App Builder validates
+  the manifest synchronously with `422`; the CLI validates it inside the job), the poll
+  surfaces, `experiment.platform_v2_hosted_runtime`, the three icon rules including the Dev Hub
+  route's 8-character limit, and the listing-edit/manifest overwrite trap. The v1 tenant
+  catalog is retained below, demoted and labelled legacy.
+- **`manaurum-deploy/SKILL.md`**: the NDJSON `/stream` progress endpoint, `version_label` as a
+  required rollback argument (and rollback being async too), the per-(tenant, app) bare-git
+  history behind `fetch-source` — with the warning that a secret in the tar is permanent even
+  after the tarball window prunes — and a "failures you'll actually hit" table keyed by symptom.
+- **`manifest-spec.md` v1-only banner** with a v1→v2 field-mapping table, and an explicit note
+  that `permissions` exists in both versions and means different things.
+- **A maintenance note** in `capabilities-reference.md`: the registry under
+  `backend/app/services/capabilities/` is the source of truth, the checklist is
+  `docs/standards/ADDING_A_V2_CAPABILITY.md` § 9, and there is **no** automated parity check
+  between the code and this plugin.
+
+### Changed
+
+- **`egress_allowed_hosts`** now documents the enforcement point (copied onto the version row,
+  read by the `os.http.fetch` handler) *and* flags the live monorepo bug where declared hosts
+  are written into the container's `/etc/hosts` as `0.0.0.0 <host>` — the inverse of an
+  allow-list. Guidance: route all external HTTP through `os.http.fetch` and do not build on
+  either reading of raw container egress until it is resolved.
+- **The `runtime` sub-object's non-strictness is described, not advocated.** It is why
+  `port` / `egress_allowed_hosts` work at all and why `"prot": 8000` deploys green and 502s.
+  Whether it *should* be strict is called out as an open question, not a recommendation.
+- **Redeploying the same `(app_id, version)` is no longer described as a DB no-op** — the
+  pipeline inserts another `v2_app_versions` row every time; it is idempotent only for the
+  running service.
+- **Scaffold layout**: `src/` plus a narrow `COPY src/`, a starter `.dockerignore`, and
+  `.env.manaurum` documented as deploy-time-only. `manaurum-app` and `manaurum-setup` name
+  that credential `MANAURUM_TOKEN`; `manaurum-deploy/SKILL.md` still spells the same
+  deploy-time variable `MANAURUM_V2_TOKEN`, which is cosmetic but not yet unified.
+
 # 2.3.0 — 2026-07-19
 
 - **Voice-app platform surfaces (MAN-1316, docs work item MAN-1323)** —
