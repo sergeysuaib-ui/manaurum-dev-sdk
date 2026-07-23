@@ -19,6 +19,10 @@ The canonical JSON Schema lives at `https://manaurum.com/sdk/manifest_v2.schema.
 
 The manifest is one JSON object. Top-level required fields: `manifest_version`, `manaurum_sdk_version`, `app_id`, `name`, `version`, `runtime`. Everything else is optional.
 
+> **The root object is strict.** `"additionalProperties": false` at the top level — the 23 keys below are the complete set. Anything else fails manifest validation; there is no forward-compatible ignore. In particular `description`, `icon` and `category` are **not** root keys: they live at `metadata.description`, `frontend.icon` and `metadata.category`.
+>
+> The `runtime` and `metadata` **sub**-objects are *not* strict. Unknown keys there validate silently — which is how `runtime.port` and `runtime.egress_allowed_hosts` work (real, read by Core, just undeclared) and also how a typo like `runtime.byo_endpoint_url` passes validation and does nothing.
+
 ```json
 {
   "manifest_version":     "2",
@@ -26,10 +30,18 @@ The manifest is one JSON object. Top-level required fields: `manifest_version`, 
   "app_id":               "my-app",
   "name":                 "My App",
   "version":              "1.0.0",
-  "description":          "Short description shown in the App Store.",
   "runtime": {
     "mode":                  "hosted",
+    "port":                  8000,
+    "api_routes": [
+      { "path": "/api/items/*",     "auth": "user" },
+      { "path": "/api/kiosk/today", "auth": "anonymous" }
+    ],
     "egress_allowed_hosts":  ["api.openai.com", "api.stripe.com"]
+  },
+  "frontend": {
+    "entry_point": "/index.html",
+    "icon":        "🧾"
   },
   "visibility": {
     "mode":    "public",
@@ -40,19 +52,24 @@ The manifest is one JSON object. Top-level required fields: `manifest_version`, 
     { "name": "os.files.upload","version": "1" }
   ],
   "permissions": ["microphone"],
-  "migrate_command": ["python", "-m", "myapp.migrate"],
   "migration": {
     "breaking":          false,
     "reason":            "add invoice.line_items table",
     "rollback_strategy": "drop new table"
   },
   "metadata": {
-    "category":  "productivity",
-    "icon_url":  "https://...",
-    "support":   "mailto:dev@example.com"
+    "category":      "productivity",
+    "tags":          ["invoicing"],
+    "description":   "Short description shown in the App Store.",
+    "homepage":      "https://example.com",
+    "support_email": "dev@example.com"
   }
 }
 ```
+
+That example omits `data`, so it gets the default **managed** Postgres schema (which is what the `migration` block implies). A stateless app that persists only through `os.kv` / `os.files` must say `"data": {"none": true}` — see the table below.
+
+Validate before every deploy — `manaurum app validate` uses a byte-identical copy of the backend schema, so it is a true pre-flight.
 
 ### Required fields
 
@@ -60,30 +77,87 @@ The manifest is one JSON object. Top-level required fields: `manifest_version`, 
 |---|---|---|
 | `manifest_version` | string `"2"` | Pinned. |
 | `manaurum_sdk_version` | string `"2"` | Pinned. |
-| `app_id` | string | `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`. Becomes the URL slug + `v2_apps.app_slug`. |
+| `app_id` | string | Schema only enforces `minLength: 1` — but it becomes your DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name, so keep it `^[a-z][a-z0-9-]*[a-z0-9]$` and under ~40 chars in practice. Also `v2_apps.app_slug`. |
 | `name` | string | Human-readable. Used in App Store + windowing. |
 | `version` | string | Semver `MAJOR.MINOR.PATCH`. Bump on every redeploy. No pre-release / build metadata. |
 | `runtime` | object | See § 2. |
 
 ### Optional top-level
 
+These 17 keys plus the 6 required ones are the complete root surface. Anything else is a validation failure.
+
 | Field | Type | Notes |
 |---|---|---|
-| `description` | string | Shown in App Store listings. |
+| `data` | object | Storage mode. **Omit it and you get managed mode**, which provisions a Postgres schema + login role per (app, tenant) and needs `MANAURUM_DDL_DSN` on Core — a deploy that fails at `swarm_applying` if it isn't set. A stateless app (persists only via `os.kv` / `os.files`) must declare `{"none": true}`. Other modes: `{"byo": true}` (your own DSN, no isolation guarantees), `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`), `connection_cap`. `additionalProperties: false` on this sub-object. |
+| `frontend` | object | `entry_point` (the URL the desktop shell loads in the app's window — normally `/index.html`; without it your app has no desktop window), `icon`, `bundle_path`, `window: {default_width, default_height}`. `frontend.icon` is an unconstrained string: an emoji works, so does an absolute URL or `/api/catalog/media/...` path. A **relative** path (`icons/app.svg`) is painted as literal text in the tile. Omit it entirely and the launcher serves a generic placeholder. |
 | `visibility` | object | `mode: "private" \| "public" \| "allow_list"`, optional `tenants: [uuid…]`. Default `private`. |
-| `requires_capabilities` | array | Manifest-declared capability scope. The gateway can enforce this (when wired); also useful for App Store install prompts. |
+| `platforms` | object | `desktop: {supported}` and `mobile: {supported, optimized, entrypoint, supportLevel, navigationPattern}`. Declare both explicitly. `platforms.mobile.entrypoint` is a separate HTTPS URL the shell loads on mobile devices. |
+| `requires_capabilities` | array | `[{name, version, quota_per_tenant_per_day?}]` — the capabilities your app cannot work without. |
+| `optional_capabilities` | array | Same shape as `requires_capabilities`, for capabilities you use if granted but don't require. App Store v2 reads this to compute the optional grant set the tenant admin sees at install time. |
+| `agent_capabilities` | array | Tools this app exposes to the **OS Assistant** — see the subsection below. Each entry `{name, description, input_schema, …}`; `name` is snake_case `^[a-z][a-z0-9_]*$`, ≤64 chars. |
+| `provides` | object | Inter-app contracts you expose: `{rpc: [...], events: [...]}`. Another app calling you via `os.apps.call` must find the method here. |
+| `consumes` | object | Inter-app contracts you depend on: `{rpc: [...], events: [...]}`. **Declare every RPC you call with `os.apps.call` and every event you subscribe to.** |
+| `webhooks` | array | `[{name, path, signature}]`. **Validated for shape; Core does nothing with it in v2.x** — the platform webhook gateway is deferred. Expose your own handler via `runtime.api_routes` with `auth: "anonymous"` and verify the signature yourself. |
+| `schedules` | array | `[{name, cron, handler_path, timezone?}]`. **Validated for shape; Core does not invoke the handler in v2.x** — platform cron is deferred. Run an in-container scheduler and keep the declaration as documentation of intent. |
+| `tenant_config` | object | `{schema, required_at_install}` — per-tenant config collected at install time. Note: install-time values land in `v2_app_installs.config`, which the `os.tenant_config.get` capability does **not** currently read. Don't build on the round-trip yet. |
+| `offline` | object | Manaurum Edge declaration: `features` (operations that stay usable during a WAN outage), `reference_data` (cloud-owned datasets replicated read-only to the on-site box), `streams` (`[{name, type: "ledger" \| "state"}]`). |
 | `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `["microphone"]` (MAN-1316). Required to record audio inside the shell iframe; the user still sees the browser's own mic prompt. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
-| `migrate_command` | string[] | argv invoked once per `(app, tenant)` install/upgrade. The platform runs this with `MANAURUM_TARGET_SCHEMA` + broker DSN pre-set so your migrations land in the per-tenant app schema. |
-| `migration.breaking` | bool | If `true`, the R-1.5 SQL validator allows destructive DDL (drop table, drop column, alter type). Default `false`. |
-| `metadata` | object | Free-form for App Store rendering: `category`, `icon_url`, `support`, screenshots, etc. |
+| `migrate_command` | string[] | In the schema, but **Core never executes it** — there is no call site (`production.py:40-43`, "reserved"). An app whose schema depends on it deploys green with no tables. Use `migrations/*.sql` instead — see § 7. |
+| `migration` | object | `{breaking, reason, rollback_strategy}`. `breaking: true` lets the DDL validator through *destructive* statements (and only those — see § 7). Default `false`. |
+| `metadata` | object | App Store rendering: `category`, `tags`, `description`, `homepage`, `support_email`, `source_url`. **This is where a root-level `description` belongs.** |
+
+Grant enforcement is **unconditional**, not aspirational: every hosted-app capability call is checked against the install's `granted_capabilities` before quota, dispatch and audit. A capability absent from the list — **or an install whose list is empty** — is `403 capability_not_granted`. Wildcard `"*"` grants everything. Only dev-mode apps and active BYO hosts short-circuit the check. Operational consequence: adding a capability to your manifest and redeploying is **not** enough — the tenant's install grant set has to be extended too, or every call 403s.
+
+### `agent_capabilities[]` — expose your app to the OS Assistant
+
+Each entry registers one tool the OS Assistant can call on the user's behalf. On deploy, Core upserts one `agent_capabilities` row per entry; at request time the agent runtime builds a tool per row (for apps the user has installed) and dispatches **server-to-server** — `POST http://<container>/agent/<name>` with the tool arguments as the JSON body and a freshly minted `user_context` JWT in `X-Manaurum-User-Context`, the same header and the same key your `auth: "user"` routes already verify. Reply `{"ok": true, "output": …}` (a bare JSON object also works; `{"ok": false, "error": …}` surfaces as a failed tool call).
+
+This dispatch goes **straight to your container**, not through the `/apps/<slug>` gateway — so `/agent/<name>` does **not** need a `runtime.api_routes` entry, and it is never reachable from the public URL.
+
+```json
+"agent_capabilities": [
+  {
+    "name": "add_diary_entry",
+    "description": "Append a dated note to the user's diary.",
+    "input_schema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
+  }
+]
+```
+
+Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manaurum repo.
 
 ---
 
 ## 2. Runtime modes
 
 ```json
-"runtime": { "mode": "hosted" | "byo" | "dev", "egress_allowed_hosts": [...] }
+"runtime": {
+  "mode": "hosted" | "byo" | "dev",
+  "port": 8000,
+  "api_routes": [ { "path": "/api/items/*", "auth": "user" } ],
+  "egress_allowed_hosts": [...]
+}
 ```
+
+Only `mode` and `api_routes` are declared in `manifest_v2.schema.json`. `port`, `egress_allowed_hosts`, `replicas` and `sandbox` are **not** — they validate only because the `runtime` sub-object omits `additionalProperties: false`. Some of those undeclared keys are read by Core (`port`, `egress_allowed_hosts`); others are read by nothing at all (`replicas`). The practical rule: a misspelled `runtime` key never errors, it just silently does nothing.
+
+Leave `runtime.sandbox` alone. The shell takes it **verbatim, replacing** the whole default token list (`allow-scripts allow-forms allow-same-origin`), so `"sandbox": ["allow-modals"]` costs you `allow-scripts` and your app renders blank. Whether the `runtime` sub-object should become strict — which would also invalidate `port` and `egress_allowed_hosts` — is an open design question; this section documents what the platform does today, not where it is going.
+
+### `runtime.port`
+
+The port your container listens on. **Default 80.** The Core gateway resolves the upstream as `<swarm-service>:<port>` where `port` is `runtime.port` if present and 80 otherwise. Nothing in Core parses your Dockerfile's `EXPOSE` line — it is documentation only. `runtime.port` is in production use (`libi/manifest.json` ships `"port": 8000`), so it is safe; just know it is schema-undeclared. It is also **untyped**: `"port": "abc"` passes validation and produces a broken upstream host, so write an integer.
+
+### `runtime.api_routes` — default-deny
+
+The declaration table for every `/api/*` path your container serves. **A path that is not declared returns `404 route_not_declared` from the gateway and never reaches your container** — the app just looks broken.
+
+| Key | Notes |
+|---|---|
+| `path` | Required. Must start with `/`. Trailing `*` is a wildcard (`/api/orders/*`); anything else is an exact match. `/api/tasks/*` does **not** match the bare `/api/tasks` — declare both if you serve both. |
+| `auth` | Required, `"user"` or `"anonymous"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). |
+| `streaming` | Optional bool, default false. Proxy in SSE / chunked passthrough mode instead of buffering the upstream response. Orthogonal to `auth`. Emit SSE heartbeats, honour `Last-Event-ID`, and do not hold a DB connection for the stream's lifetime. |
+
+There is no `method` field — one rule covers every verb. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they are always anonymous on `<slug>.apps.manaurum.com`.
 
 ### `hosted` (default — what 99% of apps want)
 
@@ -102,13 +176,23 @@ Env vars the platform sets on every task:
 | `MANAURUM_TENANT_ID` | UUID of the installed tenant. |
 | `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. |
 | `MANAURUM_VERSION` | Currently-running semver. |
-| `MANAURUM_BROKER_URL` / `DATABASE_URL` | Postgres DSN for your dedicated schema (when `migrate_command` is set). |
+| `MANAURUM_TARGET_SCHEMA` | Your per-(app, tenant) Postgres schema: `app_<slug>__<tenant_hex>`. |
+| `MANAURUM_RUNTIME_TOKEN` | The `mna_*` credential to call the capability gateway with. Minted fresh on every deploy, scoped to this one app. **Never bake your own developer token into the image.** |
+| `MANAURUM_CORE_URL` | Base URL for capability calls: `{MANAURUM_CORE_URL}/api/capability/<name>`. |
+| `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` | RS256 public key for verifying the `X-Manaurum-User-Context` JWT the gateway injects on `auth: "user"` routes. |
+| `DATABASE_URL` | Postgres DSN for your dedicated schema. Injected **only** when a managed schema was provisioned — absent under `data.none` / `data.byo`. |
+
+`MANAURUM_BROKER_URL` is **not** in that list and is never injected: MAN-163 removed it because the shared broker DSN had grants on every app schema. Do not build anything on it.
 
 ### `byo` (bring your own — advanced)
 
 You host the app yourself; the platform proxies signed requests to your endpoint. Useful when you have legacy infra you can't move. Requires a `byo_hosts` row registered via Workspace Admin → Integrations.
 
-Manifest looks the same plus a `runtime.byo_endpoint_url`. Your endpoint must implement the BYO health-check contract (`GET /.well-known/manaurum-byo-health` → 200) and verify the platform's HMAC signature on capability dispatch. See R-5 documentation in the manaurum repo if you really need this; most apps shouldn't.
+Manifest looks the same plus **`runtime.entrypoint`** — the absolute HTTPS URL of your endpoint. The shell honours it only for `mode: "byo"`; for `hosted` apps the URL is platform-derived (`https://<slug>.apps.manaurum.com/`) and any `entrypoint` you write is ignored.
+
+> Do **not** write `runtime.byo_endpoint_url`. That spelling appears nowhere in Core — and because the `runtime` sub-object is not strict, it **validates cleanly and is silently ignored**, leaving your app with no URL at all. The field is `entrypoint`.
+
+Your endpoint must implement the BYO health-check contract (`GET /.well-known/manaurum-byo-health` → 200) and verify the platform's HMAC signature on capability dispatch. See R-5 documentation in the manaurum repo if you really need this; most apps shouldn't.
 
 ### `dev` (in-browser App Builder v2)
 
@@ -116,9 +200,11 @@ For rapid prototyping in the Monaco editor inside the OS itself. Files live in `
 
 ### `egress_allowed_hosts`
 
-List of external hostnames your app may reach via the `os.http.fetch` capability. **Empty list = default deny.** Anything else returns `412 egress_not_declared`.
+List of external hostnames your app may reach via the `os.http.fetch` capability. **Empty (or absent) list = default deny** → `412 egress_not_declared`; a host outside the list → `412 host_not_in_allow_list`. The deploy pipeline copies the list onto the version row and the `os.http.fetch` handler reads it there, so this is the real enforcement point.
 
-The list is application-layer enforcement (gateway-checked). A future slice may add network-layer DROP rules; until then, raw container egress is unfiltered. Use `os.http.fetch` for any external HTTP you want auditable.
+Like `runtime.port`, the field is schema-undeclared (`runtime` accepts extra keys) but genuinely read by Core. Don't be alarmed when a schema dump doesn't show it.
+
+> **Unresolved — current behaviour is not the intended behaviour.** The deploy also writes each declared host into the container's Swarm `Hosts` entries as `0.0.0.0 <host>`, which means a raw `fetch()` from inside the container to a host you **declared** resolves to `0.0.0.0` and fails, while an *undeclared* host resolves normally. That is the opposite of an allow-list, and it is a live monorepo bug rather than a designed boundary. Until it is resolved, do not write code that depends on either reading of container-level egress: route all external HTTP through `os.http.fetch`, which is enforced, audited, and unaffected.
 
 ---
 
@@ -222,20 +308,22 @@ Scope is per-tenant. A token issued in tenant A cannot call any capability in te
 
 ## 5. Deploy lifecycle
 
-`POST /api/dev/v2/deploy` does these steps in order, all inside a single request:
+`POST /api/dev/v2/deploy` is **asynchronous**. It returns `202` with `{"deploy_job_id": "<uuid>", "status": "pending"}` and runs the pipeline on a background task — so a manifest or migration rejection does **not** come back as a synchronous 422; it surfaces as `status: "failed"` on the job. Poll `GET /api/dev/v2/deploy/{job_id}` or follow `GET /api/dev/v2/deploy/{job_id}/stream` (NDJSON, terminated by `{"terminal": true, "status": …}`). Run `manaurum app validate` first if you want fast feedback.
+
+The background job does these steps in order:
 
 1. **Manifest validation** — JSON Schema + cross-field rules.
-2. **Migration validation** — R-1.5 AST validator checks SQL is additive-only (unless `migration.breaking: true`).
+2. **Migration validation** — the AST validator classifies every statement in `migrations/*.sql`. See § 7 for the exact rules.
 3. **Image build** — Docker Engine API `POST /build` with the tarball as the body. Errors here → `result.error` with the daemon's stderr.
 4. **Image push** — to `manaurum-registry:5000/v2-app-<slug>:<version>`.
 5. **DB writes** — upsert `v2_apps` (in home tenant) + insert `v2_app_versions` (FORCE-RLS).
 6. **Swarm service** — create or update `v2-app-<slug>-<tenant_short>` on `dokploy-network`. Image rewritten to overlay-pull URL so workers on any node can pull.
 7. **Traefik dynamic config** — write `/etc/dokploy/traefik/dynamic/v2-app-<slug>.yml`. Traefik reloads automatically.
-8. **Per-tenant migrations** (if `migrate_command` set) — fan out to every install of this app, run the migration in that tenant's broker schema. Per-tenant failures isolate to that tenant; other tenants continue.
+8. **Per-tenant migrations** — fan out to every install of this app and run each unapplied `migrations/*.sql` file in that tenant's app schema. Per-tenant failures isolate to that tenant; other tenants continue. (Nothing here invokes `migrate_command`.)
 
 End-to-end ~7–10s for a small app.
 
-The deploy is idempotent on the same `(app_id, version)`: redeploying the same version is a no-op for the DB but triggers a swarm-service-update + image-pull (useful for dev iteration).
+Redeploying the same `(app_id, version)` is **not** a DB no-op: the pipeline runs a plain `INSERT INTO v2_app_versions` with no uniqueness constraint on `(app_id, version_label)`, so every redeploy of `1.0.0` adds another version row. It is effectively idempotent for the *running service* (swarm-service-update + image-pull, useful for dev iteration) but it clutters version history and rollback. Bump the semver for anything you intend to keep.
 
 ---
 
@@ -258,14 +346,86 @@ Rollback flips `v2_app_installs.installed_version_id` to the prior `v2_app_versi
 
 ## 7. Migrations + dedicated app schemas
 
-If your app needs a Postgres schema:
+### The contract
 
-1. Add `migrate_command: ["python", "-m", "myapp.migrate"]` (or whatever runs your migrations) to the manifest.
-2. The platform sets `MANAURUM_TARGET_SCHEMA=app_<app_hex>__<tenant_hex>` and `MANAURUM_BROKER_URL=postgresql+asyncpg://manaurum_broker:...@db/webdesktop` as env when the command runs.
-3. Your migrate-command script connects via `MANAURUM_BROKER_URL`, sets `search_path = '<MANAURUM_TARGET_SCHEMA>'`, and runs migrations.
-4. The R-1.5 AST validator pre-scans your SQL and rejects destructive operations unless `migration.breaking: true`.
+Put plain `.sql` files in a top-level `migrations/` directory of your build context:
 
-The broker role (`manaurum_broker`) has no access to Core tables. It can `CREATE TABLE` / `INSERT` etc. only inside the per-tenant app schema. RLS on Core tables further enforces this.
+```
+my-app/
+  Dockerfile
+  manifest.json
+  migrations/
+    0001_init.sql
+    0002_add_line_items.sql
+```
+
+The deploy extracts them and runs each file **once per (app, tenant)** in lexical filename order, recording `(app_id, tenant_id, filename, sha256)` in `v2_app_migrations` so later deploys skip what is already applied.
+
+Packaging rules:
+
+- **SQL-only.** A non-`.sql` file *directly* under `migrations/` fails the deploy — a stray `README.md` there is an error, not a silent skip. The extension check is case-sensitive: `0001.SQL` counts as non-SQL.
+- Subdirectories under `migrations/` are silently ignored. So are symlinks. Keep the directory flat.
+- No `migrations/` directory at all is fine — frontend-only and kiosk-only apps skip migrations entirely.
+- **Never edit an applied file.** The runner re-hashes each file and a sha256 mismatch fails that tenant. It does not currently fail the *deploy* (the new version still activates), so the app goes live with one tenant stuck. Add `0002_*.sql` instead.
+
+You do **not** open your own connection and there is no `MANAURUM_BROKER_URL` to read — that variable is never injected. The runner opens the session, `SET ROLE`s to a per-(app, tenant) `appddl_*` NOLOGIN migrator role, and positions `search_path` on your schema — `app_<slug>__<tenant_hex>`, which is also handed to your container as `MANAURUM_TARGET_SCHEMA`. Write plain unqualified SQL: no schema-qualified names.
+
+### DDL rules — three tiers
+
+Every statement is parsed with `pglast` and classified. Getting the tiers wrong is the fastest way to write a migration that gets rejected at deploy time.
+
+| Tier | Meaning | Does `migration.breaking: true` override it? |
+|---|---|---|
+| `additive` | passes by default | n/a |
+| `neutral` | passes by default (data DML / read-only) | n/a |
+| `destructive` | rejected by default | **yes** |
+| `forbidden` | rejected **always** — this is a security boundary | **no** |
+
+**additive (passes):** `CREATE TABLE` · `CREATE TABLE AS` · `CREATE INDEX CONCURRENTLY` · `CREATE VIEW` · `CREATE SEQUENCE` · `CREATE SCHEMA` · `CREATE TYPE AS ENUM` · `ALTER TYPE ADD VALUE` · `CREATE TYPE` (composite) · `CREATE DOMAIN` · `CREATE TRIGGER` · `CREATE POLICY` · `COMMENT ON` · `GRANT` (object privilege) · `ALTER TABLE ADD COLUMN` · `ALTER TABLE ENABLE ROW LEVEL SECURITY` · `ALTER TABLE FORCE ROW LEVEL SECURITY` · `CREATE FUNCTION` **only** with `LANGUAGE sql` or `LANGUAGE plpgsql`.
+
+Two additives are context-sensitive — the script is analysed as a whole:
+
+- plain `CREATE INDEX` **on a table created earlier in the same script** → additive. On a pre-existing table → **destructive** ("locks the table; use CONCURRENTLY").
+- `ALTER COLUMN … SET NOT NULL` **on a column added earlier in the same script** → additive. On an existing column → **destructive**. The rule is *fresh column*, not "has a default".
+
+**neutral (passes):** `INSERT` · `UPDATE` · `DELETE` · `SELECT`.
+
+**destructive (rejected unless `migration.breaking: true`):** `DROP …` of any object (TABLE, COLUMN, INDEX, CONSTRAINT, …) · `RENAME` · `TRUNCATE` · `ALTER COLUMN … TYPE` · `REVOKE` · plain `CREATE INDEX` on a pre-existing table · `SET NOT NULL` on a pre-existing column.
+
+**forbidden (rejected even with `migration.breaking: true`):** `DO $$ … $$` · `COPY` · `CREATE EXTENSION` · `BEGIN` / `COMMIT` / `SAVEPOINT` · `SET` (any `VariableSetStmt` — so no `SET search_path`) · `CREATE` / `ALTER` / `DROP ROLE` · `GRANT` / `REVOKE ROLE` · `CREATE` / `DROP` / `ALTER DATABASE` · `ALTER SYSTEM` · `CREATE FUNCTION` in any language other than `sql` / `plpgsql`.
+
+**The master rule is default-deny.** Any statement type not on the recognised lists above is treated as `forbidden` — rejected even under `breaking: true`. This is the rule you will actually hit, so reach for boring, explicit DDL.
+
+Consequences worth planning around:
+
+- **No `CREATE EXTENSION`** — you cannot install `pgcrypto` or `uuid-ossp`. Generate UUIDs in your app, not in Postgres.
+- **No `DO $$ … $$`** — expand the block into plain statements. This bites real apps: the first-party app Libi shipped a `DO $$` block in `migrations/0002` and needed a follow-up commit to drop it (MAN-1327).
+- **No `BEGIN` / `COMMIT`** — the runner owns the transaction.
+- An `ALTER TABLE` carrying several subcommands takes the **strictest** verdict across them: one destructive subcommand poisons the whole statement.
+
+For genuinely destructive work, set `migration.breaking: true` with a written `reason` — and remember it buys you the `destructive` tier only, never the `forbidden` one.
+
+Validate locally before you deploy:
+
+```bash
+manaurum app validate-migration migrations/                       # whole dir, same order as the deploy
+manaurum app validate-migration migrations/0002_add_line_items.sql
+manaurum app validate-migration migrations/ --breaking            # mirrors migration.breaking: true
+```
+
+It runs the exact same validator the deploy pipeline runs, so green here means green there.
+
+### Runtime is read/write, not DDL
+
+At runtime your container reads `DATABASE_URL` — a per-(app, tenant) `appusr_*` **login** role, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on exactly one schema plus `SELECT/INSERT/UPDATE/DELETE` on its objects. It holds **no `CREATE`**, so runtime DDL is impossible: a `CREATE TABLE IF NOT EXISTS` on boot — a common framework default — dies with `permission denied for schema app_<slug>__<hex>`. Schema changes happen only through `migrations/*.sql`.
+
+The role's `search_path` is locked to your schema, so write plain unqualified SQL. Your schema is already per-tenant, so there is no `tenant_id` column to filter on and no RLS to satisfy.
+
+**Your container serves exactly one tenant.** The platform runs a separate Swarm service per (app, tenant) — the service DNS name is derived from both — and injects a fixed `MANAURUM_TENANT_ID` that never changes for the life of that container. So process-local state (in-memory caches, module globals, connection pools) is already single-tenant: you do **not** need to key caches by tenant, and doing so adds complexity that buys nothing. What you must still not assume is that `sub` is stable-shaped — treat it as opaque TEXT (see the user-context section).
+
+### `migrate_command` does nothing
+
+`migrate_command` is in the manifest schema, but Core has **no call site for it** — nothing executes it. An app whose schema depends on it deploys green and its tables simply never exist. Use `migrations/*.sql`.
 
 ---
 

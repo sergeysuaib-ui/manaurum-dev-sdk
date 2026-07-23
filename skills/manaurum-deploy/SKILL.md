@@ -32,7 +32,7 @@ tar cf /tmp/ctx.tar \
   --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
   .
 
-B64=$(base64 -w0 /tmp/ctx.tar)
+B64=$(base64 < /tmp/ctx.tar | tr -d '\n')
 jq -n \
   --arg b "$B64" \
   --argjson m "$(cat manifest_v2.json)" \
@@ -44,36 +44,108 @@ curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -d @/tmp/deploy.json | jq .
 ```
 
-Successful response (sync — usually returns in ~7–10s):
+### The deploy is asynchronous — always
+
+`POST /api/dev/v2/deploy` returns HTTP **202** and *always* this body. It never returns
+`succeeded`:
 
 ```json
-{ "deploy_job_id": "...", "status": "succeeded" }
+{ "deploy_job_id": "<uuid>", "status": "pending" }
 ```
 
-If `status: pending` (rare for hosted runtime), poll the job:
+Build, registry push, Swarm, Traefik and migrations all run on a background task (the route is
+`@router.post("/deploy", status_code=202)` and its single `return` is
+`{"deploy_job_id": job_id, "status": "pending"}`). A Docker build gets up to 300s server-side.
+**Never read success off the POST response** — a script that does reports failure on 100% of
+successful deploys.
+
+Poll until the job reaches a terminal status:
 
 ```bash
 curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" | jq .
 ```
 
-Final response carries the URL:
+`status` stays `pending` until the job settles, then becomes exactly one of **`succeeded`** or
+**`failed`**. `result` is populated only on `succeeded`; `error` carries the reason on `failed`:
 
 ```json
 {
-  "status": "succeeded",
+  "job_id":     "<uuid>",
+  "status":     "succeeded",
+  "created_at": "2026-07-22T10:04:11+00:00",
   "result": {
     "app_id":     "<uuid>",
     "version_id": "<uuid>",
     "image_tag":  "manaurum-registry:5000/v2-app-my-app:1.0.0",
     "url":        "https://my-app.apps.manaurum.com"
-  }
+  },
+  "error":  null,
+  "events": []
 }
 ```
 
-The URL is live with a Let's Encrypt cert within seconds of the deploy completing.
+A `deploy_job_id` read by any other identity (another tenant, a sibling user, a credential
+narrowed to a different app) returns `404 job_not_found` — never 403.
+
+### Follow progress live
+
+```bash
+curl -sSN https://manaurum.com/api/dev/v2/deploy/<deploy_job_id>/stream \
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+```
+
+`application/x-ndjson` — one JSON object per line in `seq` order, terminated by a
+`{"terminal": true, "status": "succeeded"|"failed"}` line once the job settles. On disconnect,
+re-open and skip lines whose `seq` you have already seen.
+
+### Only three things fail synchronously
+
+The POST checks the credential, the credential's app scope, and the base64 — nothing else:
+
+- `401 invalid_credential` / `401 missing_authorization`
+- `403 app_id_out_of_scope` — the `mna_*` credential isn't authorised for this `app_id`
+- `422 invalid_archive_b64`
+
+**Manifest schema, migration DDL, the `migrations/` layout and the Docker build are all
+validated inside the job** and surface as `status: "failed"` with the reason in `error`. So the
+CLI deploy path gives you no synchronous manifest feedback — run `manaurum app validate` before
+you deploy.
+
+### `succeeded` does NOT mean the app works
+
+There is **no readiness probe anywhere in the hosted deploy path.** `succeeded` means: the image
+built and pushed, the Swarm service spec was accepted, the Traefik dynamic config was written,
+and the per-tenant migration fan-out ran. It does **not** mean a process is listening, that the
+container survived boot, or that the URL answers 200. A container that crash-loops or binds the
+wrong interface still produces a `succeeded` job.
+
+Two more things `succeeded` does not cover: a **per-tenant migration failure does not fail the
+job** — it is recorded per install and the version still activates; and the app has no desktop
+window until `frontend.entry_point` is declared and the page answers the `manaurum:ready`
+handshake.
+
+**Check it yourself after every deploy.** Serve a `/healthz` on your container and hit it — this
+is a required step, not a nicety:
+
+```bash
+for _ in $(seq 1 15); do
+  if curl -fsS https://my-app.apps.manaurum.com/healthz >/dev/null; then
+    echo "serving"; break
+  fi
+  sleep 2
+done
+```
+
+`/healthz` is not an `/api/*` path, so it needs no `runtime.api_routes` entry and is proxied
+anonymously. A plain `curl` sends no `Sec-Fetch-Dest: document` and an `Accept: */*`, so the
+gateway does not treat it as a browser navigation and will not 302 it to login even though
+pages are default-private. Give Swarm ~30s to place the new task before you call it a failure.
+Once it serves, the URL has a Let's Encrypt cert.
 
 ### What the platform does on v2 deploy
+
+All of this runs **inside the background job**, after the 202 has already gone back to you:
 
 1. Validates the manifest against the v2 JSON Schema.
 2. Validates any migration SQL via the R-1.5 AST validator (additive-only unless `migration.breaking: true`).
@@ -93,14 +165,40 @@ jq '.version = "1.0.1"' manifest_v2.json > /tmp/m && mv /tmp/m manifest_v2.json
 
 The URL stays the same. Existing connections drain; new requests hit the new version.
 
+### Migrations across redeploys
+
+Schema changes ship as plain `.sql` files directly under a top-level `migrations/` directory of
+your build context. Each file runs **once per (app, tenant)** in lexical filename order; applied
+files are recorded so redeploys skip them.
+
+**Never edit a migration that has already been applied.** Every applied file is pinned by sha256
+per `(app_id, tenant_id, filename)`. Re-uploading `0001_init.sql` with different bytes does not
+re-run it — it marks that tenant's migration run `failed`, and the new version still activates,
+so the app goes live against a schema that was never migrated. To change schema, **add
+`0002_<what>.sql`.** Same rule for a file you only reformatted: different bytes, same failure.
+
+The DDL is parsed with `pglast` and is additive-only by default. `migration.breaking: true`
+unlocks *destructive* statements (`DROP …`, `RENAME`, `TRUNCATE`, `ALTER COLUMN … TYPE`); it does
+**not** unlock *forbidden* ones (`DO $$ … $$`, `COPY`, `CREATE EXTENSION`, `BEGIN`/`COMMIT`,
+any `SET`, role/database DDL). Anything the validator does not recognise is forbidden by default.
+Full classification: `manaurum-app/SKILL.md`.
+
 ### Rollback
 
 ```bash
 curl -sS -X POST https://manaurum.com/api/dev/v2/apps/<app_id>/rollback \
-  -H "Authorization: Bearer $MANAURUM_V2_TOKEN"
+  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"version_label": "1.0.0"}'
 ```
 
-Restores the previous version's image. Same URL, no traffic interruption.
+`version_label` is required — name the already-published version you want live. Rollback
+re-points Swarm, Traefik and `v2_apps.current_version_id` at that version's image. It is **not**
+a schema revert: the migration contract is additive-only and applied migrations stay applied.
+
+Same async shape as deploy — **202 + `{"deploy_job_id", "status": "pending"}`** — so poll
+`GET /api/dev/v2/deploy/{job_id}` exactly as above, and re-check `/healthz` afterwards. Same
+URL, no traffic interruption.
 
 ### List versions / inspect / logs
 
@@ -133,17 +231,43 @@ The archive is scoped to your tenant — never exposed to tenants that install y
 app. From the CLI this is `manaurum app fetch-source <version> --app-id <slug>`;
 in DevHub it's the per-version "Download source" button.
 
-### v2 rejection codes
+Every deploy is **also** committed to a per-`(tenant, app)` bare git repo — one commit plus a
+`v<version>` tag — readable via `GET /api/dev/v2/apps/<app_id>/history` and
+`…/diff`. That history is append-only and is **not** pruned by the tarball window above: a
+version whose archive has aged out still has its files in the git history.
 
-| HTTP | `error` | Meaning | Fix |
+> **Whatever you ship, you ship forever.** The CLI packager excludes `__pycache__`, `.venv`,
+> `.git`, the `*_cache` dirs, `node_modules`, `dist` and `build` — it does **not** exclude
+> `.env`, `.env.local`, `.env.manaurum` or any other dotfile. A secret that lands in the tar is
+> downloadable by anyone who can call `fetch-source` for your tenant, and is permanently in the
+> git history even after the tarball is pruned. **Keep secrets out of the app directory
+> entirely** (put `.env.manaurum` in the parent dir or your shell profile), and ship a
+> `.dockerignore` as a second line of defence. Rotating the credential is the only remedy after
+> the fact.
+
+### v2 rejection codes (synchronous, from the POST)
+
+| HTTP | `detail` | Meaning | Fix |
 |---|---|---|---|
 | 401 | `invalid_credential` | Bad/expired/revoked `mna_*` token, or not an `mna_*`. | Mint a fresh one in Dev Hub. |
 | 401 | `missing_authorization` | No `Authorization` header. | Add `-H "Authorization: Bearer $MANAURUM_V2_TOKEN"`. |
-| 412 | `missing_tenant_id_header` | (capability calls only) `X-Manaurum-Tenant-Id` not set. | Set it from `process.env.MANAURUM_TENANT_ID`. |
-| 422 | `manifest validation failed` | Manifest fails v2 JSON Schema. | Read `errors[]`. Common: bad `app_id` slug, non-semver `version`. |
-| 422 | `migration_validation_failed` | Destructive DDL without `migration.breaking: true`. | Make additive-only or set `breaking: true`. |
-| 422 | `invalid_archive_b64` | Bundle isn't valid base64. | Use `base64 -w0` (no line wrapping). |
-| 502 | (in `result.error`) | Image build failed. | Inspect the error string — usually a Dockerfile issue (`COPY src not found`, missing `EXPOSE`, etc.). |
+| 403 | `app_id_out_of_scope` | The credential's `apps` list doesn't cover the manifest's `app_id`. | Use a credential scoped to this app (or `*`). |
+| 422 | `invalid_archive_b64` | Archive isn't valid base64. | Encode with `base64 < file | tr -d '\n'` — the archive must be one unwrapped line. (`base64 -w0` is GNU-only and fails on macOS.) |
+| 412 | `missing_tenant_id_header` | (capability calls only, not deploy) `X-Manaurum-Tenant-Id` not set. | Set it from `process.env.MANAURUM_TENANT_ID`. |
+
+Everything else is a **job failure**, not an HTTP error — see below.
+
+### Failures you'll actually hit (job `failed`, or after the deploy is green)
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `404 route_not_declared` from one of your API paths | `runtime.api_routes` is **default-deny**. A path that matches no rule is rejected by the gateway and never reaches your container. | Declare it. `/api/tasks/*` does **not** match the bare `/api/tasks` — declare both. There is no `method` field; one rule covers every verb. |
+| `502` on the app URL right after a `succeeded` deploy | Nothing is listening where the gateway proxies. The upstream is `<swarm-service>:<port>`, where `port` is `manifest.runtime.port` if present and **80** otherwise. `EXPOSE` in your Dockerfile is never parsed by anything in Core. Also fires when the process bound `127.0.0.1` instead of `0.0.0.0`. | Bind `0.0.0.0` on port 80, or declare `runtime.port` to match what you bind: `CMD ["uvicorn","main:app","--host","0.0.0.0","--port","80"]`. |
+| Job `failed`, error contains `non-SQL file in migrations/` | A non-`.sql` **regular file directly under** `migrations/` — a `README.md`, a `.gitkeep`, or `0001.SQL` (the extension check is case-sensitive). | Move it elsewhere in the bundle. Subdirectories under `migrations/` are ignored, not rejected. **This is a job `failed`, NOT a 422 from the POST** — the layout is checked inside the job. |
+| Job `failed`, error contains `DO $$ … $$ — arbitrary PL/pgSQL body is not analysable` | The DDL validator classifies anonymous `DO` blocks as **forbidden**: it cannot AST-check the body. `migration.breaking: true` does **not** override this — `breaking` only unlocks *destructive* statements. | Expand the block into plain statements (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, …). A first-party app shipped this exact bug (MAN-1327). |
+| Job `failed`, `manifest v2 validation failed (1 error): <root>: Additional properties are not allowed ('description' was unexpected)` | The manifest root is `additionalProperties: false`. `description`, `icon` and `category` are **not** root keys. | `description` → `metadata.description`; `icon` → `frontend.icon`; `category` → `metadata.category`. There is no forward-compatible ignore — validate before deploying. |
+| Job `failed`, error names a destructive statement (`DROP`, `RENAME`, `TRUNCATE`, `ALTER COLUMN … TYPE`) | Destructive DDL without `migration.breaking: true`. | Make the migration additive, or set `migration.breaking: true` — which is recorded on the version row and fans the migration out to every install as usual. There is no undo: rollback re-points the image, not the schema. |
+| Job `failed`, error is a Docker build/push error string | The image build inside the backend failed. | Read the error verbatim — usually `COPY <src> not found` (path outside the tar root) or a failing `RUN`. |
 
 ### Multi-tenant deploys (v2 visibility)
 
@@ -181,7 +305,7 @@ This is fundamentally different from v1, where each tenant requires its own depl
 cd my-app
 zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
 
-B64=$(base64 -w0 bundle.zip)
+B64=$(base64 < bundle.zip | tr -d '\n')
 jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
   | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
       -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
@@ -245,14 +369,17 @@ When scaffolding a new project, drop this in:
 
 ```bash
 #!/bin/bash
-# Deploy a v2 ManAurum app — POST /api/dev/v2/deploy
-set -e
+# Deploy a v2 ManAurum app — POST /api/dev/v2/deploy (async: 202 + poll).
+set -euo pipefail
+
+BASE_URL="${MANAURUM_BASE_URL:-https://manaurum.com}"
+APP_URL="${APP_URL:-}"   # optional: set to https://<slug>.apps.manaurum.com for the health check
 
 if [ -f .env.manaurum ]; then
-  set -a; source .env.manaurum; set +a
+  set -a; . ./.env.manaurum; set +a
 fi
 
-if [ -z "$MANAURUM_V2_TOKEN" ]; then
+if [ -z "${MANAURUM_V2_TOKEN:-}" ]; then
   echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://manaurum.com (Dev Hub → v2 Tokens)."
   echo "Save as MANAURUM_V2_TOKEN=mna_<...> in .env.manaurum"
   exit 1
@@ -278,29 +405,68 @@ tar cf /tmp/ctx.tar \
   .
 
 echo "Deploying…"
-B64=$(base64 -w0 /tmp/ctx.tar)
+# Portable single-line base64: GNU accepts `-w0`, BSD/macOS does not.
+B64=$(base64 < /tmp/ctx.tar | tr -d '\n')
 RESP=$(jq -n --arg b "$B64" --argjson m "$(cat manifest_v2.json)" \
   '{manifest_json: $m, archive_b64: $b}' \
-  | curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
+  | curl -sS -X POST "$BASE_URL/api/dev/v2/deploy" \
       -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
       -H "Content-Type: application/json" \
       -d @-)
+rm -f /tmp/ctx.tar
 
-JOB_ID=$(echo "$RESP" | jq -r .deploy_job_id)
-STATUS=$(echo "$RESP" | jq -r .status)
-echo "Job: $JOB_ID — status: $STATUS"
-
-if [ "$STATUS" != "succeeded" ]; then
-  curl -sS https://manaurum.com/api/dev/v2/deploy/$JOB_ID \
-    -H "Authorization: Bearer $MANAURUM_V2_TOKEN" | jq .
+# The POST is 202 + {"deploy_job_id": ..., "status": "pending"} — ALWAYS.
+# Never treat its "status" as the outcome; poll the job instead.
+JOB_ID=$(printf '%s' "$RESP" | jq -r '.deploy_job_id // empty' 2>/dev/null || true)
+if [ -z "$JOB_ID" ]; then
+  echo "Deploy not accepted:"
+  printf '%s\n' "$RESP" | jq . 2>/dev/null || printf '%s\n' "$RESP"
   exit 1
 fi
 
-curl -sS https://manaurum.com/api/dev/v2/deploy/$JOB_ID \
-  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
-  | jq -r '.result | "✓ Live at \(.url)"'
+echo "Job: $JOB_ID — polling…"
+STATUS="pending"
+JOB=""
+for _ in $(seq 1 120); do          # 120 × 3s = 6 min; a build may take up to 300s
+  JOB=$(curl -sS "$BASE_URL/api/dev/v2/deploy/$JOB_ID" \
+          -H "Authorization: Bearer $MANAURUM_V2_TOKEN")
+  STATUS=$(printf '%s' "$JOB" | jq -r '.status // "pending"' 2>/dev/null || echo pending)
+  case "$STATUS" in
+    succeeded|failed) break ;;
+  esac
+  sleep 3
+done
 
-rm -f /tmp/ctx.tar
+if [ "$STATUS" = "failed" ]; then
+  echo "✗ Deploy failed:"
+  printf '%s\n' "$JOB" | jq -r '.error // "(no error recorded)"'
+  exit 1
+fi
+if [ "$STATUS" != "succeeded" ]; then
+  echo "✗ Timed out waiting for job $JOB_ID (last status: $STATUS)"
+  exit 1
+fi
+
+URL=$(printf '%s' "$JOB" | jq -r '.result.url // empty')
+echo "✓ Build accepted — $URL"
+
+# "succeeded" only means Docker accepted the spec. There is NO readiness
+# probe on the platform side, so verify the app actually serves.
+[ -n "$APP_URL" ] || APP_URL="$URL"
+if [ -n "$APP_URL" ]; then
+  for _ in $(seq 1 15); do
+    if curl -fsS "$APP_URL/healthz" >/dev/null 2>&1; then
+      echo "✓ Live at $APP_URL"
+      exit 0
+    fi
+    sleep 2
+  done
+  echo "⚠ Deploy succeeded but $APP_URL/healthz is not answering."
+  echo "  Check: container listening on 0.0.0.0:80 (or your runtime.port)?"
+  exit 1
+fi
 ```
 
 Make executable: `chmod +x deploy.sh`.
+
+Requires `jq` and `curl`. The `base64 | tr -d` form above is portable; `base64 -w0` is GNU-only and errors on stock macOS.
