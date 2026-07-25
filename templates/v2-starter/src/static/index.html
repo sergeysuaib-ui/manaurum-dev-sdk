@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>my-app</title>
+
+<!--
+  HANDSHAKE — the single most common reason a v2 app ships broken.
+
+  The desktop shell frames this page in an iframe and posts
+  `manaurum:init` to it. If the page does not answer `manaurum:ready`
+  within 10 seconds, the shell replaces it with "App is not responding"
+  and the user never sees the UI. The standalone URL
+  (https://my-app.apps.manaurum.com/) works fine without the
+  handshake, which is exactly why the bug is invisible until someone
+  opens the app inside Manaurum. Always test in the shell.
+
+  This inline script answers the handshake with no dependencies, so a
+  slow or unreachable CDN can never cost you the window. The SDK below
+  answers too; a duplicate `manaurum:ready` is harmless.
+-->
+<script>
+  // Outside the shell (the standalone URL) no init ever arrives, so the
+  // device class stays at this desktop default and the app still works.
+  window.__manaurum = { init: null, device: 'desktop' };
+
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || typeof data.type !== 'string') return;
+
+    if (data.type === 'manaurum:init') {
+      var payload = data.payload || {};
+      window.__manaurum.init = payload;
+      if (payload.device) window.__manaurum.device = payload.device;
+      try {
+        event.source.postMessage(
+          { type: 'manaurum:ready', payload: { sdk_version: 'starter' } },
+          event.origin
+        );
+      } catch (e) {
+        console.error('[my-app] failed to answer manaurum:ready', e);
+      }
+      window.dispatchEvent(new CustomEvent('manaurum-device'));
+      return;
+    }
+
+    // Orientation flip or a resize across the mobile breakpoint.
+    if (data.type === 'manaurum:device-change') {
+      var device = (data.payload || {}).device;
+      if (!device) return;
+      window.__manaurum.device = device;
+      window.dispatchEvent(new CustomEvent('manaurum-device'));
+    }
+  });
+</script>
+
+<style>
+  :root {
+    --bg: #f6f7fb; --fg: #181c23; --muted: #667085;
+    --card: #ffffff; --line: #e3e6ef; --accent: #0058bc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10131a; --fg: #e7eaf2; --muted: #98a1b5;
+      --card: #171b24; --line: #262c3a; --accent: #6ea8ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  /* Mobile layout: the shell tells us the device class, we don't guess
+     from window width — an app window on a desktop can be narrow. */
+  body[data-device='mobile'] { padding: 16px 14px 32px; }
+  body[data-device='mobile'] h1 { font-size: 20px; }
+  h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.02em; }
+  .sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  }
+  .card h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase;
+             letter-spacing: 0.06em; color: var(--muted); font-weight: 700; }
+  textarea {
+    width: 100%; min-height: 90px; resize: vertical; padding: 10px;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--fg); font: inherit;
+  }
+  button {
+    margin-top: 10px; padding: 9px 16px; border: none; border-radius: 8px;
+    background: var(--accent); color: #fff; font: inherit; font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.55; cursor: default; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+  .status { margin-left: 10px; font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>my-app</h1>
+  <p class="sub">
+    Platform v2 starter — running as a container at
+    <code>my-app.apps.manaurum.com</code>.
+  </p>
+
+  <div class="card">
+    <h2>Who am I</h2>
+    <pre id="me">…</pre>
+  </div>
+
+  <div class="card">
+    <h2>A note, stored in os.kv</h2>
+    <textarea id="note" placeholder="Type something, hit Save, then reload the window."></textarea>
+    <button id="save" disabled>Save</button>
+    <span class="status" id="note-status"></span>
+  </div>
+
+<script type="module">
+  // The v2 SDK is optional sugar — mainly `app.fetch()` (same-origin,
+  // cookies included, JSON Accept, retry on idempotent verbs). It is
+  // imported dynamically so a network failure degrades to plain fetch()
+  // instead of a blank app.
+  let sdk = null;
+  try {
+    const mod = await import('https://manaurum.com/sdk/manaurum-v2.mjs');
+    sdk = mod.ManaurumV2.init();
+  } catch (err) {
+    console.warn('[my-app] v2 SDK unavailable, using plain fetch()', err);
+  }
+
+  const request = (path, init) =>
+    sdk ? sdk.fetch(path, init) : fetch(path, { credentials: 'same-origin', ...init });
+
+  // Device branching. The shell supplies 'mobile' | 'desktop' in
+  // manaurum:init, so branch on that rather than on window width — an
+  // app window can be narrow on a desktop.
+  //
+  // Read it from the inline listener above, NOT from `sdk.device`: that
+  // getter returns a *truthy* 'desktop' until the SDK's own init
+  // arrives, so an SDK that loads late would mask the real value.
+  function applyDevice() {
+    document.body.dataset.device = window.__manaurum.device;
+  }
+  applyDevice();
+  window.addEventListener('manaurum-device', applyDevice);
+
+  const $me = document.getElementById('me');
+  const $note = document.getElementById('note');
+  const $save = document.getElementById('save');
+  const $status = document.getElementById('note-status');
+
+  // GET /api/me — an `auth: "user"` route. No token handling here: the
+  // manaurum_session cookie rides along, Core mints the user_context
+  // JWT, and the container verifies it.
+  try {
+    const res = await request('/api/me');
+    $me.textContent = res.ok
+      ? JSON.stringify(await res.json(), null, 2)
+      : `HTTP ${res.status} — ${(await res.text()).slice(0, 200)}`;
+  } catch (err) {
+    $me.textContent = `request failed: ${err}`;
+  }
+
+  // GET/PUT /api/notes — the os.kv round trip.
+  try {
+    const res = await request('/api/notes');
+    if (res.ok) {
+      $note.value = (await res.json()).text || '';
+      $save.disabled = false;
+    } else {
+      $status.textContent = `load failed (HTTP ${res.status})`;
+    }
+  } catch (err) {
+    $status.textContent = `load failed: ${err}`;
+  }
+
+  $save.addEventListener('click', async () => {
+    $save.disabled = true;
+    $status.textContent = 'saving…';
+    try {
+      const res = await request('/api/notes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: $note.value }),
+      });
+      $status.textContent = res.ok ? 'saved' : `save failed (HTTP ${res.status})`;
+    } catch (err) {
+      $status.textContent = `save failed: ${err}`;
+    }
+    $save.disabled = false;
+  });
+</script>
+</body>
+</html>

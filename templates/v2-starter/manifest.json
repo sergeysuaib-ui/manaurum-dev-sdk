@@ -1,0 +1,47 @@
+{
+  "manifest_version": "2",
+  "manaurum_sdk_version": "2",
+  "app_id": "my-app",
+  "name": "my-app",
+  "version": "0.1.0",
+  "runtime": {
+    "mode": "hosted",
+    "port": 8000,
+    "api_routes": [
+      {"path": "/api/me", "auth": "user"},
+      {"path": "/api/notes", "auth": "user"}
+    ]
+  },
+  "data": {
+    "none": true
+  },
+  "frontend": {
+    "entry_point": "/index.html",
+    "icon": "📦",
+    "window": {
+      "default_width": 1024,
+      "default_height": 768
+    }
+  },
+  "platforms": {
+    "desktop": {
+      "supported": true
+    },
+    "mobile": {
+      "supported": true,
+      "optimized": true,
+      "supportLevel": "adaptive",
+      "navigationPattern": "single-view"
+    }
+  },
+  "requires_capabilities": [
+    {"name": "os.kv.get", "version": "1"},
+    {"name": "os.kv.set", "version": "1"}
+  ],
+  "visibility": {
+    "mode": "private"
+  },
+  "metadata": {
+    "description": "TODO: describe my-app"
+  }
+}

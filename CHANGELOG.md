@@ -1,3 +1,46 @@
+# 2.5.0 — the human-facing half catches up (MAN-1365)
+
+### Why
+
+2.4.0 fixed `skills/**` for v2 and stopped there. The two surfaces a **person** reads
+first were untouched, so the agent read correct v2 while the human read a v1 pitch:
+
+- `README.md` described apps as "regular web pages in an iframe", sold the Test Harness
+  and the XP theme, offered "paste HTML or upload ZIP" and Vercel/Netlify hosting, and
+  documented a "Private → Unlisted → Public App Store" ladder that does not exist. It
+  also announced itself as version 1.6.0 while the plugin shipped 2.4.0.
+- `templates/` held three v1 artifacts and **no v2 starter at all**, so every app
+  regenerated container boilerplate from prose.
+
+### What changed
+
+- **README rewritten for v2.** What a v2 app actually is (a container on
+  `<slug>.apps.manaurum.com`), the capability gateway and the signed user-context header
+  in a paragraph each, `visibility.mode` instead of the invented ladder, the three skills
+  and when each fires, and a copy-paste quick start. The three rules that cost
+  first-timers the most time — `/api/*` default-deny, `runtime.port` (never `EXPOSE`),
+  and the 10-second `manaurum:ready` handshake — are a table near the top rather than
+  buried in a skill.
+- **`templates/v2-starter/`** — byte-identical to `manaurum app init` output. It deploys
+  unchanged: serves a UI that answers the shell handshake, verifies a real RS256
+  user-context JWT on `/api/me`, and does a key-value round trip through the capability
+  gateway on `/api/notes`. Regenerate it with that command rather than editing it here,
+  so the two distribution channels cannot drift.
+- **`templates/legacy-v1/`** — the old iframe artifacts, kept only for apps already on v1.
+- **The CLI is installable again.** `pip install manaurum-cli` is advertised in six places
+  across the product but the package has never existed on PyPI. Until it does, the wheel
+  ships as a release on this repo (`cli-v0.2.0`) and the README points at it. Verified
+  end to end in a clean virtualenv: install → `manaurum app init` → `app validate`.
+- **An "honest gaps" section.** No local dev loop, one-line build failures, "succeeded"
+  meaning built-and-scheduled rather than serving, no cron or webhooks behind the manifest
+  fields that exist for them, logs without follow, and subdomains being public knowledge
+  through Certificate Transparency the moment an app first deploys.
+
+### Not changed
+
+`skills/**` — corrected in 2.4.0 (MAN-1330) and re-read during this work; no new factual
+errors found.
+
 # 2.4.0 — realignment with the monorepo (MAN-1330)
 
 ### Why

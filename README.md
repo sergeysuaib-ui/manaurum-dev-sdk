@@ -1,101 +1,168 @@
-# ManAurum OS Developer SDK — Claude Code Plugin
+# ManAurum OS Developer SDK — Claude Code plugin
 
-**Current version: 1.6.0** (runtime Database API documented; tenant-aware Deploy API since 1.5.0 — see CHANGELOG)
+**Version 2.5.0.** Skills that teach Claude Code to build and ship apps for
+[ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
-Build, test, and deploy apps for [ManAurum OS](https://manaurum.com) using Claude Code.
+ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
+that the platform builds, runs and routes: after one deploy it is live at
+`https://<your-slug>.apps.manaurum.com` with TLS, and it also appears as a window on the
+desktop of every tenant that installs it.
 
-ManAurum OS is a browser-based virtual desktop. Apps run as standalone HTML/JS pages inside iframe windows. This plugin gives Claude the knowledge to help you build ManAurum apps from prompts.
+---
 
-## Install
+## The model in one screen
+
+**Your app is a container. The manifest is the contract.** You ship a tarball with a
+`Dockerfile` and a `manifest.json`; the platform builds the image, runs it as a Swarm
+service, and points Traefik at it. Nothing about your source language matters — if it
+serves HTTP, it works.
+
+**It reaches the platform through one door.** No database credentials, no S3 keys, no
+provider tokens. Your container calls the **capability gateway** — a typed HTTP API for
+key-value storage, files, AI, events and outbound HTTP — using the
+`MANAURUM_RUNTIME_TOKEN` the platform injects. Each capability your app uses must be
+declared in the manifest and granted by the tenant admin at install time.
+
+**Who is asking arrives as a signed header.** For routes you mark `auth: "user"`, the
+gateway mints a 60-second RS256 JWT and injects it as `X-Manaurum-User-Context`. Verify it
+against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`. The end user's own session token is never
+forwarded to you, and you must never forward the user context onward to the gateway.
+
+**Three rules that cost first-timers the most time:**
+
+| Rule | What happens if you miss it |
+|---|---|
+| `/api/*` is **default-deny**. Every API path must be listed in `manifest.runtime.api_routes`. | The gateway answers `404 route_not_declared` and the request never reaches your container. Looks like a backend bug with silent logs. |
+| Traefik targets `manifest.runtime.port` (default **80**). `EXPOSE` is never parsed. | Green deploy, then `502 upstream_unreachable` on every request. |
+| The desktop shell requires the `manaurum:ready` handshake within 10 s. | The standalone URL works fine, so you notice nothing — until someone opens the app on the desktop and gets "App is not responding". |
+
+**Who can install it** is `manifest.visibility.mode`: `private` (default), `public`, or
+`allow_list` (with `visibility.tenants`). It is enforced when a tenant installs, not by
+obscurity — see "Honest gaps" below.
+
+---
+
+## Install the plugin
 
 ```bash
-# Add the marketplace (one time)
 claude plugin marketplace add sergeysuaib-ui/manaurum-dev-sdk
-
-# Install the plugin
 claude plugin install manaurum-dev-sdk@manaurum-sdk
 ```
 
-## Update
-
-When a new version is available, run:
+Updating later:
 
 ```bash
-# Pull latest from marketplace
 claude plugin marketplace update manaurum-sdk
-
-# Update the plugin
 claude plugin update manaurum-dev-sdk@manaurum-sdk
 ```
 
-Then restart Claude Code to apply changes.
+Restart Claude Code afterwards. If a skill still describes something this README
+contradicts, your local plugin cache is stale — run `/plugin` and update.
 
-## Skills Included
+## Install the CLI
 
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `manaurum-app` | "Build a ManAurum app..." | Generates app code with SDK, manifest, theme support |
-| `manaurum-deploy` | "Deploy my ManAurum app" | Guides hosting setup and publishing flow |
-| `manaurum-setup` | "Set up a ManAurum project" | Scaffolds project from scratch |
+The `manaurum` CLI scaffolds, validates and deploys. It is **not on PyPI yet**; until it
+is, install the wheel from this repo's
+[releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
-## Usage
-
-After installing, just describe what you want:
-
-```
-Build a ManAurum OS app that shows the current time with a dark/light theme
+```bash
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.2.0/manaurum_cli-0.2.0-py3-none-any.whl
+manaurum --version
 ```
 
-Or use skills directly:
+Then save your token — ask your ManAurum workspace admin to issue one in
+**DevHub → Credentials** (`mna_…`, choose "All apps" scope unless you have a reason not
+to; a token restricted to specific slugs cannot deploy an app it does not already list):
+
+```bash
+manaurum auth login --token mna_...
+```
+
+---
+
+## Quick start
+
+```bash
+manaurum app init my-app        # the same starter as templates/v2-starter
+cd my-app
+manaurum app validate           # manifest against the v2 schema
+manaurum app deploy             # 202 + poll; prints the live URL when it activates
+```
+
+The scaffold deploys unchanged. It is not a hello-world stub: it serves a UI that answers
+the shell handshake, verifies a real user-context JWT on `/api/me`, and does a real
+key-value round trip through the capability gateway on `/api/notes`. Read its `README.md`,
+then replace the note-taking parts with your own.
+
+Useful afterwards:
+
+```bash
+manaurum app describe --app-id my-app
+manaurum app logs --app-id my-app --tail 200
+manaurum app list-versions --app-id my-app
+manaurum app rollback 0.1.0 --app-id my-app
+```
+
+---
+
+## Skills
+
+| Skill | Fires when you say | What it does |
+|---|---|---|
+| `manaurum-app` | "build / create a ManAurum app" | Writes the app: v2 manifest, Dockerfile, capability calls, user-context verification, the shell handshake. |
+| `manaurum-setup` | "start / scaffold a new project" | Sets up a fresh v2 project directory. |
+| `manaurum-deploy` | "deploy / publish / release it" | Token issuance, build context, the 202-plus-poll deploy contract, rejection codes, rollback, install. |
+
+You rarely invoke them by name — describing the task is enough:
 
 ```
-/manaurum-setup
-/manaurum-app Create a weather widget
-/manaurum-deploy
+Build a ManAurum app that tracks my team's on-call rota and reminds people the day before
 ```
 
-## What Claude will help you with
+Deep references live in `skills/manaurum-app/references/`: the capability catalogue, the
+manifest spec, the v2 platform model, the client SDK, publishing, and design.
 
-- Generate HTML/JS apps that integrate with the ManAurum SDK
-- Create valid manifests with correct permissions and window sizes
-- Apply theme-aware styling (Smoothie/XP themes)
-- Full UI Kit with cards, buttons, inputs, badges, toggles matching built-in apps
-- Test via the ManAurum Test Harness
-- Host directly on ManAurum (paste HTML or upload ZIP) — no external hosting needed
-- Deploy to external hosting (Vercel, Netlify, etc.)
-- Publish: Private → Unlisted → Public App Store
+## Templates
 
-## How ManAurum Apps Work
+* `templates/v2-starter/` — the bundle above, byte-identical to `manaurum app init`
+  output. Regenerate it with that command rather than hand-editing, so the two channels
+  cannot drift.
+* `templates/legacy-v1/` — the old iframe-bundle artifacts. Kept only for apps that
+  already ship on v1; do not start anything new from them.
 
-Your app is a regular web page. ManAurum loads it in a sandboxed iframe and communicates via postMessage:
+---
 
-1. OS sends `manaurum:init` (theme, user, permissions)
-2. Your app responds with `manaurum:ready`
-3. Your app can use SDK methods for window management, toasts, notifications
+## Honest gaps
 
-That's it. Any HTML page can become a ManAurum app.
+Things people reasonably expect that do not exist yet. Better to read it here than to
+discover it at 2 a.m.:
+
+* **No local dev loop.** There is no `manaurum app dev`; the inner loop today is deploy
+  and look.
+* **Build failures give you one line.** If the image fails to build you get a short
+  reason, not the Docker log.
+* **"Succeeded" means built and scheduled**, not "your container answers". A deploy that
+  reports success can still be 502 on the first request — check the URL yourself.
+* **No scheduled jobs and no inbound webhooks.** `schedules` and `webhooks` exist in the
+  manifest schema but nothing runs them yet.
+* **No metrics.** `manaurum app logs` is a tail of the last N lines, with no follow.
+* **Subdomains are public knowledge.** Your app's hostname appears in Certificate
+  Transparency logs seconds after its first deploy, whatever `visibility.mode` says.
+  Visibility controls *installation*, not the existence of the URL — so put auth on
+  anything sensitive, and expect scanners to walk it.
+
+---
 
 ## Resources
 
-- [Developer Docs](https://manaurum.com/developers)
-- [Test Harness](https://manaurum.com/sdk/test-harness.html)
-- [SDK (UMD)](https://manaurum.com/sdk/manaurum.js)
-- [SDK (ESM)](https://manaurum.com/sdk/manaurum.mjs)
-- [AGENTS.md](https://manaurum.com/sdk/AGENTS.md)
-- [Manifest Schema](https://manaurum.com/sdk/manifest.schema.json)
+* [Developer docs](https://manaurum.com/developers)
+* [Client SDK (v2, ESM)](https://manaurum.com/sdk/manaurum-v2.mjs)
+* [Manifest schema (v2)](https://manaurum.com/sdk/manifest_v2.schema.json)
+* [Design tokens](https://manaurum.com/api/library/tokens.css) and the public
+  [component library](https://manaurum.com/library)
 
-## Changelog
-
-### 1.1.0
-- Added comprehensive UI Kit reference (cards, buttons, inputs, badges, toggles, sidebars, tabs)
-- Added theme-aware app template with all design patterns
-- Added internal hosting documentation (paste HTML / upload ZIP)
-- Updated publishing flow docs with quick-create endpoint
-
-### 1.0.0
-- Initial release: manaurum-app, manaurum-deploy, manaurum-setup skills
-- SDK API reference, manifest spec, design guidelines, publishing flow
-- Hello-world and manifest starter templates
+Legacy v1 (iframe apps, `manaurum.js`, `mnu_*` tokens) is still supported for apps already
+on it; each skill keeps a "Legacy v1" section at the bottom.
 
 ## License
 
