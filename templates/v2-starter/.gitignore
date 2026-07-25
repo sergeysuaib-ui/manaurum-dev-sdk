@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+dist/
+build/
+*.egg-info/
+.manaurum-deploy.tar.gz

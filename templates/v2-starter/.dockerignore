@@ -1,0 +1,26 @@
+# Keep the build context small and, above all, keep credentials out of
+# the image. `manaurum app deploy` uploads this directory as the Docker
+# build context; anything listed here never reaches the builder.
+.env
+.env.*
+*.pem
+*.key
+
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+node_modules/
+dist/
+build/
+*.egg-info/
+*.tar.gz
+
+# Applied by Core per tenant, never needed inside the image.
+migrations/

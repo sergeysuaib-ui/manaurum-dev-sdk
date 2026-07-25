@@ -1,0 +1,15 @@
+# Runtime dependencies for my-app. Pinned on purpose: an unpinned
+# build is a different image every deploy.
+#
+# These four are what the starter in src/main.py needs:
+#   fastapi + uvicorn  — the ASGI app the Dockerfile runs on :8000
+#   python-jose        — verifies the gateway's X-Manaurum-User-Context
+#                        JWT (RS256); [cryptography] pulls the backend
+#   httpx              — calls the capability gateway server-side
+#
+# The versions match the platform's own runtime base, so the JWT your
+# container verifies is checked by the same library Core mints it with.
+fastapi==0.136.1
+uvicorn[standard]==0.30.6
+python-jose[cryptography]==3.5.0
+httpx==0.28.1
