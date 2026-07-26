@@ -327,10 +327,16 @@ Use `payload.tenant` for B2B kustomization (per-tenant branding, copy, config). 
 | `shell.hasBackButton` | `false` | `true` |
 | `shell.tabBarHeight` | `0` | `0` (tab bar hidden when app is open) |
 
-### `manaurum:theme` (when user switches theme)
+### `manaurum:theme` (legacy channel, when the user changes appearance)
 ```json
-{ "type": "manaurum:theme", "payload": { "theme": "xp" } }
+{ "type": "manaurum:theme", "payload": { "theme": "smoothie" } }
 ```
+
+`theme` is the only field on this message and it is **always** `"smoothie"` for
+an iframe app (see the note above — the XP look stops at the window frame), so
+there is nothing actionable in it. The shell posts the full
+`manaurum:theme-change` alongside it, carrying `appearance` and `accent`; use
+that one.
 
 ## App → Shell Events
 
@@ -892,7 +898,7 @@ None. The library is curated and read-only — no permission needed in the v1 ma
 | Method | Returns |
 |--------|---------|
 | `app.getUserProfile()` | `{ nickname }` or null |
-| `app.getTheme()` | `"smoothie"` or `"xp"` or null |
+| `app.getTheme()` | `"smoothie"` or null — never `"xp"` inside an iframe |
 
 ### Window (requires `window.manage`)
 | Method | Description |

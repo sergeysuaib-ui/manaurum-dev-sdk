@@ -13,6 +13,22 @@ description: Scaffold a new ManAurum OS app project. As of 2026-05, the default 
 
 ## v2 setup (default)
 
+### Step 0 — Know what you are scaffolding
+
+Scaffolding is the first irreversible-feeling step, so spend three questions
+first. Ask who uses it, what they'd do with it on a normal day, and what it must
+still remember tomorrow; then **propose what you think the app is and let them
+correct you** rather than asking a fourth question. Write the answers to
+`BRIEF.md` (the template is in `templates/v2-starter/`) before you copy the
+starter, and name the app from it.
+
+Not a gate — "just scaffold me something" is a fine answer; draft the brief
+yourself and confirm once. Not an interrogation — "I don't know" means you pick
+a sane default, record it in §6 of the brief as `(assumed)`, and say so.
+
+Full question bank, defaults, and two worked transcripts:
+`manaurum-app/references/discovery.md`.
+
 ### Start from the working starter, not from an empty directory
 
 `templates/v2-starter/` in this plugin is a complete, deployable v2 app —
@@ -28,6 +44,8 @@ pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
 
 ```
 my-app/
+├── BRIEF.md             ← what the app is for, in the user's words. Written
+│                          BEFORE the code and edited before any change to it.
 ├── manifest.json        ← REQUIRED — v2 manifest schema
 ├── Dockerfile           ← REQUIRED — produces the runtime image
 ├── requirements.txt     ← runtime deps (image)
@@ -38,7 +56,11 @@ my-app/
 │   ├── capability.py    ← call the capability gateway
 │   ├── main.py          ← the HTTP surface: /healthz, /api/*, static
 │   ├── agent_routes.py  ← /agent/* — the OS Assistant surface
-│   └── static/index.html
+│   └── static/
+│       ├── index.html   ← answers the handshake; applies appearance + accent
+│       └── app.css      ← the design system: tokens, layout, lists, forms,
+│                           empty states, skeletons, mobile. Restyle by
+│                           changing values at the top, not by starting over.
 ├── tests/               ← conftest mints user_context JWTs offline
 │   ├── conftest.py  test_auth.py  test_agent.py  test_routes.py
 ├── migrations/          ← Optional — plain *.sql only, run once per (app, tenant).
@@ -437,7 +459,9 @@ my-v1-app/
 
 `/manaurum-deploy` → "Legacy v1 deploy" section. Token is `mnu_*` (not `mna_*`), endpoint is `/api/dev/apps/deploy`, body is a manifest+zip.
 
-For the full v1 surface (SDK API, theming, design rules, App Store submission), see `references/sdk-api.md`, `references/design.md`, `references/manifest-spec.md`, `references/publishing.md`. Those references describe v1 only — with one carve-out: the `manaurum:init` / `manaurum:ready` handshake documented in `sdk-api.md` applies to **v2 apps too**. Everything else in the postMessage protocol (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) is v1-only and is rejected for a v2 app.
+For the full v1 surface (SDK API, App Store submission), see `references/sdk-api.md`, `references/manifest-spec.md`, `references/publishing.md`. Those three describe v1 only — with one carve-out: the `manaurum:init` / `manaurum:ready` handshake documented in `sdk-api.md` applies to **v2 apps too**. Everything else in the postMessage protocol (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) is v1-only and is rejected for a v2 app.
+
+`references/design.md` is **not** v1-only — it was rewritten for v2 and applies to both.
 
 ---
 

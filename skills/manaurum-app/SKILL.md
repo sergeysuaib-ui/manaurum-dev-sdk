@@ -17,6 +17,36 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 ---
 
+## Step 0 — Find out what you are building
+
+**Do this before you create a single file.** Not because process is good, but
+because "build me an app for my shop" is not an underspecified brief — it is
+the whole of what the person knows how to say. They do not have a spec and do
+not know what you need from them. Start writing files and you will invent the
+data model, the screens and the Assistant capabilities yourself, and they will
+not find out you guessed wrong until the app exists and is wrong.
+
+1. **Ask, one question at a time.** Who uses it → what they do on a normal day
+   → what it must still remember tomorrow → what they'd want to just *ask* for
+   → what it must never do. Plain language only: never "what's your schema".
+2. **After two or three answers, propose instead of asking.** Say what you think
+   the app is and invite correction. People correct a wrong guess far better
+   than they specify from nothing. This one move is most of the value.
+3. **Write `BRIEF.md`** — copy `templates/v2-starter/BRIEF.md` — and let them
+   read it. It is the spec, and it is theirs.
+4. **Derive the build from it**: §3 → the data model, §2 → the screens and
+   `api_routes`, §4 → `agent_capabilities`. Keep the derivation visible.
+
+Two things this is not. It is **not a gate**: if they say "just build me a todo
+list", draft the brief yourself, show it, ask one confirming question, and go.
+And it is **not an interrogation**: "I don't know" is a complete answer — decide
+the default, record it in §6 as `(assumed)`, say what you decided, move on.
+
+Question bank, defaults for the "I don't know" case, two worked transcripts, and
+the brief→manifest derivation table: **`references/discovery.md`**.
+
+---
+
 ## What a v2 app is
 
 A v2 app is a Docker image that:
@@ -46,6 +76,12 @@ whole, `src/api/` split by surface, both auth levels), **`family-space-v2`** (th
 ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
 only tested one — copy its `conftest.py`). Copying the shape of a working app
 beats reconstructing it from this page.
+
+**And copy the look, don't invent it.** `templates/v2-starter/src/static/app.css`
+is a complete stylesheet for a Manaurum app — tokens, layout, lists, forms,
+empty states, skeletons, mobile — and `index.html` shows every pattern in use.
+`references/design.md` explains when to reach for each and which mistakes are
+expensive. An app that works and looks unfinished is one a user abandons.
 
 ## Required project structure
 
@@ -427,8 +463,11 @@ A v1 app is a static HTML+JS bundle loaded in a sandboxed iframe by the OS shell
 If you genuinely need to update a v1 app, see:
 - `references/sdk-api.md` § "Legacy v1" — the v1 SDK surface (storage, files, db, ai, mul, …). Note that the same file's `manaurum:ready` and "Platform v2 — frontend SDK" sections are **not** v1-only; they apply to v2 apps too.
 - `references/manifest-spec.md` — v1 manifest schema
-- `references/design.md` — Smoothie + XP themes
 - `references/publishing.md` — App Store v1 submission
+
+`references/design.md` is **not** in that list any more: it was rewritten for
+v2 and applies to both. The design contract (isolated iframe, own CSS, style off
+`appearance` and `accent`) is the same either way.
 
 Quick v1 reminder for porting context:
 

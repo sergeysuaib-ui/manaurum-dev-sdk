@@ -16,6 +16,7 @@ and a note box that survives a reload.
 
 ```
 my-app/
+├── BRIEF.md             # what this app is for, in the user's words
 ├── manifest.json        # what the platform is allowed to do for you
 ├── Dockerfile           # python:3.12-slim + uvicorn on :8000
 ├── .dockerignore        # keeps .env, tests and friends out of the image
@@ -28,7 +29,9 @@ my-app/
 │   ├── main.py          # /healthz, /api/me, /api/notes, static serving
 │   ├── agent_routes.py  # /agent/* — the OS Assistant surface
 │   └── static/
-│       └── index.html   # the UI, incl. the manaurum:ready handshake
+│       ├── index.html   # the UI, incl. the manaurum:ready handshake
+│       └── app.css      # the design system: tokens, layout, lists, forms,
+│                        # empty states, skeletons, mobile
 └── tests/
     ├── conftest.py      # the user_context JWT fixture + a fake os.kv
     ├── test_auth.py     # the verifier, incl. every way it can be wrong
@@ -44,6 +47,18 @@ Create it when you have your first `.sql` file and not before.
 `auth.py` and `capability.py` are shared infrastructure; `main.py` and
 `agent_routes.py` are the two surfaces built on them. Apps grow by adding
 surfaces over that same thin core, not by growing one file.
+
+## `BRIEF.md` comes first
+
+`BRIEF.md` is the spec, in the words of the person who wanted the app — who uses
+it, what they do with it, what it must remember, what the Assistant may do, and
+what it must never do. It is written **before** the code and edited **before**
+any change to it, because it is what the next person (or the next agent, in a
+month, with none of the conversation) reads to find out what this app is for.
+
+The build derives from it: §3 is the data model, §2 is the screens and
+`runtime.api_routes`, §4 is `agent_capabilities`. §6 lists what was decided on
+the user's behalf — read that section first when something turns out wrong.
 
 ## Run the tests first
 
@@ -64,7 +79,7 @@ That last pair is why `test_routes.py` exists at all: unit-testing the
 verifier and unit-testing the handler both stay green when the two are no
 longer wired together, and the route is open in production.
 
-## The five things that make it work
+## The six things that make it work
 
 **1. The port is a contract between two files.** The gateway proxies to
 `manifest.runtime.port` (80 when the field is absent). `EXPOSE` in the
@@ -103,6 +118,25 @@ will answer from guesswork. Dispatch goes **straight to the container** at
 still served on your public hostname, so the JWT check in every handler is the
 only thing protecting it. And a valid JWT is authentication, not
 authorization: every handler still scopes to `claims.user_id`.
+
+**6. The shell — not the browser — decides light or dark.** `manaurum:init`
+carries `appearance` (`light`/`dark`) and `accent`; the shell re-sends both as
+`manaurum:theme-change` when the user changes either. `index.html` writes them
+onto `<html>` as `data-appearance` / `data-accent`, and every colour in
+`app.css` reads off those.
+
+Two traps here, both of which have shipped in real apps:
+
+- **`prefers-color-scheme` is not Manaurum's appearance** — it tracks the
+  *browser*. Style off it alone and a user in OS dark mode with a light browser
+  profile gets a light app sitting in a dark desktop. The starter uses it only
+  as the standalone default and lets the shell win once it speaks.
+- **`payload.theme` is always `'smoothie'`** — the XP look stops at the window
+  frame and never enters an iframe. `app.onThemeChange(cb)` likewise hands your
+  callback that constant, not the value that changed; read `app.appearance`
+  inside the callback instead. A handler written
+  `onThemeChange(t => applyTheme(t))` runs forever and never reacts to
+  dark mode.
 
 ## Storage
 
