@@ -21,7 +21,7 @@ description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platfo
 ### Prereqs
 
 - An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → "v2 Tokens (Beta)" → Generate. Shown ONCE, save immediately.
-- A project directory containing `manifest_v2.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
+- A project directory containing `manifest.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
 
 ### Quickstart
 
@@ -29,20 +29,32 @@ description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platfo
 cd my-app
 tar cf /tmp/ctx.tar \
   --exclude='.env*' --exclude='.git' --exclude='node_modules' \
+  --exclude='.venv' --exclude='venv' --exclude='__pycache__' \
+  --exclude='.pytest_cache' --exclude='dist' --exclude='build' \
   --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
   .
 
-B64=$(base64 < /tmp/ctx.tar | tr -d '\n')
-jq -n \
-  --arg b "$B64" \
-  --argjson m "$(cat manifest_v2.json)" \
-  '{manifest_json: $m, archive_b64: $b}' > /tmp/deploy.json
+# Base64 into a FILE, and read it with --rawfile / --slurpfile.
+# Do NOT do `B64=$(base64 …)` + `jq --arg b "$B64"`: that puts the whole
+# archive on the command line and dies with "Argument list too long" on
+# any real project (Windows caps argv at 32 KB; a 60 KB tar is already
+# 80 KB of base64). `tr -d '\n'` leaves no trailing newline, which the
+# archive must not have.
+base64 < /tmp/ctx.tar | tr -d '\n' > /tmp/ctx.b64
+jq -n --rawfile b /tmp/ctx.b64 --slurpfile m manifest.json \
+  '{manifest_json: $m[0], archive_b64: $b}' > /tmp/deploy.json
 
 curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
   -H "Content-Type: application/json" \
   -d @/tmp/deploy.json | jq .
+
+rm -f /tmp/ctx.tar /tmp/ctx.b64
 ```
+
+The `.venv` / `__pycache__` excludes are not cosmetic: without them a Python
+project that has been `pip install`ed locally ships its whole virtualenv —
+measured at **58 MB instead of 60 KB** on a 20-file app.
 
 ### The deploy is asynchronous — always
 
@@ -159,7 +171,7 @@ All of this runs **inside the background job**, after the 202 has already gone b
 ### Bump version + redeploy
 
 ```bash
-jq '.version = "1.0.1"' manifest_v2.json > /tmp/m && mv /tmp/m manifest_v2.json
+jq '.version = "1.0.1"' manifest.json > /tmp/m && mv /tmp/m manifest.json
 # rerun the curl above — the platform updates the swarm service in-place
 ```
 
@@ -305,8 +317,9 @@ This is fundamentally different from v1, where each tenant requires its own depl
 cd my-app
 zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
 
-B64=$(base64 < bundle.zip | tr -d '\n')
-jq -n --arg b "$B64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
+# Via a file, not `--arg`: the bundle is far larger than the argv limit.
+base64 < bundle.zip | tr -d '\n' > /tmp/bundle.b64
+jq -n --rawfile b /tmp/bundle.b64 --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
   | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
       -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
       -H "Content-Type: application/json" \
@@ -385,8 +398,8 @@ if [ -z "${MANAURUM_V2_TOKEN:-}" ]; then
   exit 1
 fi
 
-if [ ! -f manifest_v2.json ]; then
-  echo "Error: manifest_v2.json missing. See manaurum-app/SKILL.md."
+if [ ! -f manifest.json ]; then
+  echo "Error: manifest.json missing. See manaurum-app/SKILL.md."
   exit 1
 fi
 if [ ! -f Dockerfile ]; then
@@ -395,10 +408,18 @@ if [ ! -f Dockerfile ]; then
 fi
 
 echo "Bundling build context…"
+# Excluding .venv/__pycache__ is not cosmetic: a locally pip-installed
+# project otherwise ships its whole virtualenv (58 MB vs 60 KB measured).
 tar cf /tmp/ctx.tar \
   --exclude='.env*' \
   --exclude='.git' \
   --exclude='node_modules' \
+  --exclude='.venv' \
+  --exclude='venv' \
+  --exclude='__pycache__' \
+  --exclude='.pytest_cache' \
+  --exclude='dist' \
+  --exclude='build' \
   --exclude='deploy.sh' \
   --exclude='*.tar' \
   --exclude='*.zip' \
@@ -406,14 +427,18 @@ tar cf /tmp/ctx.tar \
 
 echo "Deploying…"
 # Portable single-line base64: GNU accepts `-w0`, BSD/macOS does not.
-B64=$(base64 < /tmp/ctx.tar | tr -d '\n')
-RESP=$(jq -n --arg b "$B64" --argjson m "$(cat manifest_v2.json)" \
-  '{manifest_json: $m, archive_b64: $b}' \
+# Write it to a FILE and read it with --rawfile. Passing it as
+# `jq --arg b "$B64"` puts the entire archive on the command line and
+# dies with "Argument list too long" on any real project (Windows caps
+# argv at 32 KB; a 60 KB tar is already 80 KB of base64).
+base64 < /tmp/ctx.tar | tr -d '\n' > /tmp/ctx.b64
+RESP=$(jq -n --rawfile b /tmp/ctx.b64 --slurpfile m manifest.json \
+  '{manifest_json: $m[0], archive_b64: $b}' \
   | curl -sS -X POST "$BASE_URL/api/dev/v2/deploy" \
       -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
       -H "Content-Type: application/json" \
       -d @-)
-rm -f /tmp/ctx.tar
+rm -f /tmp/ctx.tar /tmp/ctx.b64
 
 # The POST is 202 + {"deploy_job_id": ..., "status": "pending"} — ALWAYS.
 # Never treat its "status" as the outcome; poll the job instead.

@@ -1,3 +1,97 @@
+# 2.6.0 — the artifacts teach, not the prose (MAN-1394 / MAN-1395 / MAN-1396)
+
+### Why
+
+An agent holding this skill imitates the **artifact** it copies far more reliably
+than the paragraph it reads. 2.5.0 shipped 4,339 lines of accurate prose next to a
+starter that a real app has nothing in common with: no tests, no `/agent/*` handler,
+one 200-line `main.py`. So the skill said "declare `agent_capabilities`" in three
+files while the only copyable app declared none, and said "split by domain" while the
+only copyable app was a single module. The artifact won, every time.
+
+Three concrete costs, all found by building an app with the 2.5.0 skill and deploying it:
+
+- **The filename in every snippet was wrong.** `manifest_v2.json` appeared in 14 places
+  across the three skills; the schema, the CLI and the platform have only ever accepted
+  `manifest.json`. Copy any snippet verbatim and `manaurum app validate` cannot find your
+  manifest.
+- **The shipped `deploy.sh` could not deploy.** `jq --arg` took the base64 archive as a
+  command-line argument — 163,840 characters for a 20-file app — and died with
+  `jq: Argument list too long`. Separately its `tar` exclude list had no `.venv`, so the
+  same app produced a 58 MB build context instead of 60 KB.
+- **A security claim was false.** The skills stated `/agent/*` "is never reachable from
+  the public URL". Skipping `api_routes` removes the *gateway*, not the network:
+  `<slug>.apps.manaurum.com` is Traefik straight to the container. Verified against a live
+  deploy on 2026-07-26 — an unauthenticated POST reaches the handler. An app written to
+  that sentence ships an open endpoint.
+
+### Added
+
+- **`templates/v2-starter/` is now shaped like a real app.** `src/auth.py` (RS256
+  `user_context` verification) and `src/capability.py` (the gateway client) as shared
+  infrastructure; `src/main.py` and `src/agent_routes.py` as the two surfaces built on
+  them. Apps grow by adding surfaces, not by growing one file — and the starter now
+  demonstrates that instead of asserting it.
+- **Two working `agent_capabilities`**, manifest entry through to handler. This is the
+  MAN-1396 half: the *handler* side was documented nowhere, so the identity trap was
+  invisible. `read_my_note` takes no input on purpose — a capability with a `user_id`
+  argument lets the model read somebody else's data by passing a different one.
+- **A test suite that runs offline** — `tests/conftest.py` generates a throwaway RSA
+  keypair and signs its own `user_context` tokens, so JWT verification and the agent
+  handlers are testable with no database, no account and no network. 13 tests, including
+  every way a token can be wrong and one that fails if a user can read another's note.
+  Testing had **zero** occurrences in the plugin before this release.
+- **`skills/manaurum-app/references/reference-apps.md`** (MAN-1394) — the reference ladder.
+  `shift-checklist` (22 files) as the one to read whole, `family-space-v2` (77 files) as the
+  ceiling, `libi` as the testing exemplar, each with the load-bearing excerpt inlined so the
+  page stands alone for a developer without the monorepo. Named paths are provenance, not
+  the deliverable.
+- **A testing section** in `manaurum-setup/SKILL.md`, leading with `pytest` rather than
+  `docker build`, and explaining why the local `401 missing_user_context` on `/api/me` is
+  the correct answer rather than a failure.
+
+### Changed
+
+- **`manifest_v2.json` → `manifest.json`** in all 14 places across the three skills. The
+  one occurrence left in this file is history and stays.
+- **`deploy.sh` and the two quickstart snippets** switched to `jq --rawfile/--slurpfile`
+  (reads the payload from disk, no `ARG_MAX` ceiling) and gained
+  `.venv venv __pycache__ .pytest_cache dist build` in the `tar` excludes. Fixed at all
+  four sites, then run verbatim against a real project to prove it.
+- **`agent_capabilities[]` in `references/v2-platform.md`** — the three-field stub is
+  replaced by a full entry (description with a positive trigger, an ordering constraint
+  and a negative), the handler excerpt, and the note that a valid `user_context` JWT is
+  authentication, not authorization.
+- **`is_write` is documented as declarative only.** The runtime does not read it for
+  hosted apps: there is no such column, the deploy-time sync ignores the key, and at
+  request time `dispatch == "backend"` forces `is_write=True` for *every* capability,
+  readers included. So read-only capabilities take the write path and are excluded from
+  cross-app insight, which filters on `not is_write`. Tracked as MAN-1425 — the skill now
+  says what is true rather than what was intended.
+- **`manaurum-setup/SKILL.md` starts from the working starter** instead of assembling an
+  app from snippets, and says explicitly that where a snippet disagrees with
+  `templates/v2-starter/`, the starter wins. Its inline `index.html` body was deleted in
+  favour of pointing at the starter's; the lesson about the handshake stayed.
+- Manifest examples use `"port": 8000` (matching the starter and every hosted app in
+  production) instead of 80, and carry an `agent_capabilities` entry.
+- **`README.md`** — the "three rules" table gained the `/agent/*` one; the quick start
+  copies the starter instead of running `manaurum app init`, and says why; and the claim
+  that the starter is "byte-identical to `manaurum app init` output" is retracted, because
+  it is not.
+
+### Not changed
+
+- **`templates/legacy-v1/`** — untouched, still there for apps already on v1.
+- **`templates/v2-starter/` was not deleted.** Removing it in favour of `manaurum app init`
+  is MAN-1393's item 4. The CLI-side rewrite exists (MAN-1397, monorepo PR #1455, in review
+  as this ships) and the two scaffolds converged on the same shape independently — but that
+  rewrite is in no released wheel, and `pip install manaurum-cli` still 404s on PyPI
+  (MAN-1385), so the only CLI a developer can install is `cli-v0.2.0`, built before it.
+  Deleting the starter now leaves them with no working scaffold at all. Sequencing: #1455
+  merges → a CLI release ships → the quick start repoints and this directory goes.
+  Deferred, not dropped.
+- **`marketplace.json`** carries no version field and did not get one.
+
 # 2.5.0 — the human-facing half catches up (MAN-1365)
 
 ### Why
