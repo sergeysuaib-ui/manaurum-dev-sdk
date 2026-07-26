@@ -38,13 +38,22 @@ End-to-end deploy time for a small app: **~8 seconds**.
 
 There is **no Core PR** for any of this. The platform team does not need to be in the loop. You are not modifying ManAurum OS — you are deploying an independent containerized app onto it.
 
+## Before you write anything — read a real one
+
+`references/reference-apps.md` walks three production v2 apps and what each is
+worth reading for: **`shift-checklist`** (22 files — a complete app you can read
+whole, `src/api/` split by surface, both auth levels), **`family-space-v2`** (the
+ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
+only tested one — copy its `conftest.py`). Copying the shape of a working app
+beats reconstructing it from this page.
+
 ## Required project structure
 
 ```
 workspace/
 ├── .env.manaurum      ← (gitignored) MANAURUM_V2_TOKEN=mna_… — OUTSIDE the deployed dir, on purpose
 └── my-app/            ← this is what you deploy; everything below is packed and uploaded
-    ├── manifest_v2.json   ← REQUIRED — see below
+    ├── manifest.json   ← REQUIRED — see below
     ├── Dockerfile         ← REQUIRED — produces the runtime image
     ├── .dockerignore      ← strongly recommended — keep .env*, .git, node_modules out of the image
     ├── migrations/        ← optional — plain *.sql, run once per (app, tenant) in filename order
@@ -52,7 +61,7 @@ workspace/
     └── ... your source files (any language, any framework) ...
 ```
 
-**The token file lives one level up, and that placement is the point.** The packager tars the directory containing your `manifest_v2.json`, excluding only these exact names:
+**The token file lives one level up, and that placement is the point.** The packager tars the directory containing your `manifest.json`, excluding only these exact names:
 
 ```
 __pycache__  .venv  venv  .git  .pytest_cache  .ruff_cache  .mypy_cache  node_modules  dist  build
@@ -283,12 +292,17 @@ The deploy is one API call plus a poll. Bundle the build context, base64-encode,
 cd my-app
 tar cf /tmp/ctx.tar \
   --exclude='.env*' --exclude='.git' --exclude='node_modules' \
+  --exclude='.venv' --exclude='venv' --exclude='__pycache__' \
+  --exclude='.pytest_cache' --exclude='dist' --exclude='build' \
   --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
   .
 
-B64=$(base64 < /tmp/ctx.tar | tr -d '\n')
-jq -n --arg b "$B64" --argjson m "$(cat manifest_v2.json)" \
-  '{manifest_json: $m, archive_b64: $b}' > /tmp/deploy.json
+# Base64 into a FILE and read it with --rawfile / --slurpfile. Passing it
+# as `jq --arg b "$B64"` puts the whole archive on the command line and
+# fails with "Argument list too long" on any real project.
+base64 < /tmp/ctx.tar | tr -d '\n' > /tmp/ctx.b64
+jq -n --rawfile b /tmp/ctx.b64 --slurpfile m manifest.json \
+  '{manifest_json: $m[0], archive_b64: $b}' > /tmp/deploy.json
 
 curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
@@ -334,7 +348,7 @@ A `deploy.sh` template with the polling loop, the live NDJSON progress stream, a
 
 ## Step 5 — Update + rollback
 
-- **New version**: bump `manifest_v2.json.version` (semver), retar, redeploy. Same endpoint. The platform records a new `v2_app_versions` row and updates the swarm service in-place.
+- **New version**: bump `manifest.json.version` (semver), retar, redeploy. Same endpoint. The platform records a new `v2_app_versions` row and updates the swarm service in-place.
 - **Rollback**: `POST /api/dev/v2/apps/<app_id>/rollback` — flips the install back to the previous version.
 - **List versions**: `GET /api/dev/v2/apps/<app_id>/versions`.
 - **Inspect**: `GET /api/dev/v2/apps/<app_id>`.

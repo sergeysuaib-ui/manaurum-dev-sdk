@@ -38,6 +38,37 @@
     {"name": "os.kv.get", "version": "1"},
     {"name": "os.kv.set", "version": "1"}
   ],
+  "agent_capabilities": [
+    {
+      "name": "read_my_note",
+      "description": "Read back the note the user saved in my-app. Use when the user asks what their note says, or to check the current text before rewriting it. Returns the note as plain text, or an empty string if they have never saved one. Takes no arguments — the caller's identity comes from the request, not the input.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "routing_hints": ["note", "my note", "what did I write"],
+      "example": {}
+    },
+    {
+      "name": "save_my_note",
+      "description": "Replace the user's note in my-app with new text. This OVERWRITES the whole note — to append, call read_my_note first and send the combined text. Use when the user asks to save, write down or update their note. Do not use to store anything the user did not ask to keep.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The full new note text (max 10000 chars)."
+          }
+        },
+        "required": ["text"],
+        "additionalProperties": false
+      },
+      "is_write": true,
+      "routing_hints": ["note", "save", "write down", "запиши"],
+      "example": {"text": "Buy milk on the way home"}
+    }
+  ],
   "visibility": {
     "mode": "private"
   },

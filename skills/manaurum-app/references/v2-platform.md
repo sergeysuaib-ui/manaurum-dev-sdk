@@ -112,19 +112,78 @@ Grant enforcement is **unconditional**, not aspirational: every hosted-app capab
 
 Each entry registers one tool the OS Assistant can call on the user's behalf. On deploy, Core upserts one `agent_capabilities` row per entry; at request time the agent runtime builds a tool per row (for apps the user has installed) and dispatches **server-to-server** — `POST http://<container>/agent/<name>` with the tool arguments as the JSON body and a freshly minted `user_context` JWT in `X-Manaurum-User-Context`, the same header and the same key your `auth: "user"` routes already verify. Reply `{"ok": true, "output": …}` (a bare JSON object also works; `{"ok": false, "error": …}` surfaces as a failed tool call).
 
-This dispatch goes **straight to your container**, not through the `/apps/<slug>` gateway — so `/agent/<name>` does **not** need a `runtime.api_routes` entry, and it is never reachable from the public URL.
+This dispatch goes **straight to your container**, not through the `/apps/<slug>` gateway — so `/agent/<name>` does **not** need a `runtime.api_routes` entry, and declaring one there does nothing.
+
+> ⚠️ **`/agent/*` is not private. Verify the JWT in every handler.** Skipping `api_routes` removes the *gateway*, not the network: `https://<slug>.apps.manaurum.com` is Traefik straight to your container, so anyone on the internet can POST `/agent/<name>` and reach your code. Verified 2026-07-26 against a live deploy — an unauthenticated `POST /agent/<name>` on the public host is answered by the container, not the gateway. The user_context check is therefore the **only** thing standing between a stranger and your handler, and it must be load-bearing, not belt-and-braces.
+
+**Declare at least one.** An app with no `agent_capabilities` is invisible to the Assistant — and the Assistant does not say "I can't see that app", it *guesses*, so the user gets confident answers about data it never read. This is the platform's differentiator; treat the field as required, not optional.
+
+#### The manifest entry
+
+The three required keys are `name`, `description`, `input_schema`. What separates a usable tool from a decorative one is the `description`, which is **prompt text for a model, not documentation for a human** — say what the capability does, when to reach for it, and when not to. Hard cap 400 chars (`manifest_v2.schema.json`, matching the runtime's `Tool` validator, `app/agent/types.py:108`); longer is rejected at deploy.
 
 ```json
 "agent_capabilities": [
   {
-    "name": "add_diary_entry",
-    "description": "Append a dated note to the user's diary.",
-    "input_schema": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] }
+    "name": "create_family_space_item",
+    "description": "Create an Item (task/doc/note/event/contact) in a specific Space. Use for household to-dos, documents, events and contacts the family shares. Resolve the target Space with list_family_spaces first — do NOT guess a space_id. For dated tasks pass deadline_at; for events pass event_date. Not for personal reminders unrelated to a Space.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "space_id": {"type": "string", "description": "Target Space UUID (from list_family_spaces)."},
+        "kind": {"type": "string", "enum": ["task", "doc", "note", "event", "contact"]},
+        "title": {"type": "string", "description": "Short title (<=200 chars)."},
+        "deadline_at": {"type": "string", "format": "date-time", "description": "ISO-8601, for kind=task."}
+      },
+      "required": ["space_id", "kind", "title"],
+      "additionalProperties": false
+    },
+    "is_write": true,
+    "routing_hints": ["family", "add task", "create", "добавь"],
+    "example": {"space_id": "…", "kind": "task", "title": "Book the vet"}
   }
 ]
 ```
 
-Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manaurum repo.
+Note the shape of that description: a positive trigger ("use for household to-dos…"), an ordering constraint ("resolve the Space first — do NOT guess"), and a negative ("not for personal reminders"). A description like *"Creates an item."* parses fine and routes badly.
+
+`routing_hints` are informational keywords; `example` is surfaced to the model as a usage hint. Both are optional and both help.
+
+> **`is_write` is declarative only — the runtime ignores it for hosted apps.** Declare it truthfully anyway (it is the honest statement of intent, and it is what the field will mean once the gap closes), but do not build on it. There is no `is_write` column on `agent_capabilities`, the deploy-time sync never reads the key, and at request time the runtime *derives* it: `dispatch == "backend"` — which is what every v2 hosted app gets, since the manifest cannot set `dispatch` — forces `is_write=True` for **every** capability, readers included. Two consequences today: your read-only capabilities still take the write path (AgentAction rows, confirmation, idempotency dedup), and they are excluded from cross-app insight, which filters on `not is_write`. Tracked as MAN-1425.
+
+#### The handler side
+
+`/agent/<name>` is dispatched **straight to your container** and is *not* a gateway route, so it needs no `runtime.api_routes` entry — but see the warning above: it is still exposed on your public hostname. Serve it with the same JWT verification your `auth: "user"` routes use:
+
+```python
+# src/agent_routes.py — one router, one handler per manifest entry.
+router = APIRouter(prefix="/agent", tags=["agent"])
+
+def _ok(output):     return {"ok": True, "output": output}
+def _fail(error):    return {"ok": False, "error": error[:300]}
+
+class CreateItemInput(BaseModel):          # mirrors input_schema; the runtime
+    space_id: str                          # validates against the manifest, but
+    kind: str                              # re-validate here — never trust shape.
+    title: str = Field(min_length=1, max_length=500)
+
+@router.post("/create_family_space_item")
+async def create_item(
+    data: CreateItemInput,
+    claims: UserContextClaims = Depends(auth_claims),   # same verifier as /api/*
+    db: asyncpg.Connection = Depends(get_db),
+):
+    # A valid user_context JWT is AUTHENTICATION, not AUTHORIZATION. The
+    # runtime will happily mint one for any installed user, so every
+    # handler still runs its own in-container access guard.
+    await assert_membership(db, data.space_id, claims.user_id)
+    ...
+    return _ok({"id": str(new_id)})
+```
+
+Then mount it — `app.include_router(agent_routes.router)` — and remember the handlers hold no LLM: they are plain reads and writes over your own data. The model already decided what to call; your job is to do it safely.
+
+Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manaurum repo. Working example: `family-space-v2/src/agent_routes.py` — see `references/reference-apps.md`.
 
 ---
 
@@ -166,7 +225,7 @@ The platform builds a Docker image from your `Dockerfile`, runs it as a Swarm se
 Required files in your project:
 
 - `Dockerfile` at the build context root
-- `manifest_v2.json`
+- `manifest.json`
 - Whatever else your `Dockerfile` `COPY`s in
 
 Env vars the platform sets on every task:

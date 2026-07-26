@@ -24,3 +24,8 @@ build/
 
 # Applied by Core per tenant, never needed inside the image.
 migrations/
+
+# Tests run on your machine and in CI, never in the runtime image.
+tests/
+pytest.ini
+requirements-dev.txt

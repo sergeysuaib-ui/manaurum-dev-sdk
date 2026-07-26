@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.5.0.** Skills that teach Claude Code to build and ship apps for
+**Version 2.6.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -28,13 +28,14 @@ gateway mints a 60-second RS256 JWT and injects it as `X-Manaurum-User-Context`.
 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`. The end user's own session token is never
 forwarded to you, and you must never forward the user context onward to the gateway.
 
-**Three rules that cost first-timers the most time:**
+**Four rules that cost first-timers the most time:**
 
 | Rule | What happens if you miss it |
 |---|---|
 | `/api/*` is **default-deny**. Every API path must be listed in `manifest.runtime.api_routes`. | The gateway answers `404 route_not_declared` and the request never reaches your container. Looks like a backend bug with silent logs. |
 | Traefik targets `manifest.runtime.port` (default **80**). `EXPOSE` is never parsed. | Green deploy, then `502 upstream_unreachable` on every request. |
 | The desktop shell requires the `manaurum:ready` handshake within 10 s. | The standalone URL works fine, so you notice nothing — until someone opens the app on the desktop and gets "App is not responding". |
+| `/agent/*` bypasses the gateway but **not the network**. Verify the user-context JWT in every handler. | `<slug>.apps.manaurum.com` is Traefik straight to your container, so an unauthenticated POST to `/agent/<name>` reaches your code. Skipping the check because "only the runtime calls this" ships an open endpoint. |
 
 **Who can install it** is `manifest.visibility.mode`: `private` (default), `public`, or
 `allow_list` (with `visibility.tenants`). It is enforced when a tenant installs, not by
@@ -83,16 +84,26 @@ manaurum auth login --token mna_...
 ## Quick start
 
 ```bash
-manaurum app init my-app        # the same starter as templates/v2-starter
-cd my-app
+cp -r templates/v2-starter my-app && cd my-app
+grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
 manaurum app validate           # manifest against the v2 schema
 manaurum app deploy             # 202 + poll; prints the live URL when it activates
 ```
 
-The scaffold deploys unchanged. It is not a hello-world stub: it serves a UI that answers
-the shell handshake, verifies a real user-context JWT on `/api/me`, and does a real
-key-value round trip through the capability gateway on `/api/notes`. Read its `README.md`,
-then replace the note-taking parts with your own.
+Copy the starter rather than running `manaurum app init`. The CLI's scaffold is being
+rebuilt to this same shape (MAN-1397), but that rewrite is not in any released wheel yet —
+and `pip install manaurum-cli` still 404s on PyPI (MAN-1385), so the wheel you can actually
+install is `cli-v0.2.0`, built before it. This section points at the CLI once a release
+carries the new scaffold; until then the directory below is the one that is tested.
+
+The starter deploys unchanged. It is not a hello-world stub: it serves a UI that answers
+the shell handshake, verifies a real user-context JWT on `/api/me`, does a real key-value
+round trip through the capability gateway on `/api/notes`, and exposes two
+`agent_capabilities` so the OS Assistant can read and write on the user's behalf. Its
+19 tests run offline — no database, no account, no network — and they cover the wiring,
+not just the pieces: remove an auth dependency from a route and a test goes red. Read its
+`README.md`, then replace the note-taking parts with your own.
 
 Useful afterwards:
 
@@ -120,13 +131,18 @@ Build a ManAurum app that tracks my team's on-call rota and reminds people the d
 ```
 
 Deep references live in `skills/manaurum-app/references/`: the capability catalogue, the
-manifest spec, the v2 platform model, the client SDK, publishing, and design.
+manifest spec, the v2 platform model, the client SDK, publishing, and design. Start with
+`reference-apps.md` — three production apps at different sizes, with the load-bearing
+parts inlined. Reading one real app beats reading four pages about apps.
 
 ## Templates
 
-* `templates/v2-starter/` — the bundle above, byte-identical to `manaurum app init`
-  output. Regenerate it with that command rather than hand-editing, so the two channels
-  cannot drift.
+* `templates/v2-starter/` — the bundle above, and the only complete v2 scaffold that
+  exists today. It is deliberately shaped like a real app: `auth.py` + `capability.py` as
+  shared infrastructure, `main.py` + `agent_routes.py` as the two surfaces on top, and
+  `tests/`. Apps grow by adding surfaces, not by growing one file. It is **not** identical
+  to `manaurum app init` output; when the CLI catches up (MAN-1393) this directory goes
+  away in favour of it.
 * `templates/legacy-v1/` — the old iframe-bundle artifacts. Kept only for apps that
   already ship on v1; do not start anything new from them.
 

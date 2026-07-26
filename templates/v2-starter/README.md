@@ -18,16 +18,53 @@ and a note box that survives a reload.
 my-app/
 ├── manifest.json        # what the platform is allowed to do for you
 ├── Dockerfile           # python:3.12-slim + uvicorn on :8000
-├── .dockerignore        # keeps .env and friends out of the image
+├── .dockerignore        # keeps .env, tests and friends out of the image
 ├── requirements.txt     # pinned runtime deps
-├── migrations/          # SQL, applied per tenant by Core (empty: see Storage)
-└── src/
-    ├── main.py          # /healthz, /api/me, /api/notes, static serving
-    └── static/
-        └── index.html   # the UI, incl. the manaurum:ready handshake
+├── requirements-dev.txt # pytest — not installed into the image
+├── pytest.ini
+├── src/
+│   ├── auth.py          # verify the gateway's user_context JWT
+│   ├── capability.py    # call the capability gateway (os.kv here)
+│   ├── main.py          # /healthz, /api/me, /api/notes, static serving
+│   ├── agent_routes.py  # /agent/* — the OS Assistant surface
+│   └── static/
+│       └── index.html   # the UI, incl. the manaurum:ready handshake
+└── tests/
+    ├── conftest.py      # the user_context JWT fixture + a fake os.kv
+    ├── test_auth.py     # the verifier, incl. every way it can be wrong
+    ├── test_agent.py    # the handlers: identity comes from claims, never the body
+    └── test_routes.py   # the wiring: real HTTP, so an open route fails a test
 ```
 
-## The four things that make it work
+There is no `migrations/` directory: this starter persists through `os.kv`
+(see § Storage), and the platform rejects a non-`.sql` file sitting in
+`migrations/`, so there is no placeholder that could hold the folder open.
+Create it when you have your first `.sql` file and not before.
+
+`auth.py` and `capability.py` are shared infrastructure; `main.py` and
+`agent_routes.py` are the two surfaces built on them. Apps grow by adding
+surfaces over that same thin core, not by growing one file.
+
+## Run the tests first
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest                      # 19 passed
+```
+
+They need no database, no Manaurum account and no network: `conftest.py`
+generates a throwaway RSA keypair and signs its own `user_context` tokens,
+so the auth path is testable offline. Break something on purpose and watch
+them fail — that is the fastest way to learn the contract.
+
+Try these three, because each one is a way a real v2 app has shipped broken:
+make `note_key()` return a constant, drop `Depends(auth_claims)` from an
+`/agent/*` handler, drop it from a route in `main.py`. All three go red.
+That last pair is why `test_routes.py` exists at all: unit-testing the
+verifier and unit-testing the handler both stay green when the two are no
+longer wired together, and the route is open in production.
+
+## The five things that make it work
 
 **1. The port is a contract between two files.** The gateway proxies to
 `manifest.runtime.port` (80 when the field is absent). `EXPOSE` in the
@@ -53,21 +90,33 @@ the app inside the Manaurum desktop before calling a deploy good.
 **4. Identity comes from a header, not a token.** On an `auth: "user"`
 route the gateway mints a 60-second RS256 JWT and injects it as
 `X-Manaurum-User-Context`. Your container verifies it against
-`CORE_USER_CONTEXT_PUBLIC_KEY_PEM` (see `current_user()` in
-`src/main.py`). The end user's own bearer never reaches you.
+`CORE_USER_CONTEXT_PUBLIC_KEY_PEM` (see `verify_user_context()` in
+`src/auth.py`). The end user's own bearer never reaches you.
+
+**5. `agent_capabilities` is what makes the app part of the OS.** The two
+entries in `manifest.json` are served by `src/agent_routes.py` and let the
+OS Assistant read and write your note on the user's behalf. Declare none
+and the Assistant cannot see the app at all — and rather than saying so it
+will answer from guesswork. Dispatch goes **straight to the container** at
+`POST /agent/<name>`, so those paths must **not** be listed in
+`runtime.api_routes`. That skips the *gateway*, not the network — the path is
+still served on your public hostname, so the JWT check in every handler is the
+only thing protecting it. And a valid JWT is authentication, not
+authorization: every handler still scopes to `claims.user_id`.
 
 ## Storage
 
 This starter declares `data: {"none": true}` — no managed Postgres
 schema, no `DATABASE_URL`, and the deploy needs no DDL-capable DSN on
 Core. It persists through the `os.kv` capability instead, which is why
-`migrations/` is empty.
+there is no `migrations/` directory at all.
 
-Want a real per-tenant schema? Delete the `data` block, put
-additive-only SQL in `migrations/`, set `migrate_command` in the
-manifest, and connect with `DATABASE_URL` (the platform sets the
-`search_path` to your tenant's schema for you). Validate before you
-push:
+Want a real per-tenant schema? Delete the `data` block, create
+`migrations/` and put additive-only SQL in it (`.sql` files only — any
+other file directly inside that directory fails the deploy), set
+`migrate_command` in the manifest, and connect with `DATABASE_URL` (the
+platform sets the `search_path` to your tenant's schema for you).
+Validate before you push:
 
 ```bash
 manaurum app validate-migration migrations/0001_init.sql
@@ -86,7 +135,7 @@ X-Manaurum-App-Id:    UUID for os.kv.* and os.events.emit, slug otherwise
 
 Every one of those values is injected into the container at deploy —
 never bake a credential into the image. `MANAURUM_APP_ID` is already
-the UUID, which is what `call_capability()` in `src/main.py` sends.
+the UUID, which is what `call_capability()` in `src/capability.py` sends.
 
 Add a capability by listing it in `requires_capabilities` and
 redeploying; a tenant admin then grants it on the install. Until they

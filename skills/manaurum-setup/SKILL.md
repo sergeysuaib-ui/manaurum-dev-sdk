@@ -13,26 +13,61 @@ description: Scaffold a new ManAurum OS app project. As of 2026-05, the default 
 
 ## v2 setup (default)
 
-### Project structure
+### Start from the working starter, not from an empty directory
+
+`templates/v2-starter/` in this plugin is a complete, deployable v2 app —
+FastAPI on :8000, a `manaurum:ready`-answering UI, one `auth: "user"` route,
+a real capability call, two agent capabilities and a green test suite. **Copy
+it and rename**, rather than assembling files from the snippets below:
+
+```bash
+cp -r <plugin>/templates/v2-starter my-app && cd my-app
+grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'   # app_id, title, docs
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
+```
 
 ```
 my-app/
-├── manifest_v2.json    ← REQUIRED — v2 manifest schema
-├── Dockerfile          ← REQUIRED — produces the runtime image
-├── src/                ← your app (the only thing the Dockerfile COPYs)
-│   └── index.html      ← (or whatever your runtime serves)
-├── migrations/         ← Optional — plain *.sql only, run once per (app, tenant)
-├── .dockerignore       ← Keeps .env* / .git out of the build context
-├── deploy.sh           ← Optional CLI helper (see /manaurum-deploy)
-├── .env.manaurum       ← Deploy-time token (gitignored) — never read by your container
+├── manifest.json        ← REQUIRED — v2 manifest schema
+├── Dockerfile           ← REQUIRED — produces the runtime image
+├── requirements.txt     ← runtime deps (image)
+├── requirements-dev.txt ← test deps (never in the image)
+├── pytest.ini
+├── src/                 ← your app (the only thing the Dockerfile COPYs)
+│   ├── auth.py          ← verify the gateway's user_context JWT
+│   ├── capability.py    ← call the capability gateway
+│   ├── main.py          ← the HTTP surface: /healthz, /api/*, static
+│   ├── agent_routes.py  ← /agent/* — the OS Assistant surface
+│   └── static/index.html
+├── tests/               ← conftest mints user_context JWTs offline
+│   ├── conftest.py  test_auth.py  test_agent.py  test_routes.py
+├── migrations/          ← Optional — plain *.sql only, run once per (app, tenant).
+│                           Not in the starter: a non-*.sql file here fails the
+│                           deploy, so there is no placeholder to hold it open.
+├── .dockerignore        ← Keeps .env* / .git / tests out of the build context
+├── deploy.sh            ← Optional CLI helper (see /manaurum-deploy)
+├── .env.manaurum        ← Deploy-time token (gitignored) — never read by your container
 └── .gitignore
 ```
+
+`auth.py` + `capability.py` are shared infrastructure; `main.py` +
+`agent_routes.py` are surfaces on top. Grow by adding surfaces, not by growing
+one file — see `manaurum-app/references/reference-apps.md` for how that scales
+to a real 77-file app.
+
+The rest of this page explains *why* each piece is shaped the way it is, and
+covers the non-Python runtimes the starter does not. **Where a snippet below
+disagrees with `templates/v2-starter/`, the starter is right** — it is the
+artifact that gets deployed and tested.
 
 `migrations/` is SQL-only and flat: a non-`.sql` file sitting directly in it fails the
 deploy, and subdirectories are silently ignored. The DDL is parsed and additive-only —
 see `manaurum-app/SKILL.md` before you write one. Omitting the directory entirely is fine.
 
-### Starter `manifest_v2.json` (minimal)
+### `manifest.json` — the required keys
+
+The copyable one is `templates/v2-starter/manifest.json`. This is the same
+shape with the noise removed, so you can see what is actually required:
 
 ```json
 {
@@ -43,7 +78,7 @@ see `manaurum-app/SKILL.md` before you write one. Omitting the directory entirel
   "version": "1.0.0",
   "runtime": {
     "mode": "hosted",
-    "port": 80,
+    "port": 8000,
     "api_routes": [
       { "path": "/api/items/*", "auth": "user" }
     ],
@@ -56,11 +91,31 @@ see `manaurum-app/SKILL.md` before you write one. Omitting the directory entirel
     "entry_point": "/index.html",
     "icon": "📦"
   },
+  "agent_capabilities": [
+    {
+      "name": "list_items",
+      "description": "List the user's items in My App. Use when the user asks what is in the app, or to find an item's id before editing it. Returns id, title and created date, newest first. Not for creating anything.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 25}},
+        "additionalProperties": false
+      },
+      "routing_hints": ["items", "list", "what do I have"]
+    }
+  ],
   "visibility": {
     "mode": "private"
   }
 }
 ```
+
+**Do not ship without at least one `agent_capabilities` entry.** It is what
+makes the app reachable by the OS Assistant; an app that declares none is
+invisible to it, and the Assistant answers about it from guesswork instead of
+saying it cannot see it. Serve each entry at `POST /agent/<name>` — see
+`src/agent_routes.py` in the starter and `references/v2-platform.md`
+§ `agent_capabilities[]`. Those paths are **not** gateway routes and must never
+appear in `runtime.api_routes`.
 
 Validation rules:
 
@@ -104,7 +159,14 @@ Validation rules:
 
 To use AI / declare a dedicated DB schema / migrations, see `manaurum-app/SKILL.md` and `references/v2-platform.md`.
 
-### Starter `Dockerfile` (static page on nginx)
+### `Dockerfile` — pick the one matching your runtime
+
+The starter ships the Python one (`templates/v2-starter/Dockerfile`), fully
+commented and running as a non-root user. The variants below are for the
+runtimes it does not cover. Whichever you pick, the port in `CMD` and
+`manifest.runtime.port` must be the same number.
+
+For a **static** site (nginx on 80 → set `"runtime": {"port": 80}`):
 
 ```dockerfile
 FROM nginx:1.27-alpine
@@ -116,7 +178,9 @@ HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
   CMD wget -qO- http://localhost/ >/dev/null || exit 1
 ```
 
-nginx listens on 80, which matches `"port": 80` in the starter manifest.
+A static image can serve a UI but cannot serve `/api/*` routes or
+`/agent/<name>` handlers — so an app built this way cannot be reached by the
+OS Assistant. Use it only for genuinely static apps.
 
 For a Node app (listens on 8080 → set `"runtime": {"port": 8080}`):
 
@@ -132,7 +196,8 @@ ENV HOST=0.0.0.0 PORT=8080
 CMD ["node", "src/server.js"]
 ```
 
-For a Python (FastAPI) app (listens on 8000 → set `"runtime": {"port": 8000}`):
+For a Python (FastAPI) app — **this is what the starter uses**; take its
+version, which also adds a non-root user (listens on 8000 → `"port": 8000`):
 
 ```dockerfile
 FROM python:3.12-slim
@@ -150,7 +215,10 @@ routes to `manifest.runtime.port` (default 80). The three numbers that must agre
 server bound to `127.0.0.1` starts fine, passes its own healthcheck, and 502s from
 outside the container.
 
-### Starter `.dockerignore`
+### `.dockerignore`
+
+The starter's is the one to copy (it also drops `tests/`, `*.pem` and `*.key`).
+The irreducible minimum is:
 
 ```
 .env*
@@ -164,42 +232,18 @@ straight into Docker's build endpoint, which does not apply `.dockerignore` serv
 So `.dockerignore` protects your **local** `docker build`, and the narrow `COPY src/`
 above is what protects the deployed image. Keep real secrets outside the app directory.
 
-### Starter `src/index.html` (for a static `nginx` app)
+### The `manaurum:ready` handshake
 
-The `manaurum:ready` reply is **mandatory, v2 included** — scaffold it in, never bolt it
-on later. When the desktop opens your app it loads your URL in an iframe and posts
+Copy it from `templates/v2-starter/src/static/index.html`, which answers it inline
+in `<head>` before anything else loads. Do not retype it from memory.
+
+The reply is **mandatory, v2 included** — scaffold it in, never bolt it on later.
+When the desktop opens your app it loads your URL in an iframe and posts
 `manaurum:init`; if you do not post `manaurum:ready` back within 10 seconds the shell
 replaces your UI with "App is not responding". The trap: your app still works when you
 open `https://<slug>.apps.manaurum.com` directly, so the failure is invisible until
 someone opens it on the desktop — which is where your users are. The first-party app
 Libi shipped broken for exactly this reason (MAN-1321).
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My App</title>
-  <!-- REQUIRED — replies manaurum:ready to the shell's manaurum:init.
-       Inline in <head> so the listener exists before any deferred bundle loads. -->
-  <script>
-    window.addEventListener('message', function (e) {
-      if (e.data && e.data.type === 'manaurum:init') {
-        window.parent.postMessage({ type: 'manaurum:ready' }, '*');
-      }
-    });
-  </script>
-  <style>
-    body { font-family: -apple-system, sans-serif; padding: 24px; }
-  </style>
-</head>
-<body>
-  <h1>My App</h1>
-  <p>Running on Manaurum Platform v2.</p>
-</body>
-</html>
-```
 
 For an SPA, keep that inline listener in `index.html` **and** post one proactive
 `manaurum:ready` after mount — the shell tolerates both, and the inline copy covers the
@@ -283,6 +327,29 @@ See `manaurum-deploy/SKILL.md` § "deploy.sh template (v2)" for the canonical ve
 
 ### Local testing
 
+**Run the test suite first — it is the fastest loop you have.** The starter's
+`tests/` need no database, no Manaurum account and no network: `conftest.py`
+generates a throwaway RSA keypair and signs its own `user_context` tokens, so
+the JWT-verification path and the `/agent/*` handlers are fully testable
+offline.
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest                          # 19 passed
+```
+
+Then run the app itself:
+
+```bash
+uvicorn src.main:app --port 8000
+curl localhost:8000/healthz                 # {"status":"ok",…}
+curl -i localhost:8000/api/me               # 401 missing_user_context — correct
+```
+
+That 401 is the right answer, not a failure: outside the gateway nothing
+injects `X-Manaurum-User-Context`, and a route that answered 200 there would
+be one that trusts unauthenticated callers in production.
+
 For static apps, just `python -m http.server 8000` inside `src/` and open `http://localhost:8000`.
 
 For Dockerized apps, build and run locally:
@@ -314,7 +381,7 @@ the only test that covers the shell contract.
 2. Deploy with `/manaurum-deploy`. The deploy endpoint is **asynchronous** — it returns a
    job id, not a result; poll until `succeeded` or `failed`.
 3. Hit `https://<slug>.apps.manaurum.com` **and** open the app as a desktop window.
-4. Iterate: bump `manifest_v2.json.version`, redeploy. Same URL, new version.
+4. Iterate: bump `manifest.json.version`, redeploy. Same URL, new version.
 
 ---
 
