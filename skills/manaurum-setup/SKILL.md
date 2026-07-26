@@ -23,7 +23,7 @@ it and rename**, rather than assembling files from the snippets below:
 ```bash
 cp -r <plugin>/templates/v2-starter my-app && cd my-app
 grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'   # app_id, title, docs
-pip install -r requirements.txt -r requirements-dev.txt && pytest   # 13 passed
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
 ```
 
 ```
@@ -40,8 +40,10 @@ my-app/
 │   ├── agent_routes.py  ← /agent/* — the OS Assistant surface
 │   └── static/index.html
 ├── tests/               ← conftest mints user_context JWTs offline
-│   ├── conftest.py  test_auth.py  test_agent.py
-├── migrations/          ← Optional — plain *.sql only, run once per (app, tenant)
+│   ├── conftest.py  test_auth.py  test_agent.py  test_routes.py
+├── migrations/          ← Optional — plain *.sql only, run once per (app, tenant).
+│                           Not in the starter: a non-*.sql file here fails the
+│                           deploy, so there is no placeholder to hold it open.
 ├── .dockerignore        ← Keeps .env* / .git / tests out of the build context
 ├── deploy.sh            ← Optional CLI helper (see /manaurum-deploy)
 ├── .env.manaurum        ← Deploy-time token (gitignored) — never read by your container
@@ -333,7 +335,7 @@ offline.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                          # 13 passed
+pytest                          # 19 passed
 ```
 
 Then run the app itself:

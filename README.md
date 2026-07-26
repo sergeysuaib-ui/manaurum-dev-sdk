@@ -86,7 +86,7 @@ manaurum auth login --token mna_...
 ```bash
 cp -r templates/v2-starter my-app && cd my-app
 grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'
-pip install -r requirements.txt -r requirements-dev.txt && pytest   # 13 passed
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
 manaurum app validate           # manifest against the v2 schema
 manaurum app deploy             # 202 + poll; prints the live URL when it activates
 ```
@@ -101,8 +101,9 @@ The starter deploys unchanged. It is not a hello-world stub: it serves a UI that
 the shell handshake, verifies a real user-context JWT on `/api/me`, does a real key-value
 round trip through the capability gateway on `/api/notes`, and exposes two
 `agent_capabilities` so the OS Assistant can read and write on the user's behalf. Its
-13 tests run offline — no database, no account, no network. Read its `README.md`, then
-replace the note-taking parts with your own.
+19 tests run offline — no database, no account, no network — and they cover the wiring,
+not just the pieces: remove an auth dependency from a route and a test goes red. Read its
+`README.md`, then replace the note-taking parts with your own.
 
 Useful afterwards:
 

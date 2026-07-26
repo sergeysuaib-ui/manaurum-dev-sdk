@@ -46,7 +46,7 @@ is where the auth boundary falls. Both files touch shifts. Draw your module
 lines where your trust boundaries are, and the auth story reads itself.
 
 That shows up directly in the manifest — 18 `auth: "user"` routes under
-`/api/admin/*`, 12 `auth: "anonymous"` routes under `/api/kiosk/*`:
+`/api/admin/*`, 11 `auth: "anonymous"` routes under `/api/kiosk/*`:
 
 ```json
 {"path": "/api/admin/templates/*", "auth": "user"},

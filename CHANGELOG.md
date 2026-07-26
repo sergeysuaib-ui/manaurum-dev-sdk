@@ -38,9 +38,18 @@ Three concrete costs, all found by building an app with the 2.5.0 skill and depl
   argument lets the model read somebody else's data by passing a different one.
 - **A test suite that runs offline** — `tests/conftest.py` generates a throwaway RSA
   keypair and signs its own `user_context` tokens, so JWT verification and the agent
-  handlers are testable with no database, no account and no network. 13 tests, including
+  handlers are testable with no database, no account and no network. 19 tests, including
   every way a token can be wrong and one that fails if a user can read another's note.
   Testing had **zero** occurrences in the plugin before this release.
+- **`tests/test_routes.py` covers the wiring, not just the pieces.** Unit-testing the
+  verifier and unit-testing a handler both stay green when the two stop being wired
+  together — and the route is then open on a public hostname. So these drive real HTTP
+  through the app with `TestClient` (no database, no new dependency: `httpx` is already a
+  runtime dep). Three mutations that a 13-test suite waved through now go red: making
+  `note_key()` return a constant, dropping `Depends(auth_claims)` from an `/agent/*`
+  handler, and dropping it from a route in `main.py`. Added in review — a starter whose
+  green suite implies its security-critical lines are covered teaches the wrong lesson
+  exactly where this release claims to teach the right one.
 - **`skills/manaurum-app/references/reference-apps.md`** (MAN-1394) — the reference ladder.
   `shift-checklist` (22 files) as the one to read whole, `family-space-v2` (77 files) as the
   ceiling, `libi` as the testing exemplar, each with the load-bearing excerpt inlined so the
@@ -74,6 +83,11 @@ Three concrete costs, all found by building an app with the 2.5.0 skill and depl
   favour of pointing at the starter's; the lesson about the handshake stayed.
 - Manifest examples use `"port": 8000` (matching the starter and every hosted app in
   production) instead of 80, and carry an `agent_capabilities` entry.
+- **The starter no longer draws a `migrations/` directory it does not ship.** Git cannot
+  track an empty directory, and the obvious fix is a trap: `migrations/` is SQL-only, so a
+  `.gitkeep` sitting in it raises `BundleMigrationError: non-SQL file in migrations/` and
+  **fails the deploy** — breaking the starter's one promise, that it deploys green as-is.
+  The README says so instead, and § Storage already covered when to create the directory.
 - **`README.md`** — the "three rules" table gained the `/agent/*` one; the quick start
   copies the starter instead of running `manaurum app init`, and says why; and the claim
   that the starter is "byte-identical to `manaurum app init` output" is retracted, because

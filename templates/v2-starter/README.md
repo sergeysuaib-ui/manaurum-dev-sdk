@@ -22,7 +22,6 @@ my-app/
 ├── requirements.txt     # pinned runtime deps
 ├── requirements-dev.txt # pytest — not installed into the image
 ├── pytest.ini
-├── migrations/          # SQL, applied per tenant by Core (empty: see Storage)
 ├── src/
 │   ├── auth.py          # verify the gateway's user_context JWT
 │   ├── capability.py    # call the capability gateway (os.kv here)
@@ -33,8 +32,14 @@ my-app/
 └── tests/
     ├── conftest.py      # the user_context JWT fixture + a fake os.kv
     ├── test_auth.py     # the verifier, incl. every way it can be wrong
-    └── test_agent.py    # the agent capabilities, incl. cross-user isolation
+    ├── test_agent.py    # the handlers: identity comes from claims, never the body
+    └── test_routes.py   # the wiring: real HTTP, so an open route fails a test
 ```
+
+There is no `migrations/` directory: this starter persists through `os.kv`
+(see § Storage), and the platform rejects a non-`.sql` file sitting in
+`migrations/`, so there is no placeholder that could hold the folder open.
+Create it when you have your first `.sql` file and not before.
 
 `auth.py` and `capability.py` are shared infrastructure; `main.py` and
 `agent_routes.py` are the two surfaces built on them. Apps grow by adding
@@ -44,13 +49,20 @@ surfaces over that same thin core, not by growing one file.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                      # 13 passed
+pytest                      # 19 passed
 ```
 
 They need no database, no Manaurum account and no network: `conftest.py`
 generates a throwaway RSA keypair and signs its own `user_context` tokens,
 so the auth path is testable offline. Break something on purpose and watch
 them fail — that is the fastest way to learn the contract.
+
+Try these three, because each one is a way a real v2 app has shipped broken:
+make `note_key()` return a constant, drop `Depends(auth_claims)` from an
+`/agent/*` handler, drop it from a route in `main.py`. All three go red.
+That last pair is why `test_routes.py` exists at all: unit-testing the
+verifier and unit-testing the handler both stay green when the two are no
+longer wired together, and the route is open in production.
 
 ## The five things that make it work
 
@@ -97,13 +109,14 @@ authorization: every handler still scopes to `claims.user_id`.
 This starter declares `data: {"none": true}` — no managed Postgres
 schema, no `DATABASE_URL`, and the deploy needs no DDL-capable DSN on
 Core. It persists through the `os.kv` capability instead, which is why
-`migrations/` is empty.
+there is no `migrations/` directory at all.
 
-Want a real per-tenant schema? Delete the `data` block, put
-additive-only SQL in `migrations/`, set `migrate_command` in the
-manifest, and connect with `DATABASE_URL` (the platform sets the
-`search_path` to your tenant's schema for you). Validate before you
-push:
+Want a real per-tenant schema? Delete the `data` block, create
+`migrations/` and put additive-only SQL in it (`.sql` files only — any
+other file directly inside that directory fails the deploy), set
+`migrate_command` in the manifest, and connect with `DATABASE_URL` (the
+platform sets the `search_path` to your tenant's schema for you).
+Validate before you push:
 
 ```bash
 manaurum app validate-migration migrations/0001_init.sql
