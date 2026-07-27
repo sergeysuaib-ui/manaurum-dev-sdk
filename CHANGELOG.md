@@ -102,6 +102,33 @@ Three findings worth keeping, all verified against the monorepo rather than assu
   payload of `{"theme": "xp"}` the shell never sends, and `app.getTheme()` was documented
   as possibly returning `"xp"`.
 
+Added in review, after running the skill from blank directories five times:
+
+- **Template paths now carry the `<plugin>/` root marker.** `manaurum-app/SKILL.md`,
+  `discovery.md` and `design.md` pointed at a bare `templates/v2-starter/…`, and in one run
+  out of two the agent resolved that against the *skill* directory, got
+  `File does not exist`, and silently wrote its own `app.css`, its own `BRIEF.md` and no
+  tests at all — justifying the missing suite with "the reference fixture needs a real
+  Postgres", which the starter disproves (24 pass with no Postgres and no Docker).
+  `manaurum-setup` never had the problem because it already wrote
+  `cp -r <plugin>/templates/v2-starter`. The three files now match it, and the instruction
+  says to resolve the root and retry rather than fall back to writing the file.
+- **The `[hidden]` guard is in `design.md` too, not only inside `app.css`.** An agent that
+  writes its own stylesheet — which is correct and expected when the app is not Python —
+  never sees the rule. Observed twice out of five runs: both re-derived sheets patched
+  `.modal-backdrop[hidden]` by hand and without `!important`, which is exactly the
+  case-by-case vigilance the global rule exists to replace.
+- **`design.md` now states the stance on sidebars, tab bars and toggle switches.** All
+  three had sections on `origin/main`; `app.css` deliberately ships none of them, but
+  nothing said so, which read as an omission rather than a decision.
+- **The two `legacy-v1` templates say what does not work.** Their `onAppearanceChange` /
+  `onAccentChange` hooks are correct, but the shipped v1 SDK never fires them — its
+  `manaurum:theme-change` handler aliases its own context and compares each value against
+  the copy it just overwrote, so the guard is always false (**MAN-1450**). Verified against
+  the live `manaurum.js`: init applies, every subsequent change is dropped. Still a strict
+  improvement — before this release neither template read `ctx.appearance` at all — but the
+  comment no longer promises live updates the platform does not deliver.
+
 ### Not changed
 
 - **v1 is still supported and its SDK calls still appear in the Legacy v1 sections.** That

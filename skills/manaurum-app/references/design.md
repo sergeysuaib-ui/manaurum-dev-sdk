@@ -10,9 +10,11 @@ your layout, and nothing of ours will save you from an unstyled one.
 
 ## Start from the artifact, not from this page
 
-`templates/v2-starter/src/static/app.css` is a complete stylesheet for a
+`<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
 Manaurum app: tokens, layout, cards, lists, forms, buttons, badges, empty
-states, skeletons, mobile. Copy it and change values at the top.
+states, skeletons, mobile. Copy it and change values at the top. (`<plugin>` is
+the plugin root — the directory with `skills/` and `templates/` side by side. If
+the read fails, find the root and retry rather than writing your own.)
 
 **Do not hand-roll a design from the notes below.** The notes exist to tell you
 *when* to reach for each pattern and which mistakes are expensive. The CSS is
@@ -118,6 +120,16 @@ Most apps do not need a novel layout. This shape covers almost all of them:
   dark it inverts (cards lighter than the page). Getting that backwards is why
   most dark themes look flat.
 
+**No sidebar, no tab bar, no toggle switches.** `app.css` deliberately ships
+none of the three, and this is the reason: an app window is not a browser window.
+It is often 900px wide and sits inside a desktop that already has its own
+navigation, so a sidebar spends a third of the width repeating what the OS
+already told the user. If a page needs sections, stack them as cards; if it
+needs two views, use two `.btn-ghost`s and swap the content; if it needs a
+boolean, use a checkbox with a `.field-label`. Reach for a sidebar only when a
+list genuinely drives a detail pane, and then build it from `.list` + `.row`
+rather than inventing a component.
+
 ## Patterns, and when to use them
 
 Classes are in `app.css`; this is the judgement that goes with them.
@@ -186,6 +198,17 @@ full URL, or an absolute `/api/catalog/media/...` path. A relative path like
 Omit it and you get a clean generic placeholder, which beats a broken one.
 
 ## Do not
+
+- **Do not rely on the bare `hidden` attribute to hide anything.** `[hidden]` is
+  only `display: none` in the *browser's* stylesheet, and any author `display`
+  rule beats it — so `.empty { display: flex }` silently turns `el.hidden = true`
+  into a no-op and your empty state renders stacked on top of the list it was
+  meant to replace. This shipped once. If you write your own stylesheet instead
+  of copying `app.css`, carry this line into it:
+
+  ```css
+  [hidden] { display: none !important; }
+  ```
 
 - **Do not use gold or yellow as your palette, and never `hue-rotate`.** Both
   are banned in Manaurum surfaces. If the user picks the amber accent, that is

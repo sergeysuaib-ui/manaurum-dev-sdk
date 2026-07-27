@@ -40,6 +40,9 @@
       document.getElementById('actions').style.display = 'block';
     });
 
+    // Correct hook, but the shipped v1 SDK never fires it (MAN-1450): its
+    // theme-change handler compares against an alias of the object it just
+    // mutated. Appearance is therefore applied once, at onReady above.
     app.onAppearanceChange(applyAppearance);
   </script>
 </body>

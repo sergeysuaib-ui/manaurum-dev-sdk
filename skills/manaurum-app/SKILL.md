@@ -32,8 +32,8 @@ not find out you guessed wrong until the app exists and is wrong.
 2. **After two or three answers, propose instead of asking.** Say what you think
    the app is and invite correction. People correct a wrong guess far better
    than they specify from nothing. This one move is most of the value.
-3. **Write `BRIEF.md`** — copy `templates/v2-starter/BRIEF.md` — and let them
-   read it. It is the spec, and it is theirs.
+3. **Write `BRIEF.md`** — copy `<plugin>/templates/v2-starter/BRIEF.md` — and let
+   them read it. It is the spec, and it is theirs.
 4. **Derive the build from it**: §3 → the data model, §2 → the screens and
    `api_routes`, §4 → `agent_capabilities`. Keep the derivation visible.
 
@@ -77,11 +77,18 @@ ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
 only tested one — copy its `conftest.py`). Copying the shape of a working app
 beats reconstructing it from this page.
 
-**And copy the look, don't invent it.** `templates/v2-starter/src/static/app.css`
-is a complete stylesheet for a Manaurum app — tokens, layout, lists, forms,
-empty states, skeletons, mobile — and `index.html` shows every pattern in use.
-`references/design.md` explains when to reach for each and which mistakes are
-expensive. An app that works and looks unfinished is one a user abandons.
+**And copy the look, don't invent it.**
+`<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
+Manaurum app — tokens, layout, lists, forms, empty states, skeletons, mobile —
+and `index.html` shows every pattern in use. `references/design.md` explains when
+to reach for each and which mistakes are expensive. An app that works and looks
+unfinished is one a user abandons.
+
+`<plugin>` is the **plugin root** — the directory holding `skills/` and
+`templates/` side by side, not the skill's own folder. If a read of
+`templates/…` fails, resolve the root (`ls` one level up from `skills/`) and
+retry; do **not** fall back to writing the file yourself. Re-deriving the
+stylesheet loses the guards baked into it, and the loss is silent.
 
 ## Required project structure
 

@@ -26,8 +26,10 @@ The fix is six questions and a file.
    nothing. **This is the highest-leverage move in the whole process** — if you
    only do one thing from this page, do this.
 4. **Write `BRIEF.md` before the first line of code.** Copy the template from
-   `templates/v2-starter/BRIEF.md`. It is the spec, they own it, and everything
-   downstream derives from it.
+   `<plugin>/templates/v2-starter/BRIEF.md` — `<plugin>` being the plugin root,
+   which holds `skills/` and `templates/` side by side, not the skill's own
+   folder. It is the spec, they own it, and everything downstream derives from
+   it.
 5. **Never gate on the interview.** If they say "just build me a todo list",
    do not refuse and do not interrogate. Draft the brief yourself, show it, and
    ask **one** confirming question. A product that will not move until a form is

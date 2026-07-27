@@ -23,6 +23,15 @@
     dedicated hooks for exactly these two: onAppearanceChange() and
     onAccentChange(). onThemeChange() also exists, but it only ever hands
     you the constant 'smoothie'.
+
+    KNOWN PLATFORM BUG (MAN-1450): those two hooks are registered below and
+    are correct, but the shipped v1 SDK never fires them. Its
+    `manaurum:theme-change` handler aliases its own context object and then
+    compares the incoming value against the copy it just overwrote, so the
+    guard is always false. Until that is fixed, this app picks up appearance
+    and accent at onReady() and does NOT follow the user switching light/dark
+    while it is open. Nothing to do here — the fix is in
+    frontend/public/sdk/manaurum.js. v2 apps are unaffected.
   -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
