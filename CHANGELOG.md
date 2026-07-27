@@ -1,3 +1,60 @@
+# 2.7.1 — the skill answers to what people actually say (MAN-1453)
+
+### Why
+
+Everything 2.7.0 built sat behind a door that only opened for one word.
+
+Measured on `f004843` (2.7.0), eight sentences a non-developer would open with,
+each in a fresh empty directory with the plugin loaded:
+
+| | skill invoked |
+|---|---|
+| "i need an app to keep track of which of my plants ive watered" | ❌ |
+| "i want something to track my freelance invoices" | ❌ |
+| "can you build me a little tool for logging my gym workouts" | ❌ |
+| "i need a place to write down what my clients ordered" | ❌ |
+| "make me something to remember my kids school stuff" | ❌ |
+| "i want an app for my shop" | ❌ |
+| "build me a simple tool to track who owes me money" | ❌ |
+| "хочу приложение чтобы вести учёт расходов" | ❌ |
+
+**0 of 8.** Say "manaurum" and it fired every time; describe the problem and it
+never did. The agent instead offered ManAurum as option 2 of 3 and recommended a
+plain standalone page — in the "I don't know" run it built a 1095-line local HTML
+file styled with `data-theme`, the one pattern `design.md` prohibits.
+
+So the interview (MAN-1435) and the stylesheet (MAN-1436) were both unreachable
+by the exact first sentence they were built for. The target user cannot program;
+they describe a problem and never think to name a platform.
+
+### Changed
+
+- **`manaurum-app`'s `description` now triggers on intent, not just on the
+  product noun.** It keeps every existing trigger and adds the case that was
+  missing: someone asking for an app or a tool to run part of their life or work
+  without naming a technology, in any language. It also says out loud not to
+  offer a standalone HTML page instead, and lists what still does **not** belong
+  to this skill — work inside an existing codebase, a plain script, or a stack
+  the user already chose.
+
+After, same eight sentences, same conditions: **8 of 8**. A four-sentence control
+group that must NOT match — a Python file-renaming script, a Next.js landing
+page, "explain how OAuth works", and a dark-mode toggle for a React component in
+the current folder — stayed at **0 of 4** before and after.
+
+### Note for anyone editing a `description` again
+
+Two traps cost real time here, both silent:
+
+1. **A double quote inside an unquoted YAML scalar removes the skill from the
+   list entirely.** No parse error, no warning — `manaurum-app` simply stopped
+   existing while `manaurum-deploy` and `manaurum-setup` still loaded. If a skill
+   vanishes, look at the frontmatter punctuation before anything else.
+2. **Do not measure trigger rates with `--disallowedTools Write Edit Bash`.** An
+   agent that cannot write files declines the skill, so the first run of this
+   experiment showed 0 of 8 *after* the fix as well and nearly buried it. Give
+   the run full tool access and kill it on a timeout instead.
+
 # 2.7.0 — ask before you build, and ship something worth looking at (MAN-1435 / MAN-1436)
 
 ### Why
