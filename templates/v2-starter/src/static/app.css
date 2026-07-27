@@ -1,0 +1,524 @@
+/* ============================================================================
+   my-app — stylesheet
+   ----------------------------------------------------------------------------
+   A v2 app is an ISOLATED IFRAME that serves its own CSS. Nothing from the
+   Manaurum shell cascades in: no reset, no fonts, no tokens, no component
+   classes. That is the whole design contract. You are not styling a React
+   island inside our app — you are building a small, self-contained web page
+   that has to look like it belongs next to ours.
+
+   So this file is deliberately complete: it is the design system for your app.
+   Copy it, keep the token names, and restyle by changing values at the top
+   rather than sprinkling one-off colours through your markup.
+
+   WHY THESE TOKEN NAMES. They are the Manaurum OS names, copied verbatim from
+   the OS stylesheet (`frontend/src/app/globals.css`, mirrored publicly at
+   https://manaurum.com/api/library/tokens.css). Keeping the names means that
+   when the shared design system becomes a dependable dependency (MAN-1401),
+   swapping to it is one `<link>` — and none of the rules below have to move.
+
+   Why the values are vendored here instead of `<link>`-ing that public file
+   today: a stylesheet has no graceful degradation. A dynamically-imported SDK
+   can fall back to `fetch()`, but a `<link>` that fails to load leaves your
+   user staring at unstyled HTML. The public file also currently documents a
+   hostname that does not resolve and is missing two of the eight OS accents.
+   Vendoring is the boring, correct choice until that is settled.
+
+   THREE RULES THIS FILE ENCODES, because they are the ones that get missed:
+     1. The OS draws the title bar. Never draw your own.
+     2. Fill the content area. No margin against the window edge.
+     3. Appearance (light/dark) and accent come from the SHELL, not from the
+        browser. `index.html` sets `data-appearance` / `data-accent` on <html>;
+        every colour below reads off those. See the handshake there.
+   ========================================================================= */
+
+/* ── Tokens: light (the default) ─────────────────────────────────────────── */
+
+:root {
+  /* Type. Matches the OS stack. No webfont on purpose: a font that arrives
+     late reflows your app, and one that fails to arrive changes its metrics.
+     If you want the Manaurum brand faces (Hanken Grotesk + Newsreader), self
+     -host them in your own image rather than hot-linking a CDN. */
+  --font-text: "SF Pro Text", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "SF Pro Display", "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-caption: 11px;  --fs-footnote: 12px; --fs-body: 13px;
+  --fs-body-lg: 14px;  --fs-callout: 15px;  --fs-subhead: 17px;
+  --fs-title-3: 20px;  --fs-title-2: 24px;
+
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+  --lh-tight: 1.15;  --lh-snug: 1.3;   --lh-normal: 1.5;
+  --ls-tight: -0.02em;
+
+  /* Spacing. Every gap and pad below comes from this scale — that single
+     habit is most of what makes a layout look designed rather than assembled. */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-button: 8px; --radius-input: 10px; --radius-card: 12px;
+  --radius-panel: 16px; --radius-pill: 9999px;
+
+  --motion-fast: 120ms; --motion-normal: 200ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Surfaces. An app iframe is opaque — it is not composited over the
+     wallpaper — so these are the OS's SOLID window values, not its
+     translucent ones.
+
+     Note the direction: in light the page recedes and cards come forward
+     (white on grey); in dark it inverts (cards lighter than the page).
+     Getting that backwards is the single most common reason a dark theme
+     looks flat. */
+  --app-bg: #f7f7f9;
+  --surface-card: #ffffff;
+  --surface-panel: #eeeef1;
+  --surface-input: #ffffff;
+  --surface-hover: rgba(0, 0, 0, 0.04);
+  --surface-active: rgba(0, 0, 0, 0.08);
+
+  --border-hairline: rgba(0, 0, 0, 0.08);
+  --border-hairline-strong: rgba(0, 0, 0, 0.14);
+
+  --text-primary: #0e0f12;
+  --text-secondary: #5c5f6b;
+  --text-tertiary: #8e8e93;
+  --text-inverted: #ffffff;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-button: 0 1px 2px rgba(0, 0, 0, 0.08);
+
+  --color-danger: #e5484d;  --color-danger-soft: rgba(229, 72, 77, 0.10);
+  --color-success: #16a34a; --color-success-soft: rgba(22, 163, 74, 0.10);
+  --color-warning: #f59e0b; --color-warning-soft: rgba(245, 158, 11, 0.12);
+
+  /* Accent default. Overridden by [data-accent] below. */
+  --accent: #0a84ff;
+  --accent-hover: #3395ff;
+  --accent-soft: rgba(10, 132, 255, 0.12);
+  --accent-contrast: #ffffff;
+
+  color-scheme: light;
+}
+
+/* ── Tokens: dark ────────────────────────────────────────────────────────────
+   One block, no media query. `index.html` ALWAYS writes data-appearance —
+   from the shell when framed, from prefers-color-scheme when standalone — so
+   there is exactly one source of truth and no duplicated token list. */
+
+:root[data-appearance="dark"] {
+  --app-bg: #17171a;
+  --surface-card: #212126;
+  --surface-panel: #2a2a30;
+  --surface-input: #1a1a1e;
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.10);
+
+  --border-hairline: rgba(255, 255, 255, 0.10);
+  --border-hairline-strong: rgba(255, 255, 255, 0.18);
+
+  --text-primary: #f5f5f7;
+  --text-secondary: #9a9da8;
+  --text-tertiary: #7c7f88;
+  --text-inverted: #0e0f12;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-button: 0 1px 2px rgba(0, 0, 0, 0.5);
+
+  --color-danger: #ff6369;  --color-danger-soft: rgba(255, 99, 105, 0.16);
+  --color-success: #30d158; --color-success-soft: rgba(48, 209, 88, 0.16);
+  --color-warning: #ffb340; --color-warning-soft: rgba(255, 179, 64, 0.16);
+
+  color-scheme: dark;
+}
+
+/* ── Accents ─────────────────────────────────────────────────────────────────
+   The user picks one of these in OS Settings; the shell tells your app which.
+   Values copied verbatim from globals.css so your app matches the desktop
+   around it. Anything unrecognised keeps the core-blue default above. */
+
+:root[data-accent="core-blue"] { --accent: #0a84ff; --accent-hover: #3395ff; --accent-soft: rgba(10,132,255,.12); --accent-contrast: #fff; }
+:root[data-accent="teal"]      { --accent: #5ac8fa; --accent-hover: #76d2fb; --accent-soft: rgba(90,200,250,.14);  --accent-contrast: #0e0f12; }
+:root[data-accent="lavender"]  { --accent: #b49dff; --accent-hover: #c3b1ff; --accent-soft: rgba(180,157,255,.16); --accent-contrast: #0e0f12; }
+:root[data-accent="coral"]     { --accent: #ff9b85; --accent-hover: #ffae9b; --accent-soft: rgba(255,155,133,.14); --accent-contrast: #0e0f12; }
+:root[data-accent="rose"]      { --accent: #ff6ca0; --accent-hover: #ff87b3; --accent-soft: rgba(255,108,160,.14); --accent-contrast: #fff; }
+:root[data-accent="graphite"]  { --accent: #8e8e93; --accent-hover: #a2a2a7; --accent-soft: rgba(142,142,147,.14); --accent-contrast: #fff; }
+:root[data-accent="amber"]     { --accent: #f59e0b; --accent-hover: #fbbf24; --accent-soft: rgba(245,158,11,.12);  --accent-contrast: #0e0f12; }
+:root[data-accent="green"]     { --accent: #30d158; --accent-hover: #4add6e; --accent-soft: rgba(48,209,88,.14);   --accent-contrast: #0e0f12; }
+
+/* ── Reset + page shell ─────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* The `hidden` attribute is only `display: none` in the BROWSER's stylesheet,
+   and any author `display` rule beats it — including `.empty { display: flex }`
+   and `.kv { display: grid }` below. Without this line `el.hidden = true`
+   silently does nothing and you get an empty state stacked on top of the list
+   it was supposed to replace. Keep it. */
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-family: var(--font-text);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The OS window is the frame. `.app` fills it and owns the ONLY outer
+   padding in the app — rule 2 at the top of this file. */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: var(--space-6);
+  gap: var(--space-4);
+  max-width: var(--container-lg, 1024px);
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────────
+   A page title, a one-line explanation, and actions on the right. This is the
+   default top of an app; it is not a title bar (the OS draws that). */
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.page-header h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-title-2);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-tight);
+  line-height: var(--lh-tight);
+}
+
+.page-header .subtitle {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-footnote);
+}
+
+.header-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
+
+/* ── Card / panel ────────────────────────────────────────────────────────────
+   The default container. Group related things in one card; do not wrap every
+   element in its own. `.card-title` is the small uppercase eyebrow. */
+
+.card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-5);
+}
+
+.card-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.card-hint {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--fs-footnote);
+}
+
+/* A card whose rows go edge to edge: kill the padding, let rows own it.
+   `.card-head` re-pads just the heading so the hairlines still run full width. */
+.card.card-flush { padding: 0; overflow: hidden; }
+.card-flush .card-head { padding: var(--space-5) var(--space-5) var(--space-3); }
+.card-flush .card-head .card-hint { margin-bottom: 0; }
+
+/* ── List + rows ─────────────────────────────────────────────────────────────
+   THE most common shape in a real app. A list is rows separated by hairlines,
+   never boxes-inside-boxes. `.row-main` takes the space, `.row-meta` hugs
+   right. Use <ul> so it is a list to a screen reader too. */
+
+.list { margin: 0; padding: 0; list-style: none; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-hairline);
+  transition: background var(--motion-fast) var(--ease-standard);
+}
+
+.list > .row:first-child { border-top: none; }
+
+/* Only make rows look interactive if they ARE. A hover state on a row that
+   does nothing is a promise the app does not keep. */
+.row.is-interactive { cursor: pointer; }
+.row.is-interactive:hover { background: var(--surface-hover); }
+.row.is-interactive:active { background: var(--surface-active); }
+
+.row-main { min-width: 0; flex: 1; }
+
+.row-title {
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-medium);
+  /* Long user-supplied strings truncate rather than break the layout. */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.row-sub {
+  margin-top: 2px;
+  font-size: var(--fs-footnote);
+  color: var(--text-secondary);
+}
+
+.row-meta {
+  flex-shrink: 0;
+  font-size: var(--fs-footnote);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────
+   One primary action per view. Everything else is secondary or ghost. */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              opacity var(--motion-fast) var(--ease-standard);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: var(--shadow-button);
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-hairline-strong);
+}
+.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
+
+.btn-ghost { background: transparent; color: var(--accent); }
+.btn-ghost:hover:not(:disabled) { background: var(--accent-soft); }
+
+.btn-danger { background: var(--color-danger); color: #fff; }
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Keyboard focus must stay visible. Do not replace this with outline:none. */
+.btn:focus-visible,
+.input:focus-visible,
+.row.is-interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────────
+   Label above input, help text below, action bar last. Never rely on
+   placeholder text as the label — it vanishes the moment someone types. */
+
+.field { display: block; margin-bottom: var(--space-4); }
+
+.field-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--fs-footnote);
+  font-weight: var(--fw-semibold);
+  color: var(--text-secondary);
+}
+
+.input {
+  display: block;
+  width: 100%;
+  padding: var(--space-3);
+  background: var(--surface-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-input);
+  font-family: inherit;
+  font-size: var(--fs-body-lg);
+  transition: border-color var(--motion-fast) var(--ease-standard);
+}
+.input:focus { border-color: var(--accent); }
+.input::placeholder { color: var(--text-tertiary); }
+
+textarea.input { min-height: 96px; resize: vertical; }
+
+.field-help {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-footnote);
+  color: var(--text-tertiary);
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* ── Badges ─────────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.badge-accent  { background: var(--accent-soft);        color: var(--accent); }
+.badge-success { background: var(--color-success-soft); color: var(--color-success); }
+.badge-warning { background: var(--color-warning-soft); color: var(--color-warning); }
+.badge-danger  { background: var(--color-danger-soft);  color: var(--color-danger); }
+
+/* ── Empty state ─────────────────────────────────────────────────────────────
+   Every list and every filter needs one. An empty list with no empty state
+   reads as a broken app. Say what would be here, and offer the action that
+   puts something here — a dead end is the failure mode, not the blank space. */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: var(--space-12) var(--space-6);
+  gap: var(--space-2);
+}
+
+.empty-glyph {
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--text-tertiary);
+  font-size: var(--fs-title-3);
+}
+
+.empty-title {
+  margin: 0;
+  font-size: var(--fs-callout);
+  font-weight: var(--fw-semibold);
+}
+
+.empty-body {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--fs-footnote);
+  color: var(--text-secondary);
+}
+
+.empty .btn { margin-top: var(--space-3); }
+
+/* ── Loading ─────────────────────────────────────────────────────────────────
+   Skeletons, not the word "Loading…". A skeleton in the shape of the content
+   keeps the layout from jumping when data lands, which is most of what makes
+   an app feel fast. Give every skeleton an explicit width. */
+
+.skeleton {
+  border-radius: var(--radius-button);
+  background: linear-gradient(
+    90deg,
+    var(--surface-panel) 25%,
+    var(--surface-hover) 37%,
+    var(--surface-panel) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeleton-sweep 1.4s var(--ease-standard) infinite;
+}
+
+.skeleton-line { height: 12px; margin-bottom: var(--space-2); }
+.skeleton-line:last-child { margin-bottom: 0; }
+.skeleton-line.w-40 { width: 40%; }
+.skeleton-line.w-60 { width: 60%; }
+.skeleton-line.w-80 { width: 80%; }
+
+@keyframes skeleton-sweep {
+  from { background-position: 100% 50%; }
+  to   { background-position: 0 50%; }
+}
+
+/* ── Inline status ───────────────────────────────────────────────────────────
+   For "saved" / "save failed" next to the button that caused it. Put feedback
+   where the action was, not in a corner of the screen. */
+
+/* margin:0 because this is often a <p>, and a browser default margin here
+   opens a gap that looks like a layout bug. */
+.status { margin: 0; font-size: var(--fs-footnote); color: var(--text-secondary); }
+.status-success { color: var(--color-success); }
+.status-error { color: var(--color-danger); }
+
+/* ── Key/value pairs ───────────────────────────────────────────────────── */
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-5); margin: 0; }
+.kv dt { color: var(--text-secondary); font-size: var(--fs-footnote); }
+.kv dd { margin: 0; font-family: var(--font-mono); font-size: var(--fs-footnote); overflow-wrap: anywhere; }
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+
+.muted { color: var(--text-secondary); }
+.mono { font-family: var(--font-mono); font-size: var(--fs-footnote); }
+.stack { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* Visually hidden but announced. For labels a sighted user gets from context. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ── Mobile ──────────────────────────────────────────────────────────────────
+   Driven by data-device from the shell, NOT by a width media query: an app
+   window can be narrow on a desktop, and a phone opens your app full screen.
+   The shell is the only thing that actually knows. */
+
+body[data-device="mobile"] .app { padding: var(--space-4) var(--space-4) var(--space-10); }
+body[data-device="mobile"] .page-header { flex-direction: column; align-items: stretch; }
+body[data-device="mobile"] .page-header h1 { font-size: var(--fs-title-3); }
+body[data-device="mobile"] .row { padding: var(--space-3) var(--space-4); }
+body[data-device="mobile"] .card { padding: var(--space-4); }
+/* Keep a flush card's heading on the same left edge as its rows. */
+body[data-device="mobile"] .card-flush .card-head { padding: var(--space-4) var(--space-4) var(--space-3); }
+/* Comfortable tap targets. */
+body[data-device="mobile"] .btn { min-height: 44px; padding: var(--space-3) var(--space-5); }
+body[data-device="mobile"] .form-actions { flex-direction: column; align-items: stretch; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

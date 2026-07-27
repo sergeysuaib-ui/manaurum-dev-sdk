@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.6.0.** Skills that teach Claude Code to build and ship apps for
+**Version 2.7.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**

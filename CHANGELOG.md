@@ -1,3 +1,152 @@
+# 2.7.0 — ask before you build, and ship something worth looking at (MAN-1435 / MAN-1436)
+
+### Why
+
+Two gaps, both measured on `origin/main` at 2.6.0, both about the same moment: what
+happens when a person who cannot program says "build me an app".
+
+**Nothing asked them anything.** Both skills opened at "copy the starter" / "write the
+manifest". Read that as a missing process step and you fix the wrong thing — the person
+is not withholding a spec, they *do not have one* and do not know what they are supposed
+to tell you. So the agent invented the data model, the surfaces and the
+`agent_capabilities` from one sentence, and the guess stayed invisible until the app
+existed and was wrong.
+
+**The design guidance was not merely absent, it contradicted the file next to it.**
+`references/design.md` was 442 lines built around a two-theme world: 12 XP references,
+`app.mul.*` (which does not exist in the v2 SDK — 0 hits in `manaurum-v2.mjs`), and 0
+mentions of the v2 client SDK. Meanwhile `references/sdk-api.md:59` — same directory —
+already said the correct thing: theme is *always* `smoothie` inside an iframe, style off
+`appearance` and `accent`. The plugin shipped both instructions and let the agent pick.
+
+Three findings worth keeping, all verified against the monorepo rather than assumed:
+
+- **`app.onReady` / `app.onThemeChange` are live v2 API**, not v1 leftovers
+  (`manaurum-v2.mjs:195,208`). The defect in `design.md` was never a dead call — it was
+  *semantics*. It taught `onThemeChange(theme => body.className = theme)`. The shell
+  sends `IFRAME_THEME`, a hardcoded `'smoothie'` (`IframeAppHost.tsx:127,309`), and the
+  SDK passes that constant to the callback (`:126`). An app copying that snippet sets
+  `class="smoothie"` forever and **never reacts to dark mode**. Only `app.mul.*` was
+  genuinely dead.
+- **XP cannot reach an app at all** — "the XP look stops at the window frame"
+  (`IframeAppHost.tsx:124`). It is a shell easter egg for one tenant. Every XP style
+  block in this plugin was code that could not execute, in v1 as well as v2.
+- **The starter ignored the appearance signal entirely.** It styled off
+  `prefers-color-scheme`, which tracks the *browser*. Measured: with the shell posting
+  `appearance: 'dark'`, the 2.6.0 starter stayed `rgb(246,247,251)` and never set
+  `data-appearance`. A user in OS dark mode got a white app in a dark desktop.
+
+### Added
+
+- **A discovery phase before any file is created** (MAN-1435). `Step 0` in both skills:
+  one question at a time, plain language, and — the load-bearing move — **propose what
+  you think the app is after two or three answers and invite correction**, because people
+  correct a wrong guess far better than they specify from nothing. It is explicitly not a
+  gate ("just build me a todo list" → draft the brief, confirm once, go) and it always
+  terminates ("I don't know" → pick the default, record it, say so).
+- **`templates/v2-starter/BRIEF.md`** — the spec, in the user's words, that they own and
+  can edit. Six sections that each map to something concrete: §1 → route auth and
+  visibility, §2 → screens and `runtime.api_routes`, §3 → the data model, §4 →
+  `agent_capabilities`, §5 → guardrails, §6 → every guess the agent made, marked
+  `(assumed)`. Verified end to end: adding one line to §4 of a real brief produced one
+  `agent_capabilities` entry and one `POST /agent/<name>` handler, with §5 forcing it to
+  `UPDATE` rather than `DELETE`.
+- **`skills/manaurum-app/references/discovery.md`** — the question bank, the defaults for
+  the uncooperative case, the brief→manifest derivation table, and **two worked
+  transcripts**: a vague one-liner reaching a five-status enum and two Assistant
+  capabilities without a single technical question, and an "I don't know to everything"
+  run that still terminates. Transcripts because a model imitates a transcript; it skims
+  a rule.
+- **`templates/v2-starter/src/static/app.css`** (MAN-1436) — a real stylesheet, and the
+  half that actually changes what gets built. Tokens, page shell, cards, lists and rows,
+  forms, four button ranks, badges, empty states, skeletons, focus rings, mobile. It uses
+  **the OS token names** (`--space-*`, `--surface-*`, `--radius-*`, `--accent`) so
+  adopting the shared system later is one `<link>` and no rule has to move.
+- **All eight OS accents**, copied verbatim from `globals.css`. The public
+  `tokens.css` defines six — `amber` and `green` silently fall back to blue there.
+- **`tests/test_static.py`** — five tests for the contract that only breaks inside the
+  desktop: the stylesheet is served, `index.html` links what it ships, the handshake reply
+  precedes the module bundle, appearance reaches the DOM on init *and* on change, and
+  `[hidden]` is overridden. Mutation-checked: 7 of 7 deliberate breaks go red. The first
+  version of this file let 2 of them through because it matched the explanatory comments
+  rather than the code — the `_code()` helper and the comment in that file exist so the
+  next person does not repeat it.
+
+### Changed
+
+- **`design.md`: 442 → 216 lines.** All XP styling and `app.mul.*` gone. What replaced it
+  describes what a v2 app actually is (an isolated iframe with its own CSS), gets the
+  appearance/accent contract right, and adds what was missing entirely: layout and
+  composition, so an agent with correct tokens stops inventing a page shape. It now points
+  at `app.css` as the artifact instead of re-dumping CSS.
+- **`design.md` is no longer filed under "Legacy v1"** in either skill. It was reachable
+  only from the v1 sections, so nothing on the v2 path ever read it. `manaurum-app/SKILL.md`
+  now points at it and at `app.css` where an agent decides what to copy.
+- **The starter follows the shell, not the browser.** `index.html` writes
+  `data-appearance` / `data-accent` from `manaurum:init` and `manaurum:theme-change`, using
+  `prefers-color-scheme` only as the standalone default. Measured after: shell `dark` +
+  browser `light` → `rgb(23,23,26)`; shell `light` + browser `dark` → `rgb(247,247,249)`.
+  Both directions, and the handshake still answers.
+- **The starter's UI shows the patterns instead of describing them** — a form with a real
+  empty state, a skeleton that resolves into a key/value panel, and a list of the install's
+  `granted_capabilities` with badges. That list is read from the raw `manaurum:init`
+  payload because the v2 SDK does not expose `granted_capabilities` (0 hits in
+  `manaurum-v2.mjs`), and it is the fastest way to see why a call returns
+  `403 capability_not_granted`.
+- **`templates/legacy-v1/theme-aware-app.html` adapts to appearance, not to XP.** It was
+  21 lines of unreachable XP CSS, `body.className = ctx.theme` (always `'smoothie'`), the
+  claim "adapts to both Smoothie and XP themes automatically", and **no dark mode at all**.
+  It now uses the v1 SDK's `onAppearanceChange` / `onAccentChange`, which existed all
+  along. `hello-world.html` got the same fix.
+- **Two factual corrections in `sdk-api.md`**: the `manaurum:theme` wire example showed a
+  payload of `{"theme": "xp"}` the shell never sends, and `app.getTheme()` was documented
+  as possibly returning `"xp"`.
+
+Added in review, after running the skill from blank directories five times:
+
+- **Template paths now carry the `<plugin>/` root marker.** `manaurum-app/SKILL.md`,
+  `discovery.md` and `design.md` pointed at a bare `templates/v2-starter/…`, and in one run
+  out of two the agent resolved that against the *skill* directory, got
+  `File does not exist`, and silently wrote its own `app.css`, its own `BRIEF.md` and no
+  tests at all — justifying the missing suite with "the reference fixture needs a real
+  Postgres", which the starter disproves (24 pass with no Postgres and no Docker).
+  `manaurum-setup` never had the problem because it already wrote
+  `cp -r <plugin>/templates/v2-starter`. The three files now match it, and the instruction
+  says to resolve the root and retry rather than fall back to writing the file.
+- **The `[hidden]` guard is in `design.md` too, not only inside `app.css`.** An agent that
+  writes its own stylesheet — which is correct and expected when the app is not Python —
+  never sees the rule. Observed twice out of five runs: both re-derived sheets patched
+  `.modal-backdrop[hidden]` by hand and without `!important`, which is exactly the
+  case-by-case vigilance the global rule exists to replace.
+- **`design.md` now states the stance on sidebars, tab bars and toggle switches.** All
+  three had sections on `origin/main`; `app.css` deliberately ships none of them, but
+  nothing said so, which read as an omission rather than a decision.
+- **The two `legacy-v1` templates say what does not work.** Their `onAppearanceChange` /
+  `onAccentChange` hooks are correct, but the shipped v1 SDK never fires them — its
+  `manaurum:theme-change` handler aliases its own context and compares each value against
+  the copy it just overwrote, so the guard is always false (**MAN-1450**). Verified against
+  the live `manaurum.js`: init applies, every subsequent change is dropped. Still a strict
+  improvement — before this release neither template read `ctx.appearance` at all — but the
+  comment no longer promises live updates the platform does not deliver.
+
+### Not changed
+
+- **v1 is still supported and its SDK calls still appear in the Legacy v1 sections.** That
+  is what those sections are for. `app.onReady` in a v1 example is correct.
+- **`is_write` stays in the starter manifest.** It is dead at runtime (MAN-1425) and
+  `v2-platform.md` already documents that precisely while telling you to declare it
+  truthfully anyway. Removing it from the artifact would have contradicted deliberate
+  guidance; this release leaves the position alone.
+- **XP mentions in this changelog.** History is not rewritten. The remaining XP text in
+  the *skills* is now exclusively "this cannot reach you, do not style for it".
+- **`templates/v2-starter/` still exists.** Deleting it in favour of the CLI scaffold is
+  MAN-1393 item 4 and is blocked on a CLI release, not on an opinion.
+- **The shared design system is still vendored, not linked** — MAN-1401 is unresolved, the
+  URL `tokens.css` documents for itself does not resolve, and a failed `<link>` has no
+  graceful degradation. Token *names* match so the swap stays cheap.
+- Aurum Studio. Out of scope by decision (2026-07-26): the terminal is the product here,
+  and no shared core is being built.
+
 # 2.6.0 — the artifacts teach, not the prose (MAN-1394 / MAN-1395 / MAN-1396)
 
 ### Why

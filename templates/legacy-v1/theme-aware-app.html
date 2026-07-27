@@ -1,118 +1,180 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ManAurum Theme-Aware App</title>
+  <title>ManAurum Appearance-Aware App (v1)</title>
   <script src="https://manaurum.com/sdk/manaurum.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+  <!--
+    LEGACY v1 TEMPLATE — for maintaining an existing iframe app. New apps go
+    on Platform v2; see templates/v2-starter/.
+
+    What "theme-aware" actually means, for v1 and v2 alike:
+
+      ctx.theme       ALWAYS 'smoothie'. The XP look is a desktop-shell
+                      easter egg for one tenant and it stops at the window
+                      frame — the shell never passes 'xp' into an iframe
+                      (MAN-235). Styling for it is dead code.
+      ctx.appearance  'light' | 'dark'  ← this is what varies
+      ctx.accent      'core-blue' | 'teal' | 'lavender' | 'coral' | 'rose'
+                      | 'graphite' | 'amber' | 'green'
+
+    So adapt to APPEARANCE and ACCENT, and ignore theme. The v1 SDK has
+    dedicated hooks for exactly these two: onAppearanceChange() and
+    onAccentChange(). onThemeChange() also exists, but it only ever hands
+    you the constant 'smoothie'.
+
+    KNOWN PLATFORM BUG (MAN-1450): those two hooks are registered below and
+    are correct, but the shipped v1 SDK never fires them. Its
+    `manaurum:theme-change` handler aliases its own context object and then
+    compares the incoming value against the copy it just overwrote, so the
+    guard is always false. Until that is fixed, this app picks up appearance
+    and accent at onReady() and does NOT follow the user switching light/dark
+    while it is open. Nothing to do here — the fix is in
+    frontend/public/sdk/manaurum.js. v2 apps are unaffected.
+  -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { transition: all 0.2s; height: 100vh; display: flex; flex-direction: column; }
 
-    /* Smoothie theme */
-    body.smoothie {
-      font-family: 'Inter', -apple-system, sans-serif;
-      background: #f9f9ff; color: #181c23; font-size: 14px;
+    /* Light is the default; the dark block below overrides it. One token
+       list per appearance, and every rule reads the tokens — so adding an
+       appearance never means duplicating a component. */
+    :root {
+      --bg: #f7f7f9;
+      --card: #ffffff;
+      --panel: #eeeef1;
+      --line: rgba(0, 0, 0, 0.08);
+      --text: #0e0f12;
+      --text-muted: #5c5f6b;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+      --accent: #0a84ff;
+      --accent-contrast: #ffffff;
+      color-scheme: light;
     }
-    body.smoothie .header { padding: 20px 24px; border-bottom: 1px solid rgba(0,0,0,0.06); }
-    body.smoothie .header h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
-    body.smoothie .card {
-      background: rgba(255,255,255,0.6); border-radius: 20px; padding: 16px 20px;
-      border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    html[data-appearance="dark"] {
+      --bg: #17171a;
+      --card: #212126;
+      --panel: #2a2a30;
+      --line: rgba(255, 255, 255, 0.10);
+      --text: #f5f5f7;
+      --text-muted: #9a9da8;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.3);
+      color-scheme: dark;
     }
-    body.smoothie .btn {
-      padding: 10px 20px; border-radius: 12px; border: none;
-      background: linear-gradient(135deg, #0058bc, #0070eb); color: white;
-      font-weight: 700; font-size: 14px; cursor: pointer;
-    }
-    body.smoothie .input {
-      width: 100%; padding: 12px 16px; border-radius: 12px; border: none;
-      background: #f1f3fe; font-size: 14px; outline: none; color: #181c23;
-    }
-    body.smoothie .label {
-      font-size: 11px; font-weight: 700; color: #414755;
-      text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px;
-    }
-    body.smoothie .badge {
-      padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: 700;
-    }
-    body.smoothie .text-muted { color: #717786; font-size: 13px; }
 
-    /* XP theme */
-    body.xp {
-      font-family: Tahoma, sans-serif;
-      background: #ece9d8; color: #000; font-size: 12px;
-    }
-    body.xp .header { padding: 8px 12px; border-bottom: 1px solid #aaa; }
-    body.xp .header h1 { font-size: 14px; font-weight: 700; }
-    body.xp .card {
-      background: #fff; border-radius: 3px; padding: 8px 10px; border: 1px solid #aca899;
-    }
-    body.xp .btn {
-      padding: 4px 16px; border-radius: 3px; border: 1px solid #214a87;
-      background: #316ac5; color: white; font-weight: 700; font-size: 11px; cursor: pointer;
-    }
-    body.xp .input {
-      width: 100%; padding: 6px 8px; border-radius: 3px; border: 1px solid #7f9db9;
-      background: #fff; font-size: 12px; outline: none; color: #000;
-    }
-    body.xp .label { font-size: 11px; font-weight: 700; color: #333; margin-bottom: 4px; }
-    body.xp .badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; }
-    body.xp .text-muted { color: #666; font-size: 11px; }
+    /* The eight OS accents, copied from globals.css so the app matches the
+       desktop around it. Anything unrecognised keeps the default above. */
+    html[data-accent="core-blue"] { --accent: #0a84ff; --accent-contrast: #fff; }
+    html[data-accent="teal"]      { --accent: #5ac8fa; --accent-contrast: #0e0f12; }
+    html[data-accent="lavender"]  { --accent: #b49dff; --accent-contrast: #0e0f12; }
+    html[data-accent="coral"]     { --accent: #ff9b85; --accent-contrast: #0e0f12; }
+    html[data-accent="rose"]      { --accent: #ff6ca0; --accent-contrast: #fff; }
+    html[data-accent="graphite"]  { --accent: #8e8e93; --accent-contrast: #fff; }
+    html[data-accent="amber"]     { --accent: #f59e0b; --accent-contrast: #0e0f12; }
+    html[data-accent="green"]     { --accent: #30d158; --accent-contrast: #0e0f12; }
 
-    /* Shared */
+    body {
+      height: 100vh; display: flex; flex-direction: column;
+      background: var(--bg); color: var(--text);
+      font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+
+    .header { padding: 20px 24px; border-bottom: 1px solid var(--line); }
+    .header h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+    .text-muted { color: var(--text-muted); font-size: 13px; }
+
     .content { flex: 1; overflow-y: auto; padding: 24px; }
-    body.xp .content { padding: 12px; }
-    .badge-success { background: #dcfce7; color: #16a34a; }
-    .badge-error { background: #fef2f2; color: #dc2626; }
-    .badge-info { background: #dbeafe; color: #2563eb; }
-    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400; vertical-align: middle; }
+
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; padding: 16px 20px; box-shadow: var(--shadow);
+      margin-bottom: 16px;
+    }
+
+    .label {
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;
+    }
+
+    .input {
+      width: 100%; padding: 12px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--card);
+      color: var(--text); font: inherit; outline: none;
+    }
+    .input:focus { border-color: var(--accent); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 20px; border-radius: 8px; border: none;
+      background: var(--accent); color: var(--accent-contrast);
+      font: inherit; font-weight: 600; cursor: pointer;
+    }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .badges { display: flex; gap: 6px; margin-top: 12px; }
+    .badge {
+      padding: 2px 8px; border-radius: 9999px;
+      font-size: 11px; font-weight: 600;
+      background: var(--panel); color: var(--text-muted);
+    }
+    .badge-success { background: rgba(22, 163, 74, 0.12); color: #16a34a; }
+    .badge-info { background: rgba(10, 132, 255, 0.12); color: #0a84ff; }
+    html[data-appearance="dark"] .badge-success { color: #30d158; }
+    html[data-appearance="dark"] .badge-info { color: #6ea8ff; }
   </style>
 </head>
-<body class="smoothie">
+<body>
   <div class="header">
-    <h1 id="title">Loading...</h1>
+    <h1 id="title">Loading…</h1>
     <p class="text-muted" id="subtitle"></p>
   </div>
 
   <div class="content">
-    <div class="card" style="margin-bottom: 16px;">
-      <div class="label">Example Card</div>
-      <p>This card adapts to both Smoothie and XP themes automatically.</p>
-      <div style="margin-top: 12px; display: flex; gap: 6px;">
+    <div class="card">
+      <div class="label">Example card</div>
+      <p>This card follows the OS appearance and accent — try switching either
+         in Settings while the app is open.</p>
+      <div class="badges">
         <span class="badge badge-success">Active</span>
         <span class="badge badge-info">v1.0</span>
       </div>
     </div>
 
-    <div style="margin-bottom: 16px;">
-      <div class="label">Input Example</div>
-      <input class="input" placeholder="Type something..." id="demo-input">
+    <div class="card">
+      <div class="label">Input example</div>
+      <input class="input" placeholder="Type something…" id="demo-input">
     </div>
 
-    <button class="btn" id="toast-btn">
-      <span class="material-symbols-outlined" style="font-size: 18px; margin-right: 6px;">notifications</span>
-      Show Toast
-    </button>
+    <button class="btn" id="toast-btn">Show toast</button>
   </div>
 
   <script>
     var sdk = ManaurumSDK.init();
+    var root = document.documentElement;
 
-    sdk.onReady(function(ctx) {
-      document.body.className = ctx.theme;
+    function applyAppearance(appearance) {
+      root.dataset.appearance = appearance || 'light';
+      document.getElementById('subtitle').textContent =
+        'Appearance: ' + root.dataset.appearance + ' · accent: ' + (root.dataset.accent || '—');
+    }
+
+    function applyAccent(accent) {
+      if (accent) root.dataset.accent = accent;
+      applyAppearance(root.dataset.appearance);
+    }
+
+    sdk.onReady(function (ctx) {
+      // Note what is NOT read here: ctx.theme. It is always 'smoothie'.
+      root.dataset.accent = ctx.accent || 'core-blue';
+      applyAppearance(ctx.appearance);
       document.getElementById('title').textContent = 'Hello, ' + ctx.user.nickname + '!';
-      document.getElementById('subtitle').textContent = 'Theme: ' + ctx.theme;
     });
 
-    sdk.onThemeChange(function(theme) {
-      document.body.className = theme;
-      document.getElementById('subtitle').textContent = 'Theme: ' + theme;
-    });
+    // The two signals that actually change while the app is open.
+    sdk.onAppearanceChange(applyAppearance);
+    sdk.onAccentChange(applyAccent);
 
-    document.getElementById('toast-btn').onclick = function() {
+    document.getElementById('toast-btn').onclick = function () {
       sdk.toastSuccess('It works!');
     };
   </script>

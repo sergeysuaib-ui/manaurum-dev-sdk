@@ -1,442 +1,239 @@
-# ManAurum OS Design System & UI Kit
+# Designing a v2 app
 
-ManAurum OS has two themes: **Smoothie** (macOS-like) and **XP** (Windows XP). Your app must adapt to both. This reference contains the exact styles used in built-in apps — copy them to look native.
+A v2 app is an **isolated iframe that serves its own CSS**. Nothing from the
+Manaurum shell cascades in — no reset, no fonts, no tokens, no component
+classes. You are not styling a React island inside our app; you are building a
+small self-contained web page that has to look like it belongs next to ours.
 
-> **Don't design from scratch when you can borrow.** manaurumOS ships a 100-component library (buttons, cards, modals, empty states, dashboards, settings, forms, patterns…) that already uses the Aurora-lite token vocabulary and adapts to both themes. Browse at <https://manaurum.com/library> or fetch from your app: `app.mul.list()`, `app.mul.get('button-primary-01')`. See `sdk-api.md` → "Component Library (MUL)".
+That is the whole contract, and it cuts both ways: nothing of ours can break
+your layout, and nothing of ours will save you from an unstyled one.
 
-## Theme Detection
+## Start from the artifact, not from this page
 
-```javascript
-app.onReady(function(ctx) { applyTheme(ctx.theme); });
-app.onThemeChange(function(theme) { applyTheme(theme); });
+`<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
+Manaurum app: tokens, layout, cards, lists, forms, buttons, badges, empty
+states, skeletons, mobile. Copy it and change values at the top. (`<plugin>` is
+the plugin root — the directory with `skills/` and `templates/` side by side. If
+the read fails, find the root and retry rather than writing your own.)
 
-function applyTheme(theme) {
-  document.body.className = theme; // 'smoothie' or 'xp'
-}
+**Do not hand-roll a design from the notes below.** The notes exist to tell you
+*when* to reach for each pattern and which mistakes are expensive. The CSS is
+the reference for *what* it looks like. An agent that reads this page and then
+invents its own layout has done the job backwards.
+
+The starter's `index.html` shows every pattern in use against real data. Read
+the two files together.
+
+## Appearance and accent — the one thing to get right
+
+The shell tells your app which appearance (light/dark) and which accent colour
+the user is in. Read those; do not guess at them.
+
+```js
+// manaurum:init payload → what actually varies
+{ appearance: 'light' | 'dark',        // ← style off this
+  accent: 'core-blue' | 'teal' | 'lavender' | 'coral'
+        | 'rose' | 'graphite' | 'amber' | 'green',
+  theme: 'smoothie',                   // ← constant. ignore it.
+  device: 'mobile' | 'desktop', … }
 ```
 
-Then use CSS classes:
-```css
-body.smoothie { font-family: 'Inter', -apple-system, sans-serif; background: #f9f9ff; color: #181c23; font-size: 14px; }
-body.xp { font-family: Tahoma, sans-serif; background: #ece9d8; color: #000; font-size: 12px; }
-```
+Three traps, each of which has shipped:
 
----
+1. **`theme` is always `'smoothie'`.** The XP look is a desktop-shell easter
+   egg for one tenant and it deliberately stops at the window frame — the shell
+   never passes `'xp'` into an iframe (MAN-235). Branching on `theme`, or
+   shipping a second set of styles for it, is dead code that cannot run.
 
-## Color Tokens
+2. **`app.onThemeChange(cb)` hands your callback the string `'smoothie'`** —
+   that constant, not the thing that changed. To learn the new appearance you
+   must read the getters *inside* the callback:
 
-| Role | Smoothie | XP |
-|------|----------|-----|
-| Background | `#f9f9ff` | `#ece9d8` |
-| Card | `rgba(255,255,255,0.6)` | `#fff` |
-| Text primary | `#181c23` | `#000` / `#333` |
-| Text secondary | `#414755` | `#666` |
-| Text muted | `#717786` | `#999` |
-| Text disabled | `#c1c6d7` | `#aaa` |
-| Primary blue | `#0058bc` | `#316ac5` |
-| Primary gradient | `linear-gradient(135deg, #0058bc, #0070eb)` | `#316ac5` solid |
-| Success | `#16a34a` | `#16a34a` |
-| Error | `#dc2626` / `#ba1a1a` | same |
-| Warning | `#d97706` | same |
-| Border | `rgba(193,198,215,0.1)` | `#aca899` |
-| Input bg | `#f1f3fe` | `#fff` |
-| Hover bg | `#e6e8f3` | — |
+   ```js
+   const app = ManaurumV2.init();
+   app.onReady((ctx) => apply(ctx.appearance, ctx.accent));
+   app.onThemeChange(() => apply(app.appearance, app.accent));  // ignore the arg
+   ```
 
----
+   A handler written as `onThemeChange(t => applyTheme(t))` compiles, runs, and
+   never responds to dark mode.
 
-## Cards & Containers
+3. **`prefers-color-scheme` is not Manaurum's appearance.** It tracks the
+   *browser*. A user in OS dark mode with a light browser profile gets a light
+   app sitting in a dark desktop. Use it only as the standalone default, before
+   any shell message, and let the shell win once it speaks. The starter's inline
+   `<head>` script does exactly this in ~20 dependency-free lines.
 
-### Standard Card
-```css
-/* Smoothie */
-.card {
-  background: rgba(255,255,255,0.6);
-  border-radius: 20px;
-  padding: 14px 18px;
-  border: 1px solid rgba(255,255,255,0.4);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
-}
-.card:hover {
-  background: rgba(255,255,255,0.9);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
-}
+Write the values onto the root element and let CSS do the rest:
 
-/* XP */
-.card {
-  background: #fff;
-  border-radius: 3px;
-  padding: 8px 10px;
-  border: 1px solid #aca899;
-}
-```
-
-### Glass Card (with blur)
-```css
-.glass-card {
-  background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(20px);
-  border-radius: 24px;
-  padding: 24px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
-  border: 1px solid rgba(193,198,215,0.1);
-}
-```
-
-### Info/Highlight Card
-```css
-.info-card {
-  padding: 16px 20px;
-  border-radius: 16px;
-  background: rgba(0,88,188,0.04);
-  border: 1px solid rgba(0,88,188,0.08);
-}
-```
-
----
-
-## Buttons
-
-### Primary Button
-```css
-/* Smoothie */
-.btn-primary {
-  padding: 12px 24px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #0058bc, #0070eb);
-  color: white;
-  font-weight: 700;
-  font-size: 14px;
-  border: none;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0,88,188,0.2);
-}
-
-/* XP */
-.btn-primary {
-  padding: 4px 16px;
-  border-radius: 3px;
-  background: #316ac5;
-  color: white;
-  font-weight: 700;
-  font-size: 11px;
-  border: 1px solid #214a87;
-  cursor: pointer;
-}
-```
-
-### Secondary Button
-```css
-/* Smoothie */
-.btn-secondary {
-  padding: 6px 18px;
-  border-radius: 9999px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #0058bc;
-  border: 1px solid rgba(0,88,188,0.2);
-  background: transparent;
-}
-
-/* XP */
-.btn-secondary {
-  background: linear-gradient(to bottom, #fff, #ece9d8);
-  border: 1px solid #aaa;
-  padding: 2px 8px;
-  font-size: 11px;
-  border-radius: 3px;
-}
-```
-
-### Danger / Purple Accent Button
-```css
-.btn-accent {
-  background: linear-gradient(135deg, #7c3aed, #6d28d9);
-  /* same structure as primary, different color */
-}
-```
-
-### Disabled State
-```css
-.btn:disabled { opacity: 0.6; cursor: default; }
-```
-
----
-
-## Form Inputs
-
-### Text Input
-```css
-/* Smoothie */
-input, textarea {
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  border: none;
-  background: #f1f3fe;
-  font-size: 14px;
-  font-family: 'Inter', sans-serif;
-  color: #181c23;
-  outline: none;
-}
-
-/* XP */
-input, textarea {
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 3px;
-  border: 1px solid #7f9db9;
-  background: #fff;
-  font-size: 12px;
-  font-family: Tahoma, sans-serif;
-  color: #000;
-  outline: none;
-}
-```
-
-### Label
-```css
-/* Smoothie */
-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: #414755;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  display: block;
-  margin-bottom: 6px;
-}
-
-/* XP */
-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: #333;
-  display: block;
-  margin-bottom: 4px;
-}
-```
-
----
-
-## Toggle Switch
-
-```html
-<div class="toggle" onclick="toggle()">
-  <div class="toggle-circle"></div>
-</div>
+```js
+document.documentElement.dataset.appearance = ctx.appearance;
+document.documentElement.dataset.accent = ctx.accent;
 ```
 
 ```css
-/* Smoothie */
-.toggle {
-  width: 40px; height: 22px;
-  border-radius: 11px;
-  background: #c1c6d7; /* off */
-  position: relative; cursor: pointer;
-  transition: background 0.2s;
-}
-.toggle.on { background: #0058bc; }
-
-.toggle-circle {
-  width: 18px; height: 18px;
-  border-radius: 50%;
-  background: white;
-  position: absolute; top: 2px; left: 2px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  transition: left 0.2s;
-}
-.toggle.on .toggle-circle { left: 20px; }
+:root { --app-bg: #f7f7f9; --text-primary: #0e0f12; }
+:root[data-appearance="dark"] { --app-bg: #17171a; --text-primary: #f5f5f7; }
+:root[data-accent="lavender"] { --accent: #b49dff; }
 ```
 
----
+## Window rules
 
-## Badges & Pills
+- **The OS draws the title bar. Never draw your own.** You get the content area.
+- **Fill it.** No outer margin against the window edge; one container owns the
+  page padding.
+- **Be resizable.** Percentage widths and a `max-width`, never a fixed width.
+- **No native dialogs.** The shell's iframe sandbox has no `allow-modals`, so
+  `alert()` / `confirm()` / `prompt()` are dead inside the desktop — and they
+  work on the standalone URL, so "it worked in my browser" proves nothing. A
+  `confirm()`-gated delete button becomes a button that does nothing.
 
-### Severity Badges
-```css
-.badge { padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+## Layout: how to compose a page
 
-.badge-critical { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
-.badge-high     { background: #fff7ed; color: #ea580c; border: 1px solid #fed7aa; }
-.badge-medium   { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
-.badge-low      { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+Most apps do not need a novel layout. This shape covers almost all of them:
+
+```
+┌───────────────────────────────────────────┐
+│  Title                        [ Action ]  │  ← page-header
+│  One line saying what this is             │
+├───────────────────────────────────────────┤
+│  ┌─────────────────────────────────────┐  │
+│  │ SECTION                             │  │  ← card
+│  │ content                             │  │
+│  └─────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────┐  │
+│  │ SECTION                             │  │  ← card
+│  └─────────────────────────────────────┘  │
+└───────────────────────────────────────────┘
 ```
 
-### Status Badges
-```css
-.badge-draft     { background: #f1f5f9; color: #475569; }
-.badge-active    { background: #dcfce7; color: #16a34a; }
-.badge-blocked   { background: #fee2e2; color: #dc2626; }
-.badge-waiting   { background: #fef9c3; color: #ca8a04; }
-.badge-resolved  { background: #dcfce7; color: #16a34a; }
-.badge-progress  { background: #dbeafe; color: #2563eb; }
+- **One primary action per view.** Everything else is secondary or a plain link.
+  Two blue buttons side by side means neither is the answer.
+- **Group into cards, don't box everything.** Related fields share one card. A
+  card per field looks like a form someone lost control of.
+- **Take spacing from the scale** (`--space-*`) and use few values: a small gap
+  inside a group, a medium one between groups, a large one before a new section.
+  Consistent spacing is most of what makes a layout look designed.
+- **Cap the width.** `max-width: 1024px`. Text lines that run the full width of
+  a maximised window are unreadable.
+- **In light mode the page recedes and cards come forward** (white on grey); in
+  dark it inverts (cards lighter than the page). Getting that backwards is why
+  most dark themes look flat.
+
+**No sidebar, no tab bar, no toggle switches.** `app.css` deliberately ships
+none of the three, and this is the reason: an app window is not a browser window.
+It is often 900px wide and sits inside a desktop that already has its own
+navigation, so a sidebar spends a third of the width repeating what the OS
+already told the user. If a page needs sections, stack them as cards; if it
+needs two views, use two `.btn-ghost`s and swap the content; if it needs a
+boolean, use a checkbox with a `.field-label`. Reach for a sidebar only when a
+list genuinely drives a detail pane, and then build it from `.list` + `.row`
+rather than inventing a component.
+
+## Patterns, and when to use them
+
+Classes are in `app.css`; this is the judgement that goes with them.
+
+| Pattern | Class | Use it for |
+|---|---|---|
+| List | `.list` / `.row` | Any collection. Rows separated by hairlines — never boxes inside boxes. |
+| Row content | `.row-main`, `.row-title`, `.row-sub`, `.row-meta` | Title and optional subtitle left, metadata hugging right. |
+| Form field | `.field`, `.field-label`, `.input`, `.field-help` | Label **above** the input, help text below. |
+| Buttons | `.btn` + `.btn-primary` / `-secondary` / `-ghost` / `-danger` | One primary per view. |
+| Empty state | `.empty` | Every list, and every filter that can return nothing. |
+| Loading | `.skeleton`, `.skeleton-line` | Any fetch that can take longer than an instant. |
+| Badge | `.badge` + `-accent` / `-success` / `-warning` / `-danger` | Short status. Not for sentences. |
+| Inline status | `.status` + `-success` / `-error` | Feedback next to the control that caused it. |
+| Key/value | `.kv` | Read-only detail pairs. |
+
+Three of those deserve more than a table row, because skipping them is what
+makes an app feel unfinished:
+
+**Empty states.** An empty list with no empty state reads as a broken app. Say
+what would be here and offer the action that puts something here. Distinguish
+*empty* ("no orders yet") from *unknown* ("could not load") from *filtered to
+nothing* ("no orders match this filter" + a clear-filter button) — they are
+three different messages and collapsing them into one blank panel is a bug
+report waiting to happen.
+
+**Loading.** Use a skeleton shaped like the content, not the word `Loading…`.
+It keeps the layout from jumping when data lands, which is most of what makes an
+app feel fast. Give every skeleton an explicit width.
+
+**Interactive affordances.** Only give a row a hover state if clicking it does
+something — a hover on an inert row is a promise the app does not keep. And
+never remove the focus ring; keyboard users navigate your app too.
+
+## Mobile
+
+Branch on the **device the shell reports**, not on a width media query:
+
+```js
+document.body.dataset.device = ctx.device;   // 'mobile' | 'desktop'
 ```
-
-### Trust Labels
-```css
-.trust-internal    { background: #dbeafe; color: #0058bc; }
-.trust-verified    { background: #dcfce7; color: #16a34a; }
-.trust-beta        { background: #fff7ed; color: #ea580c; }
-.trust-third-party { background: #f1f5f9; color: #64748b; }
-```
-
----
-
-## Sidebar Navigation
-
-### Smoothie Sidebar
-```css
-.sidebar {
-  width: 200px;
-  background: rgba(241,243,254,0.3);
-  backdrop-filter: blur(20px);
-  border-right: 0.5px solid rgba(193,198,215,0.1);
-  padding: 20px 12px;
-}
-
-.nav-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 8px 12px; border-radius: 12px;
-  font-size: 13px; cursor: pointer;
-  color: #414755; background: transparent;
-}
-.nav-item:hover { background: #e6e8f3; }
-.nav-item.active {
-  background: #0058bc; color: white;
-  box-shadow: 0 4px 12px rgba(0,88,188,0.2);
-}
-```
-
-### XP Sidebar uses flat list with selected highlight `#316ac5` + white text.
-
----
-
-## Tab Bar
-
-### Smoothie Tabs
-```css
-.tab {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 18px;
-  border-radius: 12px 12px 0 0;
-  font-size: 13px; font-weight: 500;
-  color: #717786; border-bottom: 2px solid transparent;
-}
-.tab.active {
-  color: #0058bc; font-weight: 700;
-  border-bottom-color: #0058bc;
-  background: rgba(255,255,255,0.6);
-}
-```
-
-### XP Tabs
-```css
-.tab { padding: 4px 14px; font-size: 11px; font-weight: 700; border-radius: 4px 4px 0 0; color: #333; }
-.tab.active { background: #fff; border: 1px solid #aca899; border-bottom: 1px solid #fff; }
-.tab:not(.active) { background: #ece9d8; }
-```
-
----
-
-## Section Headers
 
 ```css
-/* Page title */
-h1 { font-size: 26px; font-weight: 800; color: #181c23; letter-spacing: -0.02em; }
-
-/* Section label (uppercase) */
-.section-label {
-  font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.1em;
-  color: #414755; margin-bottom: 8px;
-}
-
-/* Subsection title */
-h3 { font-size: 16px; font-weight: 800; color: #181c23; }
+body[data-device="mobile"] .app { padding: var(--space-4); }
+body[data-device="mobile"] .btn { min-height: 44px; }
 ```
 
----
+An app window can be narrow on a desktop, and a phone opens your app full
+screen — a width query gets both cases wrong. The shell is the only thing that
+actually knows. It also re-posts `manaurum:device-change` on an orientation flip
+or a resize across the breakpoint, so listen for that too.
 
-## Task & List Items
+Give mobile 44px tap targets, full-width primary buttons, and a stacked header.
 
-### Task Card
-```css
-.task-card {
-  padding: 12px 14px;
-  border-radius: 14px; /* Smoothie */
-  background: rgba(255,255,255,0.7);
-  border: 1px solid rgba(0,0,0,0.06);
-  margin-bottom: 6px;
-  backdrop-filter: blur(10px);
-}
-```
+## Icons
 
-### Task Status Circle
-```css
-.status-circle {
-  width: 20px; height: 20px;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  cursor: pointer;
-}
-/* Colors: todo=#6366f1, in_progress=#f59e0b, done=#22c55e, backlog=#94a3b8 */
-```
+Manaurum's own UI uses Google Material Symbols. You may use them, but **do not
+hot-link a font in an app you care about** — a webfont that arrives late reflows
+your layout and one that fails to arrive changes your metrics. Self-host the
+subset you need in your image, or use text and simple glyphs as the starter
+does.
 
-### Completed Task Text
-```css
-.task-done { color: #94a3b8; text-decoration: line-through; }
-```
+Your **app icon** (`frontend.icon` in the manifest) is separate: an emoji, a
+full URL, or an absolute `/api/catalog/media/...` path. A relative path like
+`icons/app.svg` is not resolved — it renders as that literal string on the tile.
+Omit it and you get a clean generic placeholder, which beats a broken one.
 
----
+## Do not
 
-## Common Patterns
+- **Do not rely on the bare `hidden` attribute to hide anything.** `[hidden]` is
+  only `display: none` in the *browser's* stylesheet, and any author `display`
+  rule beats it — so `.empty { display: flex }` silently turns `el.hidden = true`
+  into a no-op and your empty state renders stacked on top of the list it was
+  meant to replace. This shipped once. If you write your own stylesheet instead
+  of copying `app.css`, carry this line into it:
 
-### Icon + Text Row
-```html
-<div style="display:flex; align-items:center; gap:12px; padding:14px 18px;">
-  <span class="material-symbols-outlined" style="font-size:20px; color:#414755;">icon_name</span>
-  <div>
-    <div style="font-size:14px; font-weight:600; color:#181c23;">Label</div>
-    <div style="font-size:11px; color:#64748b;">Description</div>
-  </div>
-</div>
-```
+  ```css
+  [hidden] { display: none !important; }
+  ```
 
-### Material Symbols Icons
-ManAurum uses Google Material Symbols. Include:
-```html
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
-```
-Usage: `<span class="material-symbols-outlined">settings</span>`
-Filled: `style="font-variation-settings: 'FILL' 1"`
+- **Do not use gold or yellow as your palette, and never `hue-rotate`.** Both
+  are banned in Manaurum surfaces. If the user picks the amber accent, that is
+  their choice arriving through `--accent`; it is not a licence to design in it.
+- **Do not hardcode hex values in your markup.** Change a token, not 40 rules.
+- **Do not style with inline `style=` attributes.** They cannot respond to
+  appearance changes and they cannot be overridden.
+- **Do not ship a second stylesheet for the XP theme.** It cannot reach you.
 
-### Empty State
-```html
-<div style="text-align:center; padding:40px 0; color:#94a3b8;">
-  <span class="material-symbols-outlined" style="font-size:40px;">inbox</span>
-  <p style="font-size:13px; margin-top:8px;">No items yet</p>
-</div>
-```
+## The shared design system, and why the starter vendors its tokens
 
-### Loading State
-```html
-<div style="text-align:center; padding:40px 0; color:#94a3b8;">
-  <p style="font-size:13px;">Loading...</p>
-</div>
-```
+Manaurum's tokens and component catalogue are public and need no auth:
 
----
+- `https://manaurum.com/api/library/tokens.css` — the token file
+- `https://manaurum.com/library` — the component catalogue
 
-## Window Rules
+`app.css` deliberately uses **the same token names** as that file, so adopting
+it later is one `<link>` and no rule below it has to move.
 
-- The OS provides the title bar — do NOT render your own
-- Fill the entire content area (no extra margins on the window edge)
-- Padding: use 24px for Smoothie, 12px for XP
-- Be responsive to resizing
-- Use `100%` width, avoid fixed widths > window min_size
+It vendors the *values* rather than linking the file today because a stylesheet
+has no graceful degradation: a dynamically-imported SDK can fall back to
+`fetch()`, but a `<link>` that fails to load leaves your user looking at
+unstyled HTML. Two concrete gaps also argue for waiting — the token file
+documents a hostname that does not resolve, and it defines 6 of the 8 accents
+the OS actually offers, so `amber` and `green` silently fall back to blue.
 
-## App Icon
-
-- 256x256 PNG
-- Recognizable at 52x52px
-- Uploaded via Dev Hub
+**MAN-1401** is the open decision on how a v2 app should consume the shared
+system. When it lands, this section is what changes.
