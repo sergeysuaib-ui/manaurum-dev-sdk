@@ -1,3 +1,36 @@
+# 2.7.2 — the `dev` runtime has no editor any more (MAN-1577)
+
+### Why
+
+Manaurum removed the App Builder — the in-browser Monaco editor at slug
+`appbuilder` — from the product on 2026-08-07 (MAN-1408). Aurum Studio is now the
+only builder it ships. Four files in this skill still described that editor as a
+live surface, in eight places, so an agent reading them would hand a developer a
+path that no longer exists.
+
+### What changed
+
+The `dev` runtime mode is **not** gone, and this release does not pretend it is.
+`runtime.mode: dev`, the `dev_apps` / `dev_app_files` tables and the
+`/api/dev/v2/dev-apps/*` routes are all still mounted in Core. What disappeared is
+the only UI that drove them. So the docs now say exactly that, rather than
+deleting sections that remain technically accurate:
+
+- `SKILL.md` — `runtime.mode: dev` is described as a platform-internal prototyping
+  runtime that no longer has an editor.
+- `references/v2-platform.md` — the `dev` section keeps its contract details under
+  a banner saying no editor ships for it and you should target `hosted`.
+- `references/publishing.md` — the session-cookie publish endpoint and its
+  poll surface are relabelled "dev mode"; the table now records that the route has
+  had no UI client since 2026-08-07. The `mna_*` CLI path is unaffected and is the
+  one to use.
+- `references/capabilities-reference.md` — `capability_denied_in_dev_mode` is
+  described by the manifest field that triggers it rather than by the dead product
+  name, and the `KNOWN_CAPABILITIES` caveat now notes that
+  `app_builder_v2_capabilities.py` is a legacy filename for a live, shared file.
+
+Historical CHANGELOG entries are untouched.
+
 # 2.7.1 — the skill answers to what people actually say (MAN-1453)
 
 ### Why

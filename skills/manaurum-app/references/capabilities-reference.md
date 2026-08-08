@@ -45,7 +45,7 @@ These fire in the gateway, before any handler code, so they apply to **every** c
 | 403 | `tenant_mismatch` | `X-Manaurum-Tenant-Id` is not the tenant your credential was issued for. The header is no longer trusted on its own. |
 | 403 | `user_context_required` | The capability is `auth_mode: "user"` (`os.drive.*`, `os.calendar.*`) and you sent no `X-Manaurum-User-Context`. |
 | 401 | `invalid_user_context` | The forwarded JWT failed verification, or its `tenant_id` / `app_id` doesn't match the call. |
-| 403 | `capability_denied_in_dev_mode` | App Builder dev-mode app calling a capability outside the dev allow-list. Publish the app. |
+| 403 | `capability_denied_in_dev_mode` | A `runtime.mode: dev` app calling a capability outside the dev allow-list. Publish the app. |
 
 Grant enforcement is **unconditional** — it is not "when wired". It runs ahead of quota,
 dispatch and audit, and only dev-mode apps and active BYO hosts short-circuit it. A
@@ -325,8 +325,9 @@ Three things to know before you build on it:
 date-time surfaces as `500 handler_exception`, not a 422 — validate your ISO8601 before
 sending.
 
-> **App Builder caveat.** `os.calendar.*`, `os.drive.*` and `os.files.list` are absent
-> from App Builder's capability auto-detector (`KNOWN_CAPABILITIES`), so generated code
+> **Codegen auto-detector caveat.** `os.calendar.*`, `os.drive.*` and `os.files.list` are absent
+> from the capability auto-detector (`KNOWN_CAPABILITIES` in `app_builder_v2_capabilities.py` —
+> the name is legacy, the file is live and shared by the codegen path), so generated code
 > calling them will NOT be reconciled into the generated manifest and will `403
 > capability_not_granted` at runtime. Add them to `requires_capabilities` by hand.
 
