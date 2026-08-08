@@ -146,7 +146,7 @@ Validation rules (key ones):
 
 - `app_id`: slug `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`. Becomes the URL: `<app_id>.apps.manaurum.com`.
 - `version`: semver MAJOR.MINOR.PATCH (no pre-release, no build metadata). Each redeploy must be a NEW version.
-- `runtime.mode`: `hosted` (the platform runs the container — what this skill teaches), `byo` (you host your own and the platform proxies — advanced), or `dev` (in-browser Monaco editor — App Builder v2 internal).
+- `runtime.mode`: `hosted` (the platform runs the container — what this skill teaches), `byo` (you host your own and the platform proxies — advanced), or `dev` (platform-internal prototyping runtime — it had an in-browser Monaco editor called App Builder until 2026-08-07, when that surface was removed from the product; the mode and its routes remain, but nothing in the OS ships an editor for it).
 - `runtime.port`: the port your container listens on. Default **80**. This is the *only* thing that decides where the gateway sends traffic — see Step 2.
 - **`runtime.api_routes`: the default-deny declaration of every `/api/*` path your container serves.** Get this wrong and your app is broken in a way that looks like a backend bug. Details below.
 - `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`. Default-deny for everything else.

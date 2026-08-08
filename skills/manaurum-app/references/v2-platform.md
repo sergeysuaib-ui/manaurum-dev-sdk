@@ -253,9 +253,11 @@ Manifest looks the same plus **`runtime.entrypoint`** — the absolute HTTPS URL
 
 Your endpoint must implement the BYO health-check contract (`GET /.well-known/manaurum-byo-health` → 200) and verify the platform's HMAC signature on capability dispatch. See R-5 documentation in the manaurum repo if you really need this; most apps shouldn't.
 
-### `dev` (in-browser App Builder v2)
+### `dev` (platform-internal prototyping runtime)
 
-For rapid prototyping in the Monaco editor inside the OS itself. Files live in `dev_apps` / `dev_app_files` tables; output served via `/api/dev/v2/dev-apps/<id>/serve/...`. Limited capability allow-list (no `os.payments.*`, no `os.http.fetch`, no `os.notifications.send_to_user`, no `os.cron.*`, no `os.events.emit`, no `os.apps.call`). Graduate to `hosted` for production.
+> **No editor ships for this mode.** It was driven by an in-browser Monaco editor called *App Builder*, removed from the product on 2026-08-07 — Aurum Studio is the only builder Manaurum ships, and it publishes straight to `hosted`. The mode, its tables and its routes still exist, so the description below stays accurate, but you cannot reach it from the OS and **you should not target it**. Use `hosted`.
+
+Files live in `dev_apps` / `dev_app_files` tables; output served via `/api/dev/v2/dev-apps/<id>/serve/...`. Limited capability allow-list (no `os.payments.*`, no `os.http.fetch`, no `os.notifications.send_to_user`, no `os.cron.*`, no `os.events.emit`, no `os.apps.call`).
 
 ### `egress_allowed_hosts`
 

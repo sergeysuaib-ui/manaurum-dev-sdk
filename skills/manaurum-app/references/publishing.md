@@ -13,13 +13,13 @@ Two publish paths exist and they fail in different ways. Pick the one that match
 
 | Endpoint | Auth | Response | Where a bad manifest surfaces |
 |---|---|---|---|
-| `POST /api/dev/v2/dev-apps/<dev_app_id>/publish` | session cookie (App Builder) | `202 {deploy_job_id, status:"pending"}` | **synchronously — `422`**, before any job exists |
+| `POST /api/dev/v2/dev-apps/<dev_app_id>/publish` | session cookie (dev mode — **no UI client since 2026-08-07**) | `202 {deploy_job_id, status:"pending"}` | **synchronously — `422`**, before any job exists |
 | `POST /api/dev/v2/deploy` | `mna_*` bearer (CLI) | `202 {deploy_job_id, status:"pending"}` | **asynchronously** — the job settles as `status: "failed"` |
 
 Both return `202` and both hand back a `deploy_job_id` to poll. The difference is *when* the manifest
 is checked:
 
-- **App Builder publish** runs the v2 schema validation inside the request. A schema failure is
+- **Dev-mode publish** (the App Builder editor drove this until it was removed on 2026-08-07; the route is still mounted but no UI calls it — use the CLI path) runs the v2 schema validation inside the request. A schema failure is
   `422 {"error": "manifest_validation_failed", "errors": [{"path": "...", "message": "..."}, …]}` —
   one entry per failing assertion, so the editor renders them all at once. Nothing is built.
 - **CLI deploy** validates only the request envelope in-band: a non-base64 `archive_b64` is
@@ -29,11 +29,11 @@ is checked:
 Poll surfaces:
 
 - CLI / `mna_*` token → `GET /api/dev/v2/deploy/<job_id>` (and `/stream` for progress events).
-- App Builder / session cookie → `GET /api/dev/v2/dev-apps/<dev_app_id>/publish-status/<job_id>`.
+- Dev mode / session cookie → `GET /api/dev/v2/dev-apps/<dev_app_id>/publish-status/<job_id>`.
   Same job store, stricter ownership — you must own both the dev app and the job. Everyone else
   gets `404 job_not_found`.
 
-Two more App Builder-only preconditions:
+Two more dev-mode-only preconditions:
 
 - The tenant needs `experiment.platform_v2_hosted_runtime`, otherwise the publish is
   `501 hosted_runtime_not_ready`.
