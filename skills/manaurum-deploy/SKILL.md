@@ -23,6 +23,41 @@ description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platfo
 - An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → "v2 Tokens (Beta)" → Generate. Shown ONCE, save immediately.
 - A project directory containing `manifest.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
 
+### Preflight — validate the manifest BEFORE you pack anything
+
+**The deploy endpoint returns `202 pending` before it has validated your
+manifest.** Validation happens later, on the runner, so a schema error comes back
+*after* the image has built and pushed. Everything below is a multi-minute round
+trip; this is one second:
+
+```bash
+manaurum app validate            # reads ./manifest.json, exits 1 on error
+```
+
+`manaurum app deploy` runs the same check and refuses to upload a manifest that
+fails it, so the CLI path is already covered. If you are deploying with the raw
+`curl` below, run `validate` yourself first. The CLI ships the canonical schema —
+no monorepo checkout needed. With the monorepo to hand, the validator the deploy
+endpoint itself runs is one line:
+
+```python
+import json, sys; sys.path.insert(0, "backend")
+from app.services.manifest_v2_validator import validate_manifest_v2
+validate_manifest_v2(json.load(open("my-app/manifest.json", encoding="utf-8")))
+```
+
+Anywhere else: any JSON Schema library against
+`https://manaurum.com/sdk/manifest_v2.schema.json`.
+
+Then check the two things no schema can check:
+
+- **Every `/api/*` path the code serves is declared in `runtime.api_routes`**,
+  including the bare collection path beside its `/*` wildcard. An undeclared route
+  is `404 route_not_declared` and your container never sees the request.
+- **Each `agent_capabilities[].description` is inside the 400-character cap.**
+  The schema does catch this one, which is the single most common late failure —
+  reason enough to run it locally.
+
 ### Quickstart
 
 ```bash

@@ -11,7 +11,9 @@ Long-form companion to `manaurum-app/SKILL.md`. Covers:
 7. Migrations + dedicated app schemas
 8. Visibility + App Store v2
 
-The canonical JSON Schema lives at `https://manaurum.com/sdk/manifest_v2.schema.json` (and the source at `docs/standards/manifest_v2.schema.json` in the manaurum repo). Validate locally with `jsonschema` if you want fast feedback before the deploy round-trip.
+The canonical JSON Schema lives at `https://manaurum.com/sdk/manifest_v2.schema.json` (and the source at `docs/standards/manifest_v2.schema.json` in the manaurum repo).
+
+> **Validate before you deploy — always.** `POST /api/dev/v2/deploy` answers `202 pending` *before* the manifest is validated; the schema error arrives after the image has built. `manaurum app validate` runs the identical check locally in a second (the CLI ships the schema, so no checkout is needed), and `manaurum app deploy` runs it too and refuses to upload on failure. See `manaurum-app/SKILL.md` § Step 3.9.
 
 ---
 
@@ -147,7 +149,15 @@ The three required keys are `name`, `description`, `input_schema`. What separate
 
 Note the shape of that description: a positive trigger ("use for household to-dos…"), an ordering constraint ("resolve the Space first — do NOT guess"), and a negative ("not for personal reminders"). A description like *"Creates an item."* parses fine and routes badly.
 
-`routing_hints` are informational keywords; `example` is surfaced to the model as a usage hint. Both are optional and both help.
+`routing_hints` are keywords the Assistant matches against; `example` is surfaced to the model as a usage hint. Both are optional and both help.
+
+**Write the hints in the language your user actually speaks.** This is the single most commonly missed line in the whole manifest, and it decides whether the tool is ever found. If the person types «сколько осталось», English-only hints do not match. Carry both:
+
+```json
+"routing_hints": ["stock", "how much is left", "остаток", "сколько осталось"]
+```
+
+Most apps on this platform are not built for an English-speaking user, so English-only hints are the wrong default rather than a safe one. The BurgerIS tools carry Russian hints beside the English ones, and that is why the Assistant finds them. The same applies to the `description`: the model reads it in any language, so the trigger phrasing that matters is the user's.
 
 > **`is_write` is declarative only — the runtime ignores it for hosted apps.** Declare it truthfully anyway (it is the honest statement of intent, and it is what the field will mean once the gap closes), but do not build on it. There is no `is_write` column on `agent_capabilities`, the deploy-time sync never reads the key, and at request time the runtime *derives* it: `dispatch == "backend"` — which is what every v2 hosted app gets, since the manifest cannot set `dispatch` — forces `is_write=True` for **every** capability, readers included. Two consequences today: your read-only capabilities still take the write path (AgentAction rows, confirmation, idempotency dedup), and they are excluded from cross-app insight, which filters on `not is_write`. Tracked as MAN-1425.
 

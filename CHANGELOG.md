@@ -1,3 +1,73 @@
+# 2.8.0 — the Assistant half of the manifest, and a preflight that stops a doomed deploy (MAN-1896, MAN-1897)
+
+### Why
+
+Both came out of building a real app with this skill (MAN-1870, Prep Board inside
+`burgeris-forecast`) and writing down what it cost.
+
+The `agent_capabilities` contract was already documented — the section landed in
+`references/v2-platform.md` in 2.4.0 and is accurate. The problem was that nothing
+in `SKILL.md` sent anyone to it. The always-loaded file taught `runtime.api_routes`
+in detail, shipped a "minimal manifest" with no `agent_capabilities` key in it, and
+mentioned the Assistant once, in passing, in Step 0. So an agent could read the
+skill start to finish, copy the manifest it was shown, and ship an app the OS
+Assistant cannot see — which is what happened. The gap was never the reference
+page; it was the route to it.
+
+The second one is cheaper to explain: `POST /api/dev/v2/deploy` answers `202
+pending` **before** it validates the manifest. Two tool descriptions of 490 and 420
+characters were accepted, built, pushed, and only then rejected against the 400-char
+cap. The identical validator runs locally in about a second.
+
+### What changed
+
+**`skills/manaurum-app/SKILL.md`**
+
+- The **minimal manifest in Step 1 now carries an `agent_capabilities` entry.**
+  This is the highest-leverage line in the release: that block is what people copy,
+  and what it omits is what they ship without. Its `routing_hints` are deliberately
+  bilingual.
+- A **validation-rules bullet** for `agent_capabilities`, stating the 400-character
+  cap next to the `app_id` and `version` format rules — where someone meets it
+  before the deploy does.
+- **New Step 3.5 — "Expose your app to the Assistant".** Short by design, and it
+  links to the reference rather than restating it: declare at least one capability;
+  the description is prompt text under a hard 400-char cap; write `routing_hints`
+  in the language your user actually speaks; serve `POST /agent/<name>`, which is
+  **not** declared in `runtime.api_routes`, still verify the
+  `X-Manaurum-User-Context` JWT because skipping `api_routes` removes the gateway
+  and not the network, and answer `{ok:false, error}` on failure so a broken tool
+  does not take the Assistant's turn down with it.
+- **New Step 3.9 — "Preflight: validate before you deploy"**, ahead of Step 4, plus
+  a matching entry in "What will bite you": a green `202` is not a validated
+  manifest.
+
+**`skills/manaurum-deploy/SKILL.md`** — a **Preflight** section between Prereqs and
+Quickstart. `manaurum app deploy` now preflights on its own, so this is aimed at the
+raw-`curl` path, which is still what the skill teaches.
+
+**`skills/manaurum-app/references/v2-platform.md`**
+
+- `routing_hints` gets the paragraph it was missing: **write them in the user's own
+  language.** English-only hints do not match «сколько осталось», and most apps
+  built here are not built for an English-speaking user. The BurgerIS tools carry
+  Russian hints beside the English ones, and that is why the Assistant finds them.
+- The passing "validate locally if you want fast feedback" clause is now a callout
+  that says why: the deploy validates *after* the build.
+
+### Deliberately unchanged
+
+**The `is_write` paragraph.** It documents the field as declarative-only —
+accurate as of 2026-08-21, verified against `main`: there is no `is_write` column,
+`agent_capability_sync.py` never reads the key, and `sdk_capability_tools.py`
+derives the flag from `dispatch`, which is always `backend` for a hosted app.
+MAN-1425 / MAN-1872 will change that, and are being worked separately; whoever
+lands them owns the one-paragraph update here. Writing the post-fix behaviour now
+would ship a claim that is false until they merge.
+
+
+---
+
 # 2.7.2 — the `dev` runtime has no editor any more (MAN-1577)
 
 ### Why
