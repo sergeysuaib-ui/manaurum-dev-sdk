@@ -15,12 +15,14 @@ routes — and POSTs it **straight to this container** at
 Two consequences that trip people up:
 
 * `/agent/<name>` is NOT a gateway route and must NOT appear in
-  `manifest.runtime.api_routes` — declaring it there does nothing. But
-  that removes the GATEWAY, not the network: `<slug>.apps.manaurum.com`
-  is Traefik straight to this container, so anyone on the internet can
-  POST `/agent/<name>`. The `Depends(auth_claims)` below is the only
-  thing stopping them. Never omit it "because only the runtime calls
-  this".
+  `manifest.runtime.api_routes` — declaring it there does nothing. The
+  Manaurum gateway refuses the `/agent/` prefix on the public hostname
+  (404, MAN-1432), but treat that as the SECOND lock: it covers
+  Manaurum-hosted routing only, a self-hosted or BYO Core may route
+  differently, and one edit to that prefix list reopens the edge. Keep
+  `Depends(auth_claims)` below on every handler. The hazard is the
+  inference, not the exposure — never omit the check "because only the
+  runtime calls this".
 * A valid user_context JWT is AUTHENTICATION, not AUTHORIZATION. The
   runtime will mint one for any user who has the app installed. So every
   handler still runs its own in-container access check — exactly the

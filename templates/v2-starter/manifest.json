@@ -47,6 +47,7 @@
         "properties": {},
         "additionalProperties": false
       },
+      "is_write": false,
       "routing_hints": ["note", "my note", "what did I write"],
       "example": {}
     },

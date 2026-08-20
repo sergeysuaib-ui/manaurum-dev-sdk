@@ -11,7 +11,9 @@ Long-form companion to `manaurum-app/SKILL.md`. Covers:
 7. Migrations + dedicated app schemas
 8. Visibility + App Store v2
 
-The canonical JSON Schema lives at `https://manaurum.com/sdk/manifest_v2.schema.json` (and the source at `docs/standards/manifest_v2.schema.json` in the manaurum repo). Validate locally with `jsonschema` if you want fast feedback before the deploy round-trip.
+The canonical JSON Schema lives at `https://manaurum.com/sdk/manifest_v2.schema.json` (and the source at `docs/standards/manifest_v2.schema.json` in the manaurum repo).
+
+> **Validate before you deploy — always.** `POST /api/dev/v2/deploy` answers `202 pending` *before* the manifest is validated; the schema error arrives after the image has built. `manaurum app validate` runs the identical check locally in a second (the CLI ships the schema, so no checkout is needed), and `manaurum app deploy` runs it too and refuses to upload on failure. See `manaurum-app/SKILL.md` § Step 3.9.
 
 ---
 
@@ -114,13 +116,15 @@ Each entry registers one tool the OS Assistant can call on the user's behalf. On
 
 This dispatch goes **straight to your container**, not through the `/apps/<slug>` gateway — so `/agent/<name>` does **not** need a `runtime.api_routes` entry, and declaring one there does nothing.
 
-> ⚠️ **`/agent/*` is not private. Verify the JWT in every handler.** Skipping `api_routes` removes the *gateway*, not the network: `https://<slug>.apps.manaurum.com` is Traefik straight to your container, so anyone on the internet can POST `/agent/<name>` and reach your code. Verified 2026-07-26 against a live deploy — an unauthenticated `POST /agent/<name>` on the public host is answered by the container, not the gateway. The user_context check is therefore the **only** thing standing between a stranger and your handler, and it must be load-bearing, not belt-and-braces.
+> ⚠️ **Verify the JWT in every `/agent/*` handler — the edge refusal is the second lock, not the first.** The Manaurum gateway refuses the `/agent/` prefix on your public hostname with a 404 (`_RESERVED_PREFIXES` in `v2_app_gateway.py`, MAN-1432, merged 2026-07-27; the check slash-collapses and case-folds first, so `//agent/x` and `/AGENT/x` are covered too). Until that shipped, `POST https://<slug>.apps.manaurum.com/agent/<name>` reached the container and was answered by the app's own 401 — Traefik routes the whole hostname to you, and `runtime.api_routes` only tells the *gateway* what to proxy.
+>
+> Do not read the refusal as "the platform protects me". It covers Manaurum-hosted routing only — a self-hosted or BYO Core may route differently — and one edit to that tuple reopens the edge. The danger was never the exposure, it is the inference: a developer who believes a path is unreachable has no reason to verify a token on it. Every `/agent/<name>` handler depends on the user-context verifier, directly or transitively.
 
 **Declare at least one.** An app with no `agent_capabilities` is invisible to the Assistant — and the Assistant does not say "I can't see that app", it *guesses*, so the user gets confident answers about data it never read. This is the platform's differentiator; treat the field as required, not optional.
 
 #### The manifest entry
 
-The three required keys are `name`, `description`, `input_schema`. What separates a usable tool from a decorative one is the `description`, which is **prompt text for a model, not documentation for a human** — say what the capability does, when to reach for it, and when not to. Hard cap 400 chars (`manifest_v2.schema.json`, matching the runtime's `Tool` validator, `app/agent/types.py:108`); longer is rejected at deploy.
+The three required keys are `name`, `description`, `input_schema`. What separates a usable tool from a decorative one is the `description`, which is **prompt text for a model, not documentation for a human** — say what the capability does, when to reach for it, and when not to. Hard cap 400 chars (`manifest_v2.schema.json`, matching the runtime's `Tool` validator); longer is a **422 at deploy**. MAN-1895 settled both halves of that: the number stays 400 because descriptions measured at ~35% of the tool payload the assistant carries on *every* turn, and deploy is now the single gate — the runtime's truncation survives only as a last-resort guard for rows that never went through deploy validation, and it logs when it fires instead of trimming silently. Keep the routing guidance inside the limit rather than at the end of a longer text: the tail is what gets cut.
 
 ```json
 "agent_capabilities": [
@@ -147,9 +151,17 @@ The three required keys are `name`, `description`, `input_schema`. What separate
 
 Note the shape of that description: a positive trigger ("use for household to-dos…"), an ordering constraint ("resolve the Space first — do NOT guess"), and a negative ("not for personal reminders"). A description like *"Creates an item."* parses fine and routes badly.
 
-`routing_hints` are informational keywords; `example` is surfaced to the model as a usage hint. Both are optional and both help.
+`routing_hints` are keywords the Assistant matches against; `example` is surfaced to the model as a usage hint. Both are optional and both help.
 
-> **`is_write` is declarative only — the runtime ignores it for hosted apps.** Declare it truthfully anyway (it is the honest statement of intent, and it is what the field will mean once the gap closes), but do not build on it. There is no `is_write` column on `agent_capabilities`, the deploy-time sync never reads the key, and at request time the runtime *derives* it: `dispatch == "backend"` — which is what every v2 hosted app gets, since the manifest cannot set `dispatch` — forces `is_write=True` for **every** capability, readers included. Two consequences today: your read-only capabilities still take the write path (AgentAction rows, confirmation, idempotency dedup), and they are excluded from cross-app insight, which filters on `not is_write`. Tracked as MAN-1425.
+**Write the hints in the language your user actually speaks.** This is the single most commonly missed line in the whole manifest, and it decides whether the tool is ever found. If the person types «сколько осталось», English-only hints do not match. Carry both:
+
+```json
+"routing_hints": ["stock", "how much is left", "остаток", "сколько осталось"]
+```
+
+Most apps on this platform are not built for an English-speaking user, so English-only hints are the wrong default rather than a safe one. The BurgerIS tools carry Russian hints beside the English ones, and that is why the Assistant finds them. The same applies to the `description`: the model reads it in any language, so the trigger phrasing that matters is the user's.
+
+> **`is_write` is read by the runtime — declare it on every capability (MAN-1425 / MAN-1872, live 2026-08-21).** It gates the user-approval step, the undoable `AgentAction` journal entry, and idempotency dedup. **Omitting the key is not the same as `false`.** The field is three-valued on purpose: a declared `true` or `false` is used verbatim, while an *undeclared* capability falls back to the transport default — which is `true` for every hosted app. So a pure reader stays gated as a mutation, with an approval prompt in front of it, until you write `"is_write": false` on it. That asymmetry is deliberate: guessing "write" over-protects a reader, guessing "read" would let a real mutation through unannounced, and no app can become read-only by accident. **Mark every reader `false` and every mutator `true`** — this is now the difference between a `list_*` tool that answers instantly and one the user has to approve each time.
 
 #### The handler side
 

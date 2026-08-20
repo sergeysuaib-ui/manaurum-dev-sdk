@@ -35,7 +35,7 @@ forwarded to you, and you must never forward the user context onward to the gate
 | `/api/*` is **default-deny**. Every API path must be listed in `manifest.runtime.api_routes`. | The gateway answers `404 route_not_declared` and the request never reaches your container. Looks like a backend bug with silent logs. |
 | Traefik targets `manifest.runtime.port` (default **80**). `EXPOSE` is never parsed. | Green deploy, then `502 upstream_unreachable` on every request. |
 | The desktop shell requires the `manaurum:ready` handshake within 10 s. | The standalone URL works fine, so you notice nothing — until someone opens the app on the desktop and gets "App is not responding". |
-| `/agent/*` bypasses the gateway but **not the network**. Verify the user-context JWT in every handler. | `<slug>.apps.manaurum.com` is Traefik straight to your container, so an unauthenticated POST to `/agent/<name>` reaches your code. Skipping the check because "only the runtime calls this" ships an open endpoint. |
+| `/agent/*` is not a gateway route. Verify the user-context JWT in every handler anyway. | The gateway refuses the `/agent/` prefix on your public hostname (404, MAN-1432), but that is a second lock: it covers Manaurum-hosted routing only, and one edit reopens the edge. Skipping the check because "only the runtime calls this" is the inference that ships open endpoints. |
 
 **Who can install it** is `manifest.visibility.mode`: `private` (default), `public`, or
 `allow_list` (with `visibility.tenants`). It is enforced when a tenant installs, not by

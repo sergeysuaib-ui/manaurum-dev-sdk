@@ -138,7 +138,23 @@ That is an exact-name match list with **no glob support and no `.env*` entry** �
   },
   "visibility": {
     "mode": "private"
-  }
+  },
+  "agent_capabilities": [
+    {
+      "name": "list_items",
+      "description": "List the user's items, newest first. Use when they ask what they have or what is still outstanding, and before adding something that might be a duplicate. Read-only.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "description": "Max rows to return (default 20)." }
+        },
+        "additionalProperties": false
+      },
+      "is_write": false,
+      "routing_hints": ["items", "what do I have", "список", "что у меня"],
+      "example": { "limit": 10 }
+    }
+  ]
 }
 ```
 
@@ -154,6 +170,7 @@ Validation rules (key ones):
 - `frontend.entry_point`: the URL the **desktop shell** loads in your app's window, normally `/index.html`. Without it your app has a live URL but no window on the desktop. Declaring it is also what makes the `manaurum:ready` handshake (Step 2.5) apply to you.
 - `frontend.icon`: an emoji (`"📋"`, and Libi ships `"🍼"`), a full URL, or an absolute `/api/catalog/media/...` path. Omit it and the launcher serves a generic placeholder. A **relative** path such as `"icons/app.svg"` is not resolved — it is painted into the tile as literal text.
 - `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
+- **`agent_capabilities`: the tools the OS Assistant may call on this app.** Declare at least one — an app with none is invisible to the Assistant, and it does not say so, it *guesses*. Each `description` is prompt text for a model and is **hard-capped at 400 characters**; the deploy rejects a longer one *after* the image has built, so run the preflight in Step 3.9. See Step 3.5.
 - `permissions`: optional top-level array of BROWSER features the OS shell
   delegates to your iframe via the `allow` attribute (Permissions-Policy).
   Enum today: `["microphone"]`. **Required for any app that records audio
@@ -319,6 +336,107 @@ Capabilities available today:
 
 See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
 
+## Step 3.5 — Expose your app to the Assistant (`agent_capabilities`)
+
+This is the half of the manifest that makes the app *part of the OS* rather than a
+website in a window. Each entry in `agent_capabilities[]` becomes one tool the OS
+Assistant can call on the user's behalf.
+
+**Declare at least one.** An app with none is invisible to the Assistant — and it
+does not answer "I can't see that app", it *guesses*, so the user gets a confident
+answer about data nothing ever read.
+
+Three things to get right. The full contract — dispatch, trust, the handler
+pattern, a production example — is in `references/v2-platform.md`
+§ `agent_capabilities[]`; read it before you write the handlers.
+
+**1. The manifest entry.** `name`, `description`, `input_schema` are required;
+`is_write`, `routing_hints` and `example` are optional and all three help.
+**Mark every reader `"is_write": false` and every mutator `true`.** The runtime
+reads this (since MAN-1425/MAN-1872) to decide whether the user has to approve
+the call, whether it is journalled with an undo, and whether it is deduped —
+and *omitting* the key is not the same as `false`: an undeclared capability
+falls back to the transport default, which is `true`. Leave it off a `list_*`
+tool and the user gets an approval prompt every time they ask a question. The `description` is
+**prompt text for a model, not documentation for a human** — say what the tool
+does, when to reach for it, and when *not* to. It is **hard-capped at 400
+characters**, and a longer one fails the deploy only after the image has built, so
+run Step 3.9 first. Neighbouring capabilities sitting at 380 will not teach you
+the limit; the validator will.
+
+**2. Write `routing_hints` in the language your user actually speaks.** The hints
+are a large part of how the Assistant finds the tool at all. If the person types
+«сколько осталось», English-only hints do not match — carry both:
+
+```json
+"routing_hints": ["stock", "how much is left", "остаток", "сколько осталось"]
+```
+
+This matters more here than anywhere else in the manifest, because most people
+building on this platform are not building for an English-speaking user. The
+BurgerIS tools carry Russian hints beside the English ones, and that is why the
+Assistant finds them.
+
+**3. Serve `POST /agent/<name>` in your container.** Three rules, all of which
+have cost someone a deploy:
+
+- **These paths are NOT declared in `runtime.api_routes`.** The runtime calls your
+  container directly, not through the gateway. An entry there is not an error — it
+  simply does nothing.
+- **Verify the JWT anyway.** The call carries a `user_context` JWT in
+  `X-Manaurum-User-Context`, exactly like an `auth: "user"` route. The Manaurum
+  gateway does refuse `/agent/*` on your public hostname (404, since MAN-1432),
+  but treat that as the *second* lock: it covers Manaurum-hosted routing only, a
+  self-hosted or BYO Core may route differently, and one edit to that prefix list
+  reopens the edge. The hazard is the inference, not the exposure — a developer
+  who believes a path is unreachable has no reason to check a token on it.
+- **Answer `{"ok": true, "output": …}`, and on failure `{"ok": false, "error": …}`.**
+  The `ok:false` convention is what lets the Assistant report a failed tool and
+  keep going instead of losing the turn.
+
+A working handler ships in the starter (`src/agent_routes.py`), and
+`family-space-v2` is the production example. The deeper contract — trust levels,
+approval semantics, the other integration paths — is
+`docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manaurum repo.
+
+## Step 3.9 — Preflight: validate before you deploy
+
+**A `202 pending` is not a validated manifest.** The deploy endpoint accepts the
+job and validates the manifest later, on the runner — so a schema error comes back
+*after* the image has built and pushed. That is a multi-minute round trip to learn
+something knowable in one second. Run this before every deploy:
+
+```bash
+manaurum app validate            # reads ./manifest.json
+```
+
+The CLI ships the canonical schema, so it needs no monorepo checkout. `manaurum
+app deploy` runs the same check itself and refuses to upload a manifest that fails
+it. With the monorepo to hand, the validator the deploy endpoint runs is one line:
+
+```python
+import json, sys; sys.path.insert(0, "backend")
+from app.services.manifest_v2_validator import validate_manifest_v2
+validate_manifest_v2(json.load(open("my-app/manifest.json", encoding="utf-8")))
+```
+
+Anywhere else, validate against `https://manaurum.com/sdk/manifest_v2.schema.json`
+with any JSON Schema library.
+
+The single failure the schema catches most often is the **400-character cap on
+`agent_capabilities[].description`** — which is exactly why running it locally is
+worth the second it takes.
+
+Two things no schema can check for you, so check them by eye:
+
+- **Every `/api/*` path your code serves is declared in `runtime.api_routes`** —
+  including the bare collection path next to its `/*` wildcard (`/api/tasks` *and*
+  `/api/tasks/*`). An undeclared route is a `404 route_not_declared` your container
+  never sees; nothing can infer which routes your code registered.
+- **`/agent/<name>` is not in `api_routes`, and misspelled `runtime` keys validate
+  green.** The `runtime` sub-object is not strict, so `"prot": 8000` deploys
+  cleanly and does nothing.
+
 ## Step 4 — Deploy
 
 You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → "v2 Tokens (Beta)" → Generate**. Shown once, save to `.env.manaurum`:
@@ -456,6 +574,8 @@ Everything here shares one property: it works when you open `https://<slug>.apps
 **Keep `.env*` out of the app directory.** The packager excludes `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.venv` — not `.env*`. Anything else you don't want in the image needs a `.dockerignore`.
 
 **Unknown `runtime` keys validate and do nothing.** The `runtime` sub-object isn't strict, so `"prot": 8000` or an invented `env_secrets` passes the schema, deploys green, and is silently ignored. Typos here cost you a debugging session, not a 422.
+
+**A green `202` is not a validated manifest.** `POST /deploy` accepts the job and validates the manifest later, on the runner, so a schema error surfaces only after the image has built — most often an `agent_capabilities[].description` over 400 characters. `manaurum app validate` turns that round trip into an instant local error; Step 3.9.
 
 **A capability in your manifest is not a capability you may call.** Grants are enforced per-install ahead of dispatch; an empty grant list is a deny, not a pass. Adding a capability and redeploying still 403s until the tenant's install grants are extended.
 

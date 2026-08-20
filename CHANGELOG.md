@@ -1,3 +1,109 @@
+# 2.8.0 — the Assistant half of the manifest, a preflight that stops a doomed deploy, and a security claim that went stale (MAN-1896, MAN-1897, MAN-1452; documents MAN-1425/1872 and MAN-1895)
+
+### Why
+
+Both came out of building a real app with this skill (MAN-1870, Prep Board inside
+`burgeris-forecast`) and writing down what it cost.
+
+The `agent_capabilities` contract was already documented — the section landed in
+`references/v2-platform.md` in 2.4.0 and is accurate. The problem was that nothing
+in `SKILL.md` sent anyone to it. The always-loaded file taught `runtime.api_routes`
+in detail, shipped a "minimal manifest" with no `agent_capabilities` key in it, and
+mentioned the Assistant once, in passing, in Step 0. So an agent could read the
+skill start to finish, copy the manifest it was shown, and ship an app the OS
+Assistant cannot see — which is what happened. The gap was never the reference
+page; it was the route to it.
+
+The second one is cheaper to explain: `POST /api/dev/v2/deploy` answers `202
+pending` **before** it validates the manifest. Two tool descriptions of 490 and 420
+characters were accepted, built, pushed, and only then rejected against the 400-char
+cap. The identical validator runs locally in about a second.
+
+### What changed
+
+**`skills/manaurum-app/SKILL.md`**
+
+- The **minimal manifest in Step 1 now carries an `agent_capabilities` entry.**
+  This is the highest-leverage line in the release: that block is what people copy,
+  and what it omits is what they ship without. Its `routing_hints` are deliberately
+  bilingual.
+- A **validation-rules bullet** for `agent_capabilities`, stating the 400-character
+  cap next to the `app_id` and `version` format rules — where someone meets it
+  before the deploy does.
+- **New Step 3.5 — "Expose your app to the Assistant".** Short by design, and it
+  links to the reference rather than restating it: declare at least one capability;
+  the description is prompt text under a hard 400-char cap; write `routing_hints`
+  in the language your user actually speaks; serve `POST /agent/<name>`, which is
+  **not** declared in `runtime.api_routes`, still verify the
+  `X-Manaurum-User-Context` JWT because skipping `api_routes` removes the gateway
+  and not the network, and answer `{ok:false, error}` on failure so a broken tool
+  does not take the Assistant's turn down with it.
+- **New Step 3.9 — "Preflight: validate before you deploy"**, ahead of Step 4, plus
+  a matching entry in "What will bite you": a green `202` is not a validated
+  manifest.
+
+**`skills/manaurum-deploy/SKILL.md`** — a **Preflight** section between Prereqs and
+Quickstart. `manaurum app deploy` now preflights on its own, so this is aimed at the
+raw-`curl` path, which is still what the skill teaches.
+
+**`skills/manaurum-app/references/v2-platform.md`**
+
+- `routing_hints` gets the paragraph it was missing: **write them in the user's own
+  language.** English-only hints do not match «сколько осталось», and most apps
+  built here are not built for an English-speaking user. The BurgerIS tools carry
+  Russian hints beside the English ones, and that is why the Assistant finds them.
+- The passing "validate locally if you want fast feedback" clause is now a callout
+  that says why: the deploy validates *after* the build.
+
+**MAN-1452 — `/agent/*` was still documented as internet-reachable.** Folded in
+because this release edits that exact paragraph, and adding a corrected copy in
+`SKILL.md` while the stale one stood in `references/v2-platform.md` would have left
+the plugin contradicting itself on a security instruction.
+
+The claim was true when written and stopped being true on 2026-07-27: MAN-1432 added
+`_RESERVED_PREFIXES = ("/agent/",)` to `v2_app_gateway.py`, so the gateway now answers
+404 on that prefix from an app's public hostname (slash-collapsed and case-folded
+first, so `//agent/x` and `/AGENT/x` are covered). Verified against `main` today. The
+monorepo half of this was fixed in MAN-1444; the plugin was the untouched twin.
+
+Corrected in three places — `references/v2-platform.md`, `README.md`, and the
+starter's `src/agent_routes.py` docstring — and **the instruction is unchanged in all
+three**: verify the JWT in every handler. The edge refusal is the second lock. It
+covers Manaurum-hosted routing only, a self-hosted or BYO Core may route differently,
+and one edit to that tuple reopens the edge. The danger was never the exposure, it is
+the inference: a developer who believes a path is unreachable has no reason to check a
+token on it.
+
+### `is_write` — the fix landed mid-flight, so this documents the new behaviour
+
+This release was written expecting to leave `is_write` alone: MAN-1425 / MAN-1872
+were both still open, and documenting a post-fix behaviour that had not shipped
+would have been a false claim. **MAN-1425 merged while this branch was open**
+(monorepo PR #1722), so the paragraph is updated to what the runtime does now,
+verified against `main` rather than against the PR description:
+
+- `agent_capabilities.is_write` is a real column, the deploy-time sync carries the
+  manifest value into it, and `_resolve_is_write` reads it.
+- It is **three-valued on purpose**. A declared `true`/`false` is used verbatim; an
+  *undeclared* capability falls back to the transport default, which is `true` for
+  every hosted app. **Omitting the key is not the same as `false`** — so a pure
+  reader stays gated behind an approval prompt until someone writes
+  `"is_write": false` on it, and no app becomes read-only by accident.
+- Consequently three examples that modelled the old, dead field were wrong in a way
+  that now costs users a prompt per question, and are fixed: the starter's
+  `read_my_note`, the `manaurum-setup` example, and Step 1's new entry are all
+  marked `"is_write": false`.
+
+### MAN-1895 settled the 400-character cap, so the skill states the outcome
+
+Also merged in the meantime. The number **stays 400** — descriptions measured at
+~35% of the tool payload the assistant carries on every turn — and deploy is now the
+single gate: the runtime's truncation survives only as a last-resort guard for rows
+that bypassed deploy validation, and it logs when it fires instead of trimming in
+silence. The skill previously implied deploy and runtime disagreed; they no longer do.
+
+---
+
 # 2.7.2 — the `dev` runtime has no editor any more (MAN-1577)
 
 ### Why
