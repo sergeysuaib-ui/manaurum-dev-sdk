@@ -1,4 +1,4 @@
-# 2.8.0 — the Assistant half of the manifest, a preflight that stops a doomed deploy, and a security claim that went stale (MAN-1896, MAN-1897, MAN-1452)
+# 2.8.0 — the Assistant half of the manifest, a preflight that stops a doomed deploy, and a security claim that went stale (MAN-1896, MAN-1897, MAN-1452; documents MAN-1425/1872 and MAN-1895)
 
 ### Why
 
@@ -74,16 +74,33 @@ and one edit to that tuple reopens the edge. The danger was never the exposure, 
 the inference: a developer who believes a path is unreachable has no reason to check a
 token on it.
 
-### Deliberately unchanged
+### `is_write` — the fix landed mid-flight, so this documents the new behaviour
 
-**The `is_write` paragraph.** It documents the field as declarative-only —
-accurate as of 2026-08-21, verified against `main`: there is no `is_write` column,
-`agent_capability_sync.py` never reads the key, and `sdk_capability_tools.py`
-derives the flag from `dispatch`, which is always `backend` for a hosted app.
-MAN-1425 / MAN-1872 will change that, and are being worked separately; whoever
-lands them owns the one-paragraph update here. Writing the post-fix behaviour now
-would ship a claim that is false until they merge.
+This release was written expecting to leave `is_write` alone: MAN-1425 / MAN-1872
+were both still open, and documenting a post-fix behaviour that had not shipped
+would have been a false claim. **MAN-1425 merged while this branch was open**
+(monorepo PR #1722), so the paragraph is updated to what the runtime does now,
+verified against `main` rather than against the PR description:
 
+- `agent_capabilities.is_write` is a real column, the deploy-time sync carries the
+  manifest value into it, and `_resolve_is_write` reads it.
+- It is **three-valued on purpose**. A declared `true`/`false` is used verbatim; an
+  *undeclared* capability falls back to the transport default, which is `true` for
+  every hosted app. **Omitting the key is not the same as `false`** — so a pure
+  reader stays gated behind an approval prompt until someone writes
+  `"is_write": false` on it, and no app becomes read-only by accident.
+- Consequently three examples that modelled the old, dead field were wrong in a way
+  that now costs users a prompt per question, and are fixed: the starter's
+  `read_my_note`, the `manaurum-setup` example, and Step 1's new entry are all
+  marked `"is_write": false`.
+
+### MAN-1895 settled the 400-character cap, so the skill states the outcome
+
+Also merged in the meantime. The number **stays 400** — descriptions measured at
+~35% of the tool payload the assistant carries on every turn — and deploy is now the
+single gate: the runtime's truncation survives only as a last-resort guard for rows
+that bypassed deploy validation, and it logs when it fires instead of trimming in
+silence. The skill previously implied deploy and runtime disagreed; they no longer do.
 
 ---
 

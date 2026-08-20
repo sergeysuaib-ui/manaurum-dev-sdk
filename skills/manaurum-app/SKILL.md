@@ -150,6 +150,7 @@ That is an exact-name match list with **no glob support and no `.env*` entry** �
         },
         "additionalProperties": false
       },
+      "is_write": false,
       "routing_hints": ["items", "what do I have", "список", "что у меня"],
       "example": { "limit": 10 }
     }
@@ -350,7 +351,13 @@ pattern, a production example — is in `references/v2-platform.md`
 § `agent_capabilities[]`; read it before you write the handlers.
 
 **1. The manifest entry.** `name`, `description`, `input_schema` are required;
-`routing_hints` and `example` are optional and both help. The `description` is
+`is_write`, `routing_hints` and `example` are optional and all three help.
+**Mark every reader `"is_write": false` and every mutator `true`.** The runtime
+reads this (since MAN-1425/MAN-1872) to decide whether the user has to approve
+the call, whether it is journalled with an undo, and whether it is deduped —
+and *omitting* the key is not the same as `false`: an undeclared capability
+falls back to the transport default, which is `true`. Leave it off a `list_*`
+tool and the user gets an approval prompt every time they ask a question. The `description` is
 **prompt text for a model, not documentation for a human** — say what the tool
 does, when to reach for it, and when *not* to. It is **hard-capped at 400
 characters**, and a longer one fails the deploy only after the image has built, so

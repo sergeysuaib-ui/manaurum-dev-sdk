@@ -122,6 +122,7 @@ shape with the noise removed, so you can see what is actually required:
         "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 25}},
         "additionalProperties": false
       },
+      "is_write": false,
       "routing_hints": ["items", "list", "what do I have"]
     }
   ],
