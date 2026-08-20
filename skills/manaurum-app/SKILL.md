@@ -377,10 +377,12 @@ have cost someone a deploy:
   container directly, not through the gateway. An entry there is not an error — it
   simply does nothing.
 - **Verify the JWT anyway.** The call carries a `user_context` JWT in
-  `X-Manaurum-User-Context`, exactly like an `auth: "user"` route. Skipping
-  `api_routes` removes the *gateway*, not the *network*: `https://<slug>.apps.manaurum.com`
-  is Traefik straight to your container, so an unauthenticated POST from the open
-  internet reaches your handler. That check is the only thing in the way.
+  `X-Manaurum-User-Context`, exactly like an `auth: "user"` route. The Manaurum
+  gateway does refuse `/agent/*` on your public hostname (404, since MAN-1432),
+  but treat that as the *second* lock: it covers Manaurum-hosted routing only, a
+  self-hosted or BYO Core may route differently, and one edit to that prefix list
+  reopens the edge. The hazard is the inference, not the exposure — a developer
+  who believes a path is unreachable has no reason to check a token on it.
 - **Answer `{"ok": true, "output": …}`, and on failure `{"ok": false, "error": …}`.**
   The `ok:false` convention is what lets the Assistant report a failed tool and
   keep going instead of losing the turn.

@@ -1,4 +1,4 @@
-# 2.8.0 — the Assistant half of the manifest, and a preflight that stops a doomed deploy (MAN-1896, MAN-1897)
+# 2.8.0 — the Assistant half of the manifest, a preflight that stops a doomed deploy, and a security claim that went stale (MAN-1896, MAN-1897, MAN-1452)
 
 ### Why
 
@@ -54,6 +54,25 @@ raw-`curl` path, which is still what the skill teaches.
   Russian hints beside the English ones, and that is why the Assistant finds them.
 - The passing "validate locally if you want fast feedback" clause is now a callout
   that says why: the deploy validates *after* the build.
+
+**MAN-1452 — `/agent/*` was still documented as internet-reachable.** Folded in
+because this release edits that exact paragraph, and adding a corrected copy in
+`SKILL.md` while the stale one stood in `references/v2-platform.md` would have left
+the plugin contradicting itself on a security instruction.
+
+The claim was true when written and stopped being true on 2026-07-27: MAN-1432 added
+`_RESERVED_PREFIXES = ("/agent/",)` to `v2_app_gateway.py`, so the gateway now answers
+404 on that prefix from an app's public hostname (slash-collapsed and case-folded
+first, so `//agent/x` and `/AGENT/x` are covered). Verified against `main` today. The
+monorepo half of this was fixed in MAN-1444; the plugin was the untouched twin.
+
+Corrected in three places — `references/v2-platform.md`, `README.md`, and the
+starter's `src/agent_routes.py` docstring — and **the instruction is unchanged in all
+three**: verify the JWT in every handler. The edge refusal is the second lock. It
+covers Manaurum-hosted routing only, a self-hosted or BYO Core may route differently,
+and one edit to that tuple reopens the edge. The danger was never the exposure, it is
+the inference: a developer who believes a path is unreachable has no reason to check a
+token on it.
 
 ### Deliberately unchanged
 
