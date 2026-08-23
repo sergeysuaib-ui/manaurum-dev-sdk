@@ -314,7 +314,7 @@ Capabilities available today:
 | `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. Binary payloads via `body_base64` / `response_format: "base64"` (~5 MB each way). |
 | `os.compliance.audit_query` | Read your own capability call audit log. |
 | `os.apps.call` | Sync RPC to another v2 app. |
-| `os.drive.stage` / `.publish` / `.list` / `.read` / `.write` | The USER's file system (Files app), consent-gated. **User-scoped — forward `X-Manaurum-User-Context`.** |
+| `os.drive.stage` / `.publish` / `.list` / `.read` / `.write` / `.delete` | The USER's file system (Files app), consent-gated. Write creates or overwrites (versioned, by `file_id`); delete is soft (Trash). **User-scoped — forward `X-Manaurum-User-Context`.** |
 | `os.calendar.list_events` / `os.calendar.create_event` | The user's calendar. **User-scoped — forward `X-Manaurum-User-Context`.** |
 
 See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
