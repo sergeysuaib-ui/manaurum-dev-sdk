@@ -1,3 +1,38 @@
+# 2.7.3 — Drive writes grew up: overwrite, delete, real limits (MAN-1958 + MAN-1959)
+
+### Why
+
+Manaurum PR #1756 changed the `os.drive.*` contract: `os.drive.write` can now
+OVERWRITE an existing file (versioned, by `file_id`), a new `os.drive.delete`
+soft-deletes into the user's Trash, and publish limits moved to parity with
+the manual Files upload (50 MB, office formats + archives + audio). This skill
+still described the old surface — "create-only", "5 MB, no office formats" —
+so an agent reading it would tell a developer that a weekly-report app cannot
+update its own report, which is exactly the limitation the platform just
+removed. One caveat had also gone stale on its own: the codegen auto-detector
+HAS covered `os.drive.*` / `os.calendar.*` / `os.files.list` since MAN-1445
+(2026-08-02), and the reference still warned it did not.
+
+### What changed
+
+- `references/capabilities-reference.md` — the `os.drive.*` chapter:
+  - publish limits: 50 MB (manual-upload parity), extension list now
+    `md markdown txt csv json pdf png jpg jpeg webp gif doc docx xls xlsx zip
+    rar mp3 m4a ogg oga wav flac`; svg/html stay out deliberately;
+  - `os.drive.write` documents both modes — `folder_id` (create) XOR `file_id`
+    (overwrite: prior content becomes a user-restorable version; name and MIME
+    immutable, 415 `overwrite_cannot_change_type`; optional `if_match` etag →
+    412 `version_conflict`);
+  - new `os.drive.delete {file_id}` — soft delete into Trash (30 days,
+    restorable), same authorisation as write;
+  - `list`/`read` outputs document the `etag` field;
+  - the stale auto-detector caveat replaced with the post-MAN-1445 truth.
+- `SKILL.md` — the capability table row adds `.delete` and the
+  create-or-overwrite wording.
+
+**Do not merge before Manaurum PR #1756 is deployed to prod** — these docs
+must not promise a capability the gateway does not serve yet.
+
 # 2.7.2 — the `dev` runtime has no editor any more (MAN-1577)
 
 ### Why

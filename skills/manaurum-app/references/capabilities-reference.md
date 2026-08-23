@@ -204,7 +204,7 @@ For user-facing documents use `os.drive.*` below.
 
 ## `os.drive.*` — the user's Drive (consent-gated, user-context required)
 
-The file system the USER owns and sees in the Files app. All five capabilities
+The file system the USER owns and sees in the Files app. All six capabilities
 are `auth_mode: user`: every call MUST forward the inbound
 `X-Manaurum-User-Context` JWT (60s TTL — forward immediately, never store).
 Declare each in `requires_capabilities`. Missing/invalid context → 403/401.
@@ -225,19 +225,23 @@ unaddressable by anyone else. PUT your bytes to `upload_url`, then publish.
 **Output:** `{ "file_id", "filename", "folder_id", "folder_name", "size_bytes" }`
 
 The document becomes the user's OWN file (folder named after your app by
-default), they get a notification, your app keeps no residual access. Limits:
-5 MB; extensions `md txt csv json pdf png jpg jpeg webp` (no svg/html);
-binary types magic-byte-sniffed; per-user rate limit (429).
+default), they get a notification, your app keeps no residual access. Limits
+(manual-upload parity since MAN-1959): 50 MB; extensions `md markdown txt csv
+json pdf png jpg jpeg webp gif doc docx xls xlsx zip rar mp3 m4a ogg oga wav
+flac` (no svg/html — those stay out deliberately); binary types
+magic-byte-sniffed (a "xlsx" that is not a zip is a 415); per-user rate
+limit (429).
 
-### `os.drive.list` / `os.drive.read` / `os.drive.write` — granted folders
+### `os.drive.list` / `.read` / `.write` / `.delete` — granted folders
 
 Standing access after the folder owner grants your app viewer/editor in
 Files → Share. Effective access = the grant INTERSECTED with the acting
-user's own access; ungranted folders read as 404.
+user's own access; ungranted folders (and files inside them) read as 404.
 
-- `os.drive.list` **Input:** `{ "folder_id" }` → `{ folder, folders[], files[] }`
-- `os.drive.read` **Input:** `{ "file_id" }` → `{ file, download_url, expires_at }` (signed, ~5 min, attachment-pinned)
-- `os.drive.write` **Input:** `{ "staging_key", "filename", "folder_id" }` → create-only; requires editor grant AND the acting user owns the folder (403 `write_requires_folder_owner`)
+- `os.drive.list` **Input:** `{ "folder_id" }` → `{ folder, folders[], files[] }` (each file carries an `etag` for conditional overwrites)
+- `os.drive.read` **Input:** `{ "file_id" }` → `{ file, download_url, expires_at }` (signed, ~5 min, attachment-pinned; `file.etag` included)
+- `os.drive.write` **Input:** `{ "staging_key", "filename", "folder_id" | "file_id", "if_match"? }` → exactly ONE of `folder_id` / `file_id` (schema-enforced). `folder_id`: create a NEW file. `file_id` (MAN-1958): overwrite that file's CONTENT — the prior content becomes a version the user can inspect and restore in Files; the file keeps its name and type (`filename` must map to the file's current MIME, else 415 `overwrite_cannot_change_type`). Pass `if_match` (the `etag` you last saw) to get 412 `version_conflict` on a concurrent change instead of last-write-wins. Requires editor grant AND the acting user owns the folder (403 `write_requires_folder_owner`).
+- `os.drive.delete` **Input:** `{ "file_id" }` (MAN-1958) → SOFT-delete into the user's Trash (restorable for 30 days; version history untouched). Same authorisation as write. There is no hard delete.
 
 ### Drive events + the picker
 
@@ -325,11 +329,13 @@ Three things to know before you build on it:
 date-time surfaces as `500 handler_exception`, not a 422 — validate your ISO8601 before
 sending.
 
-> **Codegen auto-detector caveat.** `os.calendar.*`, `os.drive.*` and `os.files.list` are absent
-> from the capability auto-detector (`KNOWN_CAPABILITIES` in `app_builder_v2_capabilities.py` —
-> the name is legacy, the file is live and shared by the codegen path), so generated code
-> calling them will NOT be reconciled into the generated manifest and will `403
-> capability_not_granted` at runtime. Add them to `requires_capabilities` by hand.
+> **Codegen auto-detector note.** Since MAN-1445 (2026-08-02) the capability
+> auto-detector (`KNOWN_CAPABILITIES` in `app_builder_v2_capabilities.py` — the
+> name is legacy, the file is live and shared by the codegen path) covers the
+> FULL gateway registry, including `os.calendar.*`, `os.drive.*` (with
+> `os.drive.delete`) and `os.files.list`; a parity test pins the list to the
+> registry. Hand-written code still declares `requires_capabilities` itself —
+> the detector only reconciles GENERATED code.
 
 ---
 
