@@ -36,7 +36,8 @@ my-app/
     ├── conftest.py      # the user_context JWT fixture + a fake os.kv
     ├── test_auth.py     # the verifier, incl. every way it can be wrong
     ├── test_agent.py    # the handlers: identity comes from claims, never the body
-    └── test_routes.py   # the wiring: real HTTP, so an open route fails a test
+    ├── test_routes.py   # the wiring: real HTTP, so an open route fails a test
+    └── test_documented.py  # every function and class carries a docstring
 ```
 
 There is no `migrations/` directory: this starter persists through `os.kv`
@@ -64,13 +65,21 @@ the user's behalf — read that section first when something turns out wrong.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                      # 19 passed
+pytest                      # 32 passed
 ```
 
 They need no database, no Manaurum account and no network: `conftest.py`
 generates a throwaway RSA keypair and signs its own `user_context` tokens,
 so the auth path is testable offline. Break something on purpose and watch
 them fail — that is the fastest way to learn the contract.
+
+One of them checks documentation rather than behaviour. `test_documented.py`
+fails on any function or class under `src/` with no docstring, so an
+undocumented helper is a red test in a second instead of a puzzle for whoever
+reads this app in a month. Write the docstring in the same edit as the function
+— Google style (`Args:` / `Returns:` / `Raises:`), spent on what the signature
+cannot say: units, what an empty return means, which failure is normal. Keep the
+test.
 
 Try these three, because each one is a way a real v2 app has shipped broken:
 make `note_key()` return a constant, drop `Depends(auth_claims)` from an

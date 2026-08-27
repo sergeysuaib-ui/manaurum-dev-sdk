@@ -63,6 +63,8 @@ app = FastAPI(
 # dispatch and the app stays invisible to the Assistant.
 app.include_router(agent_routes.router)
 
+#: Where the browser bundle lives. Resolved from this file so it is
+#: correct whatever the container's working directory turns out to be.
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -71,7 +73,16 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 @app.get("/api/me")
 async def read_me(claims: UserContextClaims = Depends(auth_claims)) -> dict[str, str]:
-    """Who is calling. The smallest possible `auth: "user"` route."""
+    """Who is calling. The smallest possible `auth: "user"` route.
+
+    Args:
+        claims: The verified caller, injected by the dependency.
+
+    Returns:
+        The four claims the gateway signs. Useful as a first request
+        from the UI: if this returns 200, the handshake and the JWT path
+        both work.
+    """
     return {
         "user_id": claims.user_id,
         "tenant_id": claims.tenant_id,
@@ -82,7 +93,19 @@ async def read_me(claims: UserContextClaims = Depends(auth_claims)) -> dict[str,
 
 @app.get("/api/notes")
 async def get_notes(claims: UserContextClaims = Depends(auth_claims)) -> dict[str, Any]:
-    """Read this user's note out of os.kv."""
+    """Read this user's note out of os.kv.
+
+    Args:
+        claims: The verified caller, injected.
+
+    Returns:
+        ``{"text": ...}``, with ``""`` for a user who has never saved one.
+
+    Raises:
+        HTTPException: 503 when the gateway is unreachable or the
+            capability is not granted — retryable, and distinct from a
+            4xx the caller could fix.
+    """
     try:
         return {"text": await read_note(claims.user_id)}
     except CapabilityError as exc:
@@ -94,7 +117,22 @@ async def put_notes(
     request: Request,
     claims: UserContextClaims = Depends(auth_claims),
 ) -> dict[str, Any]:
-    """Write this user's note into os.kv."""
+    """Write this user's note into os.kv.
+
+    Args:
+        request: The raw request; the body is parsed by hand here to keep
+            the starter's dependency surface small.
+        claims: The verified caller, injected. The note is keyed by
+            ``claims.user_id`` — a ``user_id`` in the BODY would let any
+            caller write to any user's note.
+
+    Returns:
+        ``{"text": ...}`` as actually stored (the value is truncated).
+
+    Raises:
+        HTTPException: 422 ``expected_json_text_string`` on a malformed
+            body; 503 when the gateway is unavailable.
+    """
     body = await request.json()
     if not isinstance(body, dict) or not isinstance(body.get("text"), str):
         raise HTTPException(status_code=422, detail="expected_json_text_string")
@@ -109,7 +147,14 @@ async def put_notes(
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    """Liveness. Keep it dependency-free — no DB, no gateway calls."""
+    """Liveness. Keep it dependency-free — no DB, no gateway calls.
+
+    Probed on the internal network after every deploy, which is why it
+    touches nothing: a gateway blip must not roll back a good release.
+
+    Returns:
+        ``{"status": "ok", "version": ...}``.
+    """
     return {"status": "ok", "version": os.environ.get("MANAURUM_VERSION", "")}
 
 
@@ -128,6 +173,18 @@ async def serve_static(full_path: str, request: Request) -> FileResponse:
     client-side route: no file extension in the last segment, and the
     caller accepts HTML (a browser navigating always does; a scanner
     sending ``Accept: */*`` does not). Everything else gets a 404.
+
+    Args:
+        full_path: Everything after the leading slash.
+        request: Used for its ``Accept`` header.
+
+    Returns:
+        The requested file, or index.html for a client-side route.
+
+    Raises:
+        HTTPException: 404 for an unknown asset, for anything under
+            ``api/`` this file does not implement, and for any request
+            that does not look like a navigation.
     """
     if full_path.startswith("api/"):
         # Only reachable for a path the manifest declared but this file

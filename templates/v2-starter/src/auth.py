@@ -18,9 +18,14 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
+#: Request header the gateway puts the freshly minted JWT in.
 USER_CONTEXT_HEADER = "X-Manaurum-User-Context"
+#: Core signs with RS256; we verify with the matching public key only.
 _JWT_ALGORITHM = "RS256"
+#: Expected ``iss``. Rejecting anything else stops a token minted for
+#: another system being replayed at us.
 _JWT_ISSUER = "manaurum-core"
+#: Expected ``aud``. Every v2 app shares this audience value.
 _JWT_AUDIENCE = "manaurum-app"
 
 
@@ -32,6 +37,15 @@ class UserContextClaims:
     ``app_id``, ``app_version``. There is deliberately no
     ``workspace_id`` — the token does not carry one, so do not key your
     data on a workspace.
+
+    Attributes:
+        user_id: The token's ``sub``. Never empty on a verified instance;
+            `verify_user_context` 401s instead of constructing one.
+        tenant_id: Which tenant the caller belongs to. Empty string, not
+            None, when the claim is absent.
+        app_id: The app the gateway minted this token for.
+        app_version: The app version it was minted for — useful when an
+            old iframe is still open in someone's desktop.
     """
 
     user_id: str
@@ -45,6 +59,21 @@ def verify_user_context(token: str) -> UserContextClaims:
 
     Kept separate from the request so it is directly unit-testable —
     see tests/test_auth.py, which signs tokens with a throwaway keypair.
+
+    Args:
+        token: The raw compact JWT from the request header.
+
+    Returns:
+        The verified claims.
+
+    Raises:
+        HTTPException: 503 ``core_user_context_public_key_not_provisioned``
+            when the container has no public key — fail closed, an
+            unprovisioned key must never read as "trusted". 401
+            ``user_context_expired`` (tokens live 60s, so this normally
+            means one was stored and replayed),
+            ``user_context_invalid`` (bad signature, issuer or audience),
+            or ``user_context_no_subject``.
     """
     pem = (os.environ.get("CORE_USER_CONTEXT_PUBLIC_KEY_PEM") or "").strip()
     if not pem:
@@ -88,6 +117,18 @@ def auth_claims(request: Request) -> UserContextClaims:
 
     Use it on every `auth: "user"` route AND on every `/agent/*` handler:
     ``claims: UserContextClaims = Depends(auth_claims)``.
+
+    Args:
+        request: Injected by FastAPI.
+
+    Returns:
+        The verified caller for this request.
+
+    Raises:
+        HTTPException: 401 ``missing_user_context`` when the header is
+            absent — either the route is declared `auth: "anonymous"`, or
+            the request did not come through the Manaurum gateway. Plus
+            anything `verify_user_context` raises.
     """
     token = request.headers.get(USER_CONTEXT_HEADER)
     if not token:

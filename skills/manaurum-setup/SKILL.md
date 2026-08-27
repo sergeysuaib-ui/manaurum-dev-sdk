@@ -357,7 +357,7 @@ offline.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                          # 19 passed
+pytest                          # 32 passed
 ```
 
 Then run the app itself:
@@ -399,7 +399,10 @@ the only test that covers the shell contract.
 
 ### After scaffolding
 
-1. Build your app (any language, any framework — anything Docker can build).
+1. Build your app (any language, any framework — anything Docker can build), and
+   **document each function in the edit that writes it** — `tests/test_documented.py`
+   fails on any undocumented function or class under `src/`. Format and rationale:
+   `manaurum-app/SKILL.md` § "Step 3.5".
 2. Deploy with `/manaurum-deploy`. The deploy endpoint is **asynchronous** — it returns a
    job id, not a result; poll until `succeeded` or `failed`.
 3. Hit `https://<slug>.apps.manaurum.com` **and** open the app as a desktop window.
