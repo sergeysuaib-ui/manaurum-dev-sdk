@@ -83,6 +83,28 @@ document.documentElement.dataset.accent = ctx.accent;
 - **Fill it.** No outer margin against the window edge; one container owns the
   page padding.
 - **Be resizable.** Percentage widths and a `max-width`, never a fixed width.
+- **One scroll container, and it is yours.** By default it is the document
+  itself: never put `overflow: hidden` together with a fixed `height` on your
+  root. If you build a fixed shell — a header, a tab bar, a side sheet that has
+  to stay pinned — then `overflow: auto` goes on the element that holds the
+  content, and every flex ancestor between it and the root needs
+  `min-height: 0` (a flex child defaults to `min-height: auto` and refuses to
+  shrink below its content, which silently turns `overflow: auto` back into
+  `overflow: visible`).
+
+  The window's content area scrolls for a *builtin* app — the shell renders it
+  straight into a `overflow-auto` box. It can never scroll yours: your app is an
+  iframe sized to `height: 100%` of that box, so it is never taller than the box
+  and the shell's scrollbar never appears. If nothing in your document scrolls,
+  nothing does, and the bottom of your page cannot be reached at all.
+
+  This has shipped three times (Finance v2, the public P&L page, the Dossier
+  journal), each time the same way: `overflow: hidden` copied from a design
+  mockup, where it was the mockup *simulating an OS window frame*. It does not
+  port — and the inner scroller it was paired with does not port either, because
+  the real layout gets rewritten around it. The SDK now measures this at run
+  time and console-errors with the offending element; `init({ layoutCheck:
+  false })` if your app clips on purpose (a game, a canvas, a kiosk screen).
 - **No native dialogs.** The shell's iframe sandbox has no `allow-modals`, so
   `alert()` / `confirm()` / `prompt()` are dead inside the desktop — and they
   work on the standalone URL, so "it worked in my browser" proves nothing. A
