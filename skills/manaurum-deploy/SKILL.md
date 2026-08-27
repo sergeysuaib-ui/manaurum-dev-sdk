@@ -26,18 +26,27 @@ description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platfo
 ### Pre-flight: a small window with a lot of data
 
 One check, every deploy, because it is the one the developer never runs and the
-user always does. **Open the app at 900×600 with roughly three times your seeded
-data, and confirm the bottom of every view is reachable.**
+user always does. **Open the app at the smallest window you support, with enough
+data to overflow it, and watch the browser console.**
 
 An OS window cannot scroll an iframe — your app is `height: 100%` of the window's
 content area, so the shell's scrollbar can never appear and your document has to
 own the scrolling. A root with `overflow: hidden` and a fixed `height`, with no
-`overflow: auto` under it, ships with the bottom of every long view simply cut
-off. It looks perfect in a full-screen tab with three rows, which is why it has
-shipped three times. The rule and the fix: `manaurum-app/references/design.md` →
-"Window rules". Since `manaurum.js` 1.12.0 / `manaurum-v2.mjs` 2.3.0 the SDK
-console-errors when it catches this and names the element, so the browser console
-is part of this check.
+scroller under it, ships with the bottom of every long view cut off. It looks
+perfect in a full-screen tab with three rows.
+
+The console is the observable, not your eyes: since `manaurum.js` 1.12.0 /
+`manaurum-v2.mjs` 2.3.0 the SDK measures this at run time and logs
+
+```
+content is clipped and nothing scrolls: <div.your-root> is 600px tall and hides 1106px below it.
+```
+
+naming the element. Nothing in the console and a reachable page bottom is the
+pass. The rule and the fix: `manaurum-app/references/design.md` → "Window
+rules". Note the guard arms on the `manaurum:init` handshake, so a standalone
+dev-server tab never reports — check inside the desktop, or call
+`app.checkLayout()` yourself.
 
 ### Quickstart
 

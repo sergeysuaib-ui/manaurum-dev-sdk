@@ -85,26 +85,22 @@ document.documentElement.dataset.accent = ctx.accent;
 - **Be resizable.** Percentage widths and a `max-width`, never a fixed width.
 - **One scroll container, and it is yours.** By default it is the document
   itself: never put `overflow: hidden` together with a fixed `height` on your
-  root. If you build a fixed shell — a header, a tab bar, a side sheet that has
-  to stay pinned — then `overflow: auto` goes on the element that holds the
-  content, and every flex ancestor between it and the root needs
-  `min-height: 0` (a flex child defaults to `min-height: auto` and refuses to
-  shrink below its content, which silently turns `overflow: auto` back into
-  `overflow: visible`).
+  root. A fixed shell (header, tab bar, pinned sheet) needs all three of: a
+  `display: flex; flex-direction: column` root, `flex: 1` **and**
+  `overflow: auto` on the element holding the content, and `min-height: 0` on
+  the flex items in between. `overflow: auto` alone does nothing — a block
+  with auto height grows to fit its content, so it never overflows and there
+  is nothing to scroll.
 
-  The window's content area scrolls for a *builtin* app — the shell renders it
-  straight into a `overflow-auto` box. It can never scroll yours: your app is an
-  iframe sized to `height: 100%` of that box, so it is never taller than the box
-  and the shell's scrollbar never appears. If nothing in your document scrolls,
-  nothing does, and the bottom of your page cannot be reached at all.
+  The window's content area scrolls a *builtin* app. It can never scroll
+  yours: your app is an iframe at `height: 100%` of that box, so the shell's
+  scrollbar never appears, and if nothing in your document scrolls, nothing
+  does. The `overflow: hidden` in a mockup is the mockup drawing a fake window
+  frame — it ports perfectly, and the scroller it was paired with does not.
+  That is how this ships. The SDK measures it at run time and console-errors
+  with the offending element; `init({ layoutCheck: false })` if you clip on
+  purpose.
 
-  This has shipped three times (Finance v2, the public P&L page, the Dossier
-  journal), each time the same way: `overflow: hidden` copied from a design
-  mockup, where it was the mockup *simulating an OS window frame*. It does not
-  port — and the inner scroller it was paired with does not port either, because
-  the real layout gets rewritten around it. The SDK now measures this at run
-  time and console-errors with the offending element; `init({ layoutCheck:
-  false })` if your app clips on purpose (a game, a canvas, a kiosk screen).
 - **No native dialogs.** The shell's iframe sandbox has no `allow-modals`, so
   `alert()` / `confirm()` / `prompt()` are dead inside the desktop — and they
   work on the standalone URL, so "it worked in my browser" proves nothing. A

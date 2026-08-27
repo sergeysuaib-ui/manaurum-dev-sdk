@@ -1,47 +1,52 @@
-# 2.8.0 — an app owns its scroller, and the SDK says so out loud (MAN-2112)
+# 2.7.3 — an app owns its scroller, and the SDK says so out loud (MAN-2112)
 
 ### Why
 
-The skill had nothing to say about scrolling — 3,816 lines across `SKILL.md` and
-seven references, and the words `scroll` and `overflow` appeared in exactly one
-of them, about a query cardinality cap. So agents building v2 apps kept shipping
-the same bug: content clipped at the window edge with no scrollbar anywhere.
+The skill had nothing to say about scrolling. 3,816 lines across `SKILL.md` and
+eight references, and `overflow` appeared in exactly one of them — about a query
+cardinality cap. `scroll` appeared nowhere at all. So agents building v2 apps
+kept shipping the same bug: content clipped at the window edge with no scrollbar
+anywhere.
 
-The trap is structural, not careless. The OS window's content area *is*
-`overflow: auto` and it *does* scroll a **builtin** app. It can never scroll an
-iframe app: the iframe is `height: 100%` of that same box, so it is never taller
-than the box and the shell's scrollbar never appears. An iframe app scrolls
-itself or it does not scroll — and nothing said so. Meanwhile every design mockup
-fakes an OS window with `overflow: hidden`, which ports cleanly into the app while
-the inner scroller it was paired with does not, because the real layout gets
-rewritten around it.
+It is structural, not careless. The OS window's content area *is* `overflow:
+auto` and it *does* scroll a **builtin** app. It can never scroll an iframe app:
+the iframe is `height: 100%` of that same box, so it is never taller than the box
+and the shell's scrollbar never appears. An iframe app scrolls itself or it does
+not scroll — and nothing said so. Meanwhile every design mockup fakes an OS
+window with `overflow: hidden`, which ports perfectly while the inner scroller it
+was paired with does not, because the real layout gets rewritten around it.
 
-It looks fine while you build (a full-screen tab, three seeded rows) and fails for
-the user (a 1280×860 window, twelve). It has now shipped three times: Finance v2,
-the public P&L share page, and the Dossier journal.
+Finance v2 shipped exactly this on its desktop layout, from its first commit. The
+public P&L share page had the same failure in June (MAN-340). MAN-1050 is the
+same "one scroll container" rule broken from the other side — a *nested* scroller
+trapping the user, fixed by deleting it.
 
 ### What changed
 
-- `references/design.md` — **"One scroll container, and it is yours"** in Window
-  rules: the default is the document itself; a fixed shell puts `overflow: auto`
-  on the element holding the content and `min-height: 0` on every flex ancestor
-  (a flex child defaults to `min-height: auto` and refuses to shrink below its
-  content, which turns `overflow: auto` back into `overflow: visible`).
+- `references/design.md`, Window rules — **"One scroll container, and it is
+  yours"**. The first draft of this rule was wrong and review caught it before
+  merge: `overflow: auto` on its own changes nothing, because a block with auto
+  height grows to fit its content and never overflows. A fixed shell needs all
+  three of a flex-column root, `flex: 1` **and** `overflow: auto` on the element
+  holding the content, and `min-height: 0` on the flex items in between.
 - `manaurum-app/SKILL.md` — an entry in "What will bite you", which already opens
-  with the right frame: it works in a tab and breaks in the desktop. Carries the
-  pre-deploy check: **900×600, three times your seeded data, is the bottom of
-  every view reachable?**
-- `manaurum-deploy/SKILL.md` — the same check as a pre-flight step, before the
-  quickstart.
+  with the right frame: it works in a tab and breaks in the desktop.
+- `manaurum-deploy/SKILL.md` — a pre-flight step with an actual procedure: the
+  smallest window you support, enough data to overflow it, and the browser
+  console as the observable.
 - `templates/v2-starter/src/static/app.css` — the starter was already correct
   (`min-height: 100%` on `.app`, no clip on the root) by accident rather than by
-  rule. Now the rule is written above `html, body { height: 100% }` so a port
-  does not overwrite it silently.
+  rule. Now the rule sits above `html, body { height: 100% }`, so a port does not
+  overwrite it silently.
 
-Platform-side, in the same ticket: both SDK artifacts now measure this at run
-time and console-error with the offending element (`manaurum.js` 1.12.0,
-`manaurum-v2.mjs` 2.3.0). Opt out with `init({ layoutCheck: false })` for an app
-that clips on purpose; re-run by hand with `app.checkLayout()`.
+Platform-side, in the same ticket: both SDK artifacts measure this at run time
+and console-error with the offending element (`manaurum.js` 1.12.0,
+`manaurum-v2.mjs` 2.3.0). The check is scoped to "a window-sized element clips
+and nothing on the page scrolls at all" — verified in Chromium against seven
+healthy layouts that must stay silent, including a collapsed panel, a tall line
+clamp and a decorative hero, all of which an earlier revision flagged. Opt out
+with `init({ layoutCheck: false })`; `app.checkLayout()` forces a measurement
+even then.
 
 # 2.7.2 — the `dev` runtime has no editor any more (MAN-1577)
 
