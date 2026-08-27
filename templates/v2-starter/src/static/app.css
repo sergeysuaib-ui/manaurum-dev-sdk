@@ -159,6 +159,21 @@
    it was supposed to replace. Keep it. */
 [hidden] { display: none !important; }
 
+/* The scroll contract, and the reason `.app` below says `min-height` and not
+   `height`. The OS window's content area is `overflow: auto`, which scrolls a
+   BUILTIN app; it can never scroll yours, because your app is an iframe sized
+   to `height: 100%` of that box and is therefore never taller than it. So the
+   document here is the scroller, and everything below it is free to grow.
+
+   Put `overflow: hidden` and a fixed `height` on a root instead, and the
+   bottom of every long page becomes unreachable — no scrollbar, anywhere.
+   Adding `overflow: auto` to a child does NOT fix that on its own: a block
+   with auto height grows to fit its content and never overflows. A fixed
+   shell needs the root to be a flex column, `flex: 1` AND `overflow: auto` on
+   the element holding the content, and `min-height: 0` on the flex items in
+   between. That is what a design mockup's `overflow: hidden` costs you when
+   it is ported — it was the mockup drawing a fake window frame. See "Window
+   rules" in manaurum-app/references/design.md. */
 html, body { height: 100%; }
 
 body {

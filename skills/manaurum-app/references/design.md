@@ -83,6 +83,24 @@ document.documentElement.dataset.accent = ctx.accent;
 - **Fill it.** No outer margin against the window edge; one container owns the
   page padding.
 - **Be resizable.** Percentage widths and a `max-width`, never a fixed width.
+- **One scroll container, and it is yours.** By default it is the document
+  itself: never put `overflow: hidden` together with a fixed `height` on your
+  root. A fixed shell (header, tab bar, pinned sheet) needs all three of: a
+  `display: flex; flex-direction: column` root, `flex: 1` **and**
+  `overflow: auto` on the element holding the content, and `min-height: 0` on
+  the flex items in between. `overflow: auto` alone does nothing — a block
+  with auto height grows to fit its content, so it never overflows and there
+  is nothing to scroll.
+
+  The window's content area scrolls a *builtin* app. It can never scroll
+  yours: your app is an iframe at `height: 100%` of that box, so the shell's
+  scrollbar never appears, and if nothing in your document scrolls, nothing
+  does. The `overflow: hidden` in a mockup is the mockup drawing a fake window
+  frame — it ports perfectly, and the scroller it was paired with does not.
+  That is how this ships. The SDK measures it at run time and console-errors
+  with the offending element; `init({ layoutCheck: false })` if you clip on
+  purpose.
+
 - **No native dialogs.** The shell's iframe sandbox has no `allow-modals`, so
   `alert()` / `confirm()` / `prompt()` are dead inside the desktop — and they
   work on the standalone URL, so "it worked in my browser" proves nothing. A
