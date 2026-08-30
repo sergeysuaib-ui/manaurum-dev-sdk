@@ -15,13 +15,18 @@ from typing import Any
 
 import httpx
 
+#: Per-call timeout. Generous on connect, because the gateway is a hop
+#: away inside the swarm and a cold service can take a moment.
 _TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 
 class CapabilityError(Exception):
     """The runtime env is missing, the gateway is unreachable, or it
-    returned a non-2xx. One exception type so callers have one thing to
-    map to a user-visible error."""
+    returned a non-2xx.
+
+    One exception type on purpose, so callers have exactly one thing to
+    map to a user-visible error (this starter maps it to a 503).
+    """
 
 
 def _gateway() -> tuple[str, dict[str, str]]:
@@ -29,6 +34,13 @@ def _gateway() -> tuple[str, dict[str, str]]:
 
     All four values are injected by the deploy. Never hard-code or bake
     them into the image — the token is minted per deploy and rotates.
+
+    Returns:
+        ``(base_url, headers)`` ready to POST with.
+
+    Raises:
+        CapabilityError: If any of the four env vars is missing, which
+            means the container is not running under the platform.
     """
     base = (os.environ.get("MANAURUM_CORE_URL") or "").rstrip("/")
     token = os.environ.get("MANAURUM_RUNTIME_TOKEN") or ""
@@ -57,6 +69,20 @@ async def call_capability(name: str, payload: dict[str, Any]) -> Any:
     Every capability goes through this one door:
     ``POST {MANAURUM_CORE_URL}/api/capability/{name}``. Do NOT forward
     the user_context header here — the gateway rejects it on this path.
+
+    Args:
+        name: Dotted capability name, e.g. ``os.kv.get``.
+        payload: The call's input object. Most capability schemas set
+            ``additionalProperties: false``, so one extra key is a 422.
+
+    Returns:
+        The reply's ``output`` field, or the whole body when it has none.
+
+    Raises:
+        CapabilityError: On transport failure or any non-200. 403
+            ``capability_not_granted`` is the usual first one: the
+            manifest asks for the capability but this install's grants do
+            not include it yet, and redeploying does not fix that.
     """
     base, headers = _gateway()
     try:
@@ -79,17 +105,59 @@ async def call_capability(name: str, payload: dict[str, Any]) -> Any:
 
 
 def note_key(user_id: str) -> str:
-    """One namespaced key per user. os.kv is per (app, tenant) only."""
+    """One namespaced key per user.
+
+    os.kv is scoped per (app, tenant) and is NOT user-aware, so the
+    namespacing has to happen here. Return a constant and every user in
+    the tenant shares one note — which is the failure `test_routes.py`
+    is written to catch.
+
+    Args:
+        user_id: The VERIFIED user id, from `claims.user_id`. Never a
+            value taken from a request body.
+
+    Returns:
+        The os.kv key for that user's note.
+    """
     return f"notes:{user_id}"
 
 
 async def read_note(user_id: str) -> str:
+    """Read one user's note out of os.kv.
+
+    Args:
+        user_id: The verified user id.
+
+    Returns:
+        The stored text, or ``""`` when the user has never saved one —
+        a first-time reader and an emptied note are the same thing here,
+        deliberately, so the UI has one empty state instead of two.
+
+    Raises:
+        CapabilityError: The gateway refused or was unreachable.
+    """
     output = await call_capability("os.kv.get", {"key": note_key(user_id)})
     value = output.get("value") if isinstance(output, dict) else None
     return value.get("text", "") if isinstance(value, dict) else ""
 
 
 async def write_note(user_id: str, text: str) -> str:
+    """Write one user's note into os.kv.
+
+    Args:
+        user_id: The verified user id.
+        text: The note. Truncated to 10,000 characters — the same cap the
+            manifest's ``input_schema`` declares, enforced again here
+            because a published schema is a contract, not a guarantee
+            about the process on the other end.
+
+    Returns:
+        The text as actually stored, so the caller echoes back the
+        truncated value rather than the one it sent.
+
+    Raises:
+        CapabilityError: The gateway refused or was unreachable.
+    """
     text = text[:10_000]
     await call_capability(
         "os.kv.set", {"key": note_key(user_id), "value": {"text": text}}

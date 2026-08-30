@@ -319,6 +319,65 @@ Capabilities available today:
 
 See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
 
+## Step 3.5 — Document it in the same edit that writes it
+
+**Not a pass at the end.** Retrofitting docs onto a finished app costs several
+times what writing them inline costs, and what you get is worse: by then nobody
+remembers which `None` meant "absent" and which meant "we don't know", so the
+docstring records the signature instead of the contract. Write the docstring
+with the function, in the same edit, every time.
+
+**Python — Google style.** Summary line, the *why* in a sentence or two, then
+only the sections that carry information. Module constants take a `#:` comment;
+dataclasses and Pydantic models take `Attributes:`.
+
+```python
+#: Ledger quantities are integer milli-units — 1.5 kg is 1_500. Floats are
+#: banned here: a balance that drifts by a rounding error is one nobody trusts.
+MILLI = 1000
+
+
+async def append_movement(*, item_id: str, delta_milli: int,
+                          movement_id: str | None = None) -> tuple[Record, int]:
+    """Append one movement and refresh the cached quantity.
+
+    Both statements run in ONE transaction, so the cache cannot disagree
+    with the ledger after a crash mid-write.
+
+    Args:
+        delta_milli: Signed change in milli-units. Positive is stock in.
+        movement_id: Idempotency key. Pass the client-generated id for
+            anything queued offline; omit it and one is minted.
+
+    Returns:
+        `(movement, new_qty_milli)`. On a replayed id the EXISTING movement
+        comes back untouched — an idempotency key means exactly once.
+
+    Raises:
+        CapabilityError: The gateway is unreachable or refused the call.
+    """
+```
+
+**Browser JS — JSDoc.** `@param {Type} name - …`, `@returns`, `@type`, and
+`@property` for a state object. Same rule, same reason.
+
+**Document the contract, not the signature.** `item_id: The item id` is noise —
+the parameter name and the type already said it, and noise is what makes people
+stop reading docstrings. Spend the line on what a reader cannot see: units,
+what an empty return actually means, which failure is normal and expected, what
+a caller must not do, why the awkward thing is that way. A function with nothing
+non-obvious to say gets one summary line, and that is the correct length.
+
+**Then check it, don't hope.** The starter ships `tests/test_documented.py`,
+which walks `src/` with `ast` and fails on any undocumented function or class.
+Keep it, and run `pytest` before you deploy: it turns "I'll document it later"
+into a red test instead of a shipped app nobody can safely change.
+
+**One thing to avoid while you are at it:** never anchor a test on comment or
+docstring TEXT — slice on a declaration (`js.index("function foo(")`) instead.
+A guard keyed to a sentence breaks the moment somebody improves that sentence,
+and then documenting the code fails the suite that guards it.
+
 ## Step 4 — Deploy
 
 You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → "v2 Tokens (Beta)" → Generate**. Shown once, save to `.env.manaurum`:

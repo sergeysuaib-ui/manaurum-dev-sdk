@@ -47,10 +47,31 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 def _ok(output) -> dict:
+    """Wrap a successful tool result in the reply contract.
+
+    Args:
+        output: Whatever the tool produced. Must be JSON-safe.
+
+    Returns:
+        ``{"ok": true, "output": ...}``.
+    """
     return {"ok": True, "output": output}
 
 
 def _fail(error: str) -> dict:
+    """Wrap a failure the model can read and react to.
+
+    Returned with HTTP 200, never as a 500: a 500 is an outage to the
+    runtime, while this is a sentence the model can act on and retry
+    around.
+
+    Args:
+        error: Plain-language reason, truncated to 300 characters so a
+            stack-trace-ish message cannot flood the model's context.
+
+    Returns:
+        ``{"ok": false, "error": ...}``.
+    """
     return {"ok": False, "error": error[:300]}
 
 
@@ -60,6 +81,10 @@ class SaveNoteInput(BaseModel):
     The runtime already validates the model's arguments against that
     schema, but re-validate here anyway: the schema is a contract you
     published, not a guarantee about the process on the other end.
+
+    Attributes:
+        text: The note to store. 1-10,000 characters. There is
+            deliberately no ``user_id`` field — see `read_my_note`.
     """
 
     text: str = Field(min_length=1, max_length=10_000)
@@ -72,6 +97,13 @@ async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict
     A capability that took a `user_id` argument would let the model read
     somebody else's note by passing a different one. Identity is not an
     argument.
+
+    Args:
+        claims: The verified caller, injected.
+
+    Returns:
+        ``{"ok": true, "output": {"text": ...}}``, or an ``ok: false``
+        envelope when the gateway is unavailable.
     """
     try:
         return _ok({"text": await read_note(claims.user_id)})
@@ -84,6 +116,17 @@ async def save_my_note(
     data: SaveNoteInput,
     claims: UserContextClaims = Depends(auth_claims),
 ) -> dict:
+    """Overwrite the caller's note.
+
+    Args:
+        data: The validated tool arguments.
+        claims: The verified caller, injected. The note is keyed by
+            ``claims.user_id`` — never by anything in ``data``.
+
+    Returns:
+        ``{"ok": true, "output": {"text": ...}}`` carrying the text as
+        actually stored, or an ``ok: false`` envelope on failure.
+    """
     try:
         return _ok({"text": await write_note(claims.user_id, data.text)})
     except CapabilityError as exc:

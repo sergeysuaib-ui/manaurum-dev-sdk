@@ -1,3 +1,57 @@
+# 2.9.0 — the skill says to document the code, and the starter checks it
+
+### Why
+
+The skills taught an agent how to build a v2 app, deploy it, and avoid nine
+platform traps. They said nothing about documenting what they wrote, so agents
+did not, and nobody noticed until someone had to change an app they had not
+written.
+
+That bill came due on a real app built with this skill: ~6,400 lines across
+Python and browser JS, correct and shipped, with most modules carrying good
+prose about *why* a design was chosen and nothing about the contract of any
+individual function — no parameters, no units, no meaning for an empty return.
+Retrofitting it took a full session, and the docs came out worse than
+inline ones would have, because by then nobody remembered which `None` meant
+"absent" and which meant "we don't know".
+
+The cost is the argument. Documenting inline is close to free — it is a few
+lines written while the contract is still in your head. Documenting afterwards
+is a re-derivation of the whole app from its own source.
+
+### What changed
+
+**`skills/manaurum-app/SKILL.md`** — new § "Step 3.5 — Document it in the same
+edit that writes it", between building and deploying, where the code is being
+written. It fixes one format (Google-style docstrings for Python, JSDoc for
+browser JS, `#:` for module constants, `Attributes:` for dataclasses and
+Pydantic models) and one rule about content: document the contract, not the
+signature. `item_id: The item id` is noise, and noise is what makes people stop
+reading docstrings — spend the line on units, on what an empty return actually
+means, on which failure is normal. A function with nothing non-obvious to say
+gets one summary line, and that is the correct length.
+
+**`templates/v2-starter/tests/test_documented.py`** (new) — an `ast` walk that
+fails on any function or class under `src/` with no docstring, and on any module
+missing its own. This is the half that makes the rule stick: "I'll document it
+later" becomes a red test in one second rather than a shipped app nobody can
+safely change. Private helpers are included deliberately — `_gateway` and
+`_fail` are exactly the functions whose behaviour is non-obvious six months on.
+No imports, no I/O; it costs ~0.1s of the run.
+
+**`templates/v2-starter/src/*.py`** — the four starter modules now demonstrate
+the format rather than only describing it. This is the efficient half of the
+change: an agent copying the starter inherits the convention with zero extra
+context read, and the SKILL.md section only has to state the rule once.
+
+**`templates/v2-starter/README.md`** and **`skills/manaurum-setup/SKILL.md`** —
+the rule at the two points someone meets the tests, plus a correction: both said
+`pytest # 19 passed` and the suite has been at 24 for some time. It is 32 with
+the new file.
+
+Nothing about the platform contract changed. No manifest, capability, deploy or
+auth behaviour is touched by this release.
+
 # 2.7.3 — an app owns its scroller, and the SDK says so out loud (MAN-2112)
 
 ### Why
