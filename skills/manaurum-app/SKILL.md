@@ -156,12 +156,25 @@ Validation rules (key ones):
 - `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
 - `permissions`: optional top-level array of BROWSER features the OS shell
   delegates to your iframe via the `allow` attribute (Permissions-Policy).
-  Enum today: `["microphone"]`. **Required for any app that records audio
-  inside the shell** — without it `getUserMedia` is blocked in the iframe
-  (your standalone `<app_id>.apps.manaurum.com` URL is unaffected). The user
-  still sees the normal browser mic prompt. This is separate from
-  capabilities: a voice app declares BOTH `"permissions": ["microphone"]`
-  and `os.ai.transcribe` in `requires_capabilities`.
+  Enum today: `["microphone", "camera"]`. **Required for any app that opens
+  a LIVE device stream inside the shell** — without it `getUserMedia` is
+  blocked in the iframe (your standalone `<app_id>.apps.manaurum.com` URL is
+  unaffected). The user still sees the normal browser prompt.
+
+  **A still photo needs no declaration.** `<input type="file"
+  capture="environment">` hands off to the OS camera app and is not gated by
+  Permissions-Policy — so it works in the shell today, with or without
+  `permissions`. Declare `camera` only for a live stream you decode or render
+  yourself: barcode scanning off the preview, video capture. That distinction
+  is why the gap went a year unnoticed.
+
+  This is separate from capabilities: a voice app declares BOTH
+  `"permissions": ["microphone"]` and `os.ai.transcribe` in
+  `requires_capabilities`. Two limits worth knowing before you rely on it:
+  `runtime.mode: "byo"` refuses a non-empty `permissions` outright, and the
+  shell delegates nothing to an app-named origin — a `byo` entrypoint or a
+  v1 `platforms.mobile.entrypoint` gets no `allow` attribute at all
+  (MAN-1922).
 
 ### `runtime.api_routes` — read this before you write a single route
 
@@ -306,7 +319,9 @@ Capabilities available today:
 | `os.tenant_config.get` | Read tenant feature flags / config. |
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
 | `os.files.upload` / `.download` / `.delete` | R2 (presigned URLs). |
-| `os.ai.complete` / `os.ai.embed` | LLM (BYOK — tenant configures keys in Settings → Интеграции). |
+| `os.ai.complete` / `os.ai.embed` | LLM (BYOK — tenant configures keys in Settings → Интеграции). `os.ai.complete` requires ONLY `messages`; provider and model are optional and resolved for you. Pass `log_prompt: false` to keep private text out of the logs. |
+| `os.ai.image_submit` / `os.ai.image_poll` | Generate an image (BYOK). A background job: submit returns a `job_id`, poll until `state` is `done` or `failed` (~15 s at 1024×1024 low). Prompt in, base64 image out — there is no input-image parameter, so it cannot edit a photo you already hold. Needs the `platform.ai_image` flag. |
+| `os.ai.providers` | Which AI providers this tenant has configured, and what each can serve. Names and health only. |
 | `os.ai.transcribe` | Speech-to-text (BYOK — needs the tenant's **OpenAI** key). ≤ 25 MB decoded audio. Pair with manifest `"permissions": ["microphone"]` to record in the shell iframe. |
 | `os.ocr.extract` | OCR via vision LLM (BYOK). |
 | `os.notifications.send_to_user` | In-app / Resend / Twilio. |

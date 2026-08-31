@@ -173,9 +173,11 @@ Validation rules:
 - `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`. Default-deny.
 - `permissions` (optional top-level array): BROWSER features the OS shell
   delegates to your iframe (Permissions-Policy `allow`). Enum today:
-  `["microphone"]`. **If the app records audio, scaffold this in from the
-  start** — without it the mic is blocked inside the shell iframe and the
-  app ships broken. Voice apps also declare `os.ai.transcribe` in
+  `["microphone", "camera"]`. **If the app opens a live mic or camera
+  stream, scaffold this in from the start** — without it `getUserMedia` is
+  blocked inside the shell iframe and the app ships broken. A still photo
+  via `<input type="file" capture="environment">` is NOT gated and needs no
+  declaration. Voice apps also declare `os.ai.transcribe` in
   `requires_capabilities` (that part is the platform STT; `permissions`
   is only the browser side).
 

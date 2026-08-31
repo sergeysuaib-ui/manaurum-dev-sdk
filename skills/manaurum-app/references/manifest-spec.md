@@ -17,7 +17,7 @@
 >
 > Same trap for the two free-text fields authors reach for by reflex: a root `description` or a root `category` is a 422 under v2. They belong in `metadata.description` / `metadata.category` (which is where v1 already puts `category`, below).
 >
-> `permissions` exists in **both** versions and means **different things**. In v1 it is the platform-permission enum below (`auth.read_user`, `db.read_own_entities`, …). In v2 it is a browser-feature delegation array for the iframe `allow` attribute, and `"microphone"` is the only value the enum accepts today — a v1 permission string there is a 422 at `permissions/0`.
+> `permissions` exists in **both** versions and means **different things**. In v1 it is the platform-permission enum below (`auth.read_user`, `db.read_own_entities`, …). In v2 it is a browser-feature delegation array for the iframe `allow` attribute, and the enum accepts `"microphone"` and `"camera"` today — a v1 permission string there is a 422 at `permissions/0`.
 
 This is the exact contract validated by `POST /api/dev/apps/deploy`. It mirrors `https://manaurum.com/standards/manifest_v1.schema.json`. Anything not in this document will be rejected by the deploy validator.
 
