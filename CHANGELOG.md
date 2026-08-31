@@ -1,3 +1,52 @@
+# 2.10.0 — camera, the two image capabilities, and three things this page said that were false (MAN-1923, MAN-2144, MAN-2117)
+
+### Why
+
+The plugin is how an AI-assisted developer sees the platform, and three tickets had piled up
+against that: it said camera was impossible, it had never heard of image generation, and
+`capabilities-reference.md` — which `ADDING_A_V2_CAPABILITY.md` §9 calls self-described
+exhaustive — carried measured falsehoods. A wrong reference is worse than a thin one. It is
+multiplied by every developer who trusts it, and it fails at runtime rather than at
+validation: an app followed this page's `os.files.upload` section, generated an image, failed
+to store it, and told the user the drawing "took longer than five minutes" when it had been
+ready on the first poll.
+
+### What changed
+
+**MAN-1923 — camera.** `microphone` is no longer described as the only value the enum takes.
+Fixed in `manifest-spec.md`, `manaurum-app/SKILL.md`, `v2-platform.md`, `publishing.md` and
+`manaurum-setup/SKILL.md`. The content that matters is not the enum edit: `camera` is needed
+for a **live** `getUserMedia` stream inside a desktop window (barcode scanning off the
+preview, video capture), while a still photo through `<input type="file"
+capture="environment">` hands off to the OS camera app and is not gated at all. That
+distinction is why the gap went a year unnoticed. Also recorded: `byo` refuses a non-empty
+`permissions`, and the shell delegates nothing to an app-named origin (MAN-1922).
+
+**MAN-2144 — the two capabilities that shipped without the skill.** New sections for
+`os.ai.image_submit` / `os.ai.image_poll` (a background job, `job_id` then poll, three output
+shapes, `cost_known`, no input-image parameter) and `os.ai.providers`. `log_prompt` (MAN-2158)
+documented on both `os.ai.complete` and `os.ai.embed`. All three added to the SKILL.md table,
+where an agent picking capabilities actually looks.
+
+**MAN-2117 — three falsehoods, all verified against the live schemas on 2026-08-31:**
+
+* `os.files.upload` omitted `size_hint`, required since MAN-1707. It is not a hint — it is the
+  exact length signed into the presigned URL, so a wrong value invalidates the PUT that
+  follows. Documented with the 50 MB per-object and 1 GB per-namespace caps.
+* `os.ai.complete` marked `provider` and `model` REQUIRED. The live schema requires only
+  `messages`, and has since MAN-455. Naming them buys more coupling than the platform asks
+  for and hides the fall-through (MAN-1468).
+* The same table promised `top_p` "and friends" were passed through to the provider.
+  `_COMPLETE_INPUT_SCHEMA` is `additionalProperties: false` and declares no such field: that
+  call is a guaranteed 422. The page was describing a feature the gateway rejects.
+
+`os.ai.embed` keeps its required `provider` and `model` — checked rather than assumed, because
+the two AI capabilities differ here and a blanket correction would have introduced a fourth
+falsehood.
+
+Nothing in the starter changed; `pytest` in `templates/v2-starter` is 24 passed, as on main.
+(It becomes 32 when #18 lands its `test_documented.py` — this release does not touch it.)
+
 # 2.7.3 — an app owns its scroller, and the SDK says so out loud (MAN-2112)
 
 ### Why

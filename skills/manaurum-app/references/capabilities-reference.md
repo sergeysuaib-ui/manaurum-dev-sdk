@@ -153,13 +153,19 @@ The platform never proxies bytes — it returns a presigned URL the app uploads 
 **Input:**
 
 ```json
-{ "key": "user-uploads/avatar.png", "content_type": "image/png" }
+{ "key": "user-uploads/avatar.png", "content_type": "image/png", "size_hint": 20480 }
 ```
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `key` | string | yes | Relative key inside your namespace. The full storage key is `app/<app_id>/<tenant_id>/<key>` — server-built so cross-app/tenant addressing is impossible by construction. |
 | `content_type` | string | yes | Upload's `Content-Type` (must match the PUT). |
+| `size_hint` | integer | **yes** | **Not a hint.** The EXACT byte length of the body you will PUT, signed into the presigned URL since MAN-1707 — a body of any other length is refused by the object store, with an error that reads like a permissions problem. 0 is legal (an empty marker object). Max 50 MB. |
+| `expires_in` | integer | no | URL lifetime in seconds. |
+
+**Omitting `size_hint` is a `422 input_schema_violation` — `'size_hint' is a required property`.** It has been required since MAN-1707 and this page said otherwise for months: an app followed the page, generated an image, failed to store it, and the user was told the drawing "took longer than five minutes" while it had been ready on the first poll.
+
+Two caps come with it (MAN-1707): **50 MB per object** and **1 GB per (app, tenant)**. The namespace total is enforced by a prefix scan bounded at 10 pages × 1000 keys — an app holding more objects than that has outgrown a prefix scan and needs its own ledger.
 
 **Output:**
 
@@ -354,10 +360,18 @@ The tenant's API key is used (configured in Settings → Workspace → Инте�
 
 | Field | Required |
 |---|---|
-| `provider` | yes |
-| `model` | yes |
-| `messages` | yes (array of `{role, content}`) |
-| `temperature`, `max_tokens`, `top_p`, etc. | optional, passed through to provider |
+| `messages` | **yes** — the only required field (array of `{role, content}`) |
+| `provider` | no. Omit it and the OS resolves the tenant's configured provider; the choice is echoed in the response |
+| `model` | no. Omit it and a sensible default for the resolved provider is used, also echoed back |
+| `temperature` | no. 0–2 |
+| `max_tokens` | no. 1–200000 |
+| `log_prompt` | no, default `true`. See below |
+
+**`provider` and `model` are optional and have been since MAN-455.** Naming them writes strictly more coupling than the platform asks for, and an app that always names them never learns the fall-through exists (MAN-1468).
+
+**There is no passthrough for other sampling fields.** `_COMPLETE_INPUT_SCHEMA` is `additionalProperties: false` and declares neither `top_p` nor any other; sending one is a guaranteed `422 input_schema_violation`. This page previously described that passthrough as a feature — it never existed.
+
+**`log_prompt`** (MAN-2158) — pass `false` when the text carries the end user's private content. The platform then stores a length plus a tenant-salted digest in place of the prompt, the system prompt and the model's answer, while recording tokens, cost and attribution exactly as usual.
 
 **Output:**
 
@@ -388,6 +402,8 @@ Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding
 
 `input` may also be an array of strings for batch embedding.
 
+`provider` and `model` ARE required here — unlike `os.ai.complete`, which resolves both. `log_prompt` (optional, default `true`) works the same way as on `os.ai.complete`: `false` swaps the stored text for a length and a digest, and leaves the accounting untouched.
+
 **Output:**
 
 ```json
@@ -397,6 +413,78 @@ Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding
   "usage": { "input_tokens": 4 }
 }
 ```
+
+---
+
+## `os.ai.image_submit` / `os.ai.image_poll` — generate an image (BYOK, two calls)
+
+Image generation is a **background job**, not a request that returns a picture: a 1024×1024
+`low` drawing takes about 15 seconds and a 1536×1024 `medium` one 46–48. So it is two
+capabilities — submit hands back a `job_id`, and you poll it until the state is terminal.
+Both are `version: 1` and both need `platform.ai_image` enabled for the tenant, which today
+means the home tenant only until dollar quotas land (MAN-2138).
+
+**`os.ai.image_submit` input:**
+
+```json
+{ "prompt": "a paper crane on a slate background, studio light", "size": "1024x1024",
+  "quality": "low", "format": "webp" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `prompt` | string | **yes** | 1–4000 chars. The FINAL prompt — style grammar is your app's business, the platform passes it through verbatim and **never logs it**. |
+| `size` | string | no | `1024x1024`, `1536x1024`, `1024x1536`. |
+| `quality` | string | no | `low`, `medium`, `high`. Moves cost and latency a lot. |
+| `format` | string | no | `webp`, `png`, `jpeg`. |
+| `compression` | integer | no | 0–100. |
+
+**There is no input image.** The schema takes a prompt and nothing else — no `file_key`, no
+source image — so the capability GENERATES a picture and cannot modify one you already hold.
+Background removal, cropping to the subject and thumbnailing are still the app's own problem
+in the browser (MAN-2157 asks for the optional input; it is not shipped).
+
+**`os.ai.image_poll` input:** `{ "job_id": "..." }` — the id from submit, and nothing else.
+
+**Output** — three shapes, and you must branch on `state`:
+
+```json
+{ "state": "pending" }
+{ "state": "failed", "error": "..." }
+{ "state": "done", "image_base64": "...", "mime_type": "image/webp",
+  "driver_model": "gpt-5.1-2025-11-13", "image_model": "...",
+  "tokens_used": { "driver": 42, "image": 1120 },
+  "cost_usd": 0.007031, "cost_known": true }
+```
+
+`cost_usd` is `null` with `cost_known: false` when either half of the two-model sum is
+unpriced — a partial sum would under-report spend, so it is reported as unknown instead of
+as a number. A pending poll carries no cost pair at all.
+
+**Storing the result is your job, and it is where this goes wrong.** The bytes come back as
+base64; put them in `os.files.upload`, and remember that call needs `size_hint` set to the
+exact DECODED length. Getting that wrong is the failure recorded in MAN-2117 — a drawing that
+was ready on the first poll, reported to the user as a five-minute timeout.
+
+**Errors:** `403 image_generation_not_enabled` (the `platform.ai_image` flag is off for this
+tenant — the flag is the spend guard, not an oversight), plus the usual BYOK `412` when the
+tenant has configured no key.
+
+---
+
+## `os.ai.providers` — which AI providers this tenant has configured
+
+Read-only, no input (`{}`), and deliberately thin: names and health only, never keys.
+
+```json
+{ "providers": [ { "provider": "openai", "last_test_ok": true,
+                   "serves": ["complete", "embed", "image"] } ] }
+```
+
+Use it to decide what your UI may offer before you spend a call — an app that knows the
+tenant has no image-capable provider can hide the button rather than fail at the click.
+`serves` reflects what that provider can actually answer *here*, which is not the same as
+what the vendor sells.
 
 ---
 

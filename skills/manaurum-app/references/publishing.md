@@ -63,8 +63,8 @@ The three that catch people out, because they look like they must be root fields
 | `"category"` at root | rejected | `metadata.category` |
 
 `permissions` at the root **is** valid. It is the browser-feature delegation list the shell passes to
-the app iframe via `allow=` (Permissions-Policy); the enum is `["microphone"]` today. It is not a
-capability grant — `requires_capabilities` is a separate axis.
+the app iframe via `allow=` (Permissions-Policy); the enum is `["microphone", "camera"]` today. It is
+not a capability grant — `requires_capabilities` is a separate axis.
 
 ### Icons — three separate rules, don't mix them
 
