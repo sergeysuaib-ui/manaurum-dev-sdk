@@ -2,13 +2,14 @@
 
 ## Never
 
-Every row here has shipped, been seen by a customer, and been sent back. If you
-read nothing else on this page, read the table.
+Each row is a rule an app has shipped without at least once — four of them in a
+single app, whose interface was rejected on sight while every technical check
+passed. If you read nothing else on this page, read the table.
 
 | Never | Why |
 |---|---|
 | A tab bar or a sidebar as navigation | The window is often 900px wide inside a desktop that already navigates. A sidebar spends a third of the width repeating what the OS said. Stack sections as cards. |
-| Style off `prefers-color-scheme` | It tracks the *browser*, not Manaurum. Appearance and accent arrive in `manaurum:init`; write them on `<html>` and let CSS read them. |
+| Style off `prefers-color-scheme` as your only signal | It tracks the *browser*, not Manaurum, so the app ends up light inside a dark desktop. Appearance and accent arrive in `manaurum:init`; write them on `<html>` and let CSS read them. Keep the media query only as the standalone default, and let the shell win the moment it speaks. |
 | A sentence inside a badge | A badge is a status word (`overdue`). A phrase turns a scannable list into a wall of text. |
 | More than one primary button per view | Two blues side by side — or one in every row — means none of them is the answer. |
 | A hover state on something inert | Hover is a promise that clicking does something. Keep the focus ring; keyboard users navigate too. |

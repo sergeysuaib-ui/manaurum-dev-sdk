@@ -55,10 +55,14 @@ not in the template.
   A mandatory last step of building an interface, in the same position as
   "check `/healthz`" after a deploy: serve with stubs, screenshot light and
   dark, then open the pictures and criticise them out loud against the seven
-  rules. Includes the two things that make the procedure fail — `--user-data-dir`
-  is not optional (without it the browser exits silently, writing nothing), and
-  headless cannot click, so a view reachable only through a button needs a URL
-  fragment before a screenshot can reach it.
+  rules. Includes the three things that make the procedure lie to you: headless
+  cannot click, so a view reachable only through a button needs a URL fragment
+  before a screenshot can reach it; a fresh `--user-data-dir` keeps the run
+  independent of an open browser profile, which is one of the ways the command
+  exits writing no file and printing no error; and the layout viewport floors at
+  ~500px, so `--window-size=390,800` crops rather than reflows and a good phone
+  layout photographs as broken. Both browser claims re-measured for this
+  release — Chrome and Edge, `--headless=new`.
 
 - **`templates/preview.py` + `templates/preview-fixtures.json` (new).** A
   stdlib-only preview server, no install and no dependencies: your static files,
@@ -84,10 +88,13 @@ not in the template.
   "no local dev loop" gap corrected: the frontend now has one, the backend still
   does not.
 
-Version note: 2.7.3 (`os.drive.*`, MAN-1958/1959) has been on `main` since it
-merged and needed no separate publication — a plugin install caches per version,
-so a machine sitting on 2.7.2 is a stale cache, not an unpublished release.
-`/plugin` → update, and both 2.7.3 and this release arrive together.
+Version note. The report expected 2.7.3 to be the `os.drive.*` work; it is not —
+2.7.3 is the scroller rule (MAN-2112), and `os.drive.*` was documented back in
+2.1.0 (MAN-608). Either way nothing was left unpublished: 2.7.3 has been on
+`main` since it merged, and a plugin install caches per version, so a machine
+sitting on 2.7.2 has a stale cache rather than an old release. `/plugin` →
+update brings 2.7.3 and this release together.
+
 # 2.7.3 — an app owns its scroller, and the SDK says so out loud (MAN-2112)
 
 ### Why

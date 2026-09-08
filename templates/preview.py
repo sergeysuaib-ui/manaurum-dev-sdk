@@ -19,8 +19,10 @@ Then:
     http://127.0.0.1:8765/__shell?accent=lavender   framed, another accent
     http://127.0.0.1:8765/                          the bare page, unframed
 
-Screenshot both appearances (Chrome or Edge, same flags; --user-data-dir is
-NOT optional — without it the command can exit silently and write nothing):
+Screenshot both appearances (Chrome or Edge, same flags). A fresh
+--user-data-dir keeps the run independent of whatever browser profile is open;
+a locked profile is one of the ways this command exits without writing a file
+and without printing an error:
 
     chrome --headless=new --disable-gpu --hide-scrollbars \
       --user-data-dir="$(mktemp -d)" --virtual-time-budget=4000 \
@@ -39,6 +41,7 @@ declare shows up here before it 404s in production.
 """
 
 import argparse
+import html
 import json
 import os
 import sys
@@ -114,23 +117,41 @@ SHELL_PAGE = """<!doctype html>
 
 
 def build_init(appearance, accent, device):
-    """The payload the shell actually posts (references/sdk-api.md)."""
+    """The payload the shell posts, per references/sdk-api.md.
+
+    The mobile column of that file's "Platform fields" table is reproduced
+    here: a back button instead of a window frame, real notch insets, and a
+    navigation mode taken from the app's declared pattern (`stack` is the
+    common one). Get this wrong and an app that branches on those fields is
+    exercised with desktop values while the badge says "mobile".
+    """
+    mobile = device == "mobile"
     return {
         "theme": "smoothie",
         "appearance": appearance,
         "accent": accent,
         "device": device,
         "platform": device,
-        "screen": {"width": 1440, "height": 900},
-        "safeAreaInsets": {"top": 0, "bottom": 0, "left": 0, "right": 0},
-        "navigationMode": "window",
-        "shell": {"hasTabBar": False, "hasBackButton": False, "tabBarHeight": 0},
+        "screen": {"width": 390, "height": 844} if mobile else {"width": 1440, "height": 900},
+        "safeAreaInsets": ({"top": 47, "bottom": 34, "left": 0, "right": 0} if mobile
+                           else {"top": 0, "bottom": 0, "left": 0, "right": 0}),
+        "navigationMode": "stack" if mobile else "window",
+        "shell": {"hasTabBar": False, "hasBackButton": mobile, "tabBarHeight": 0},
         "user": {"nickname": "Preview"},
         "permissions": [],
         "appId": "preview-app",
+        "offline_token": "",
         "granted_capabilities": ["os.kv.get", "os.kv.set"],
         "windowId": "win_preview",
     }
+
+
+class PreviewServer(ThreadingHTTPServer):
+    # Windows lets a second process bind a port that is already listening when
+    # SO_REUSEADDR is set, and then splits requests between the two — so a stale
+    # server keeps answering with old files through an edit-restart-screenshot
+    # loop. Refuse the bind instead; "address in use" is the useful answer.
+    allow_reuse_address = False
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -179,7 +200,12 @@ class Handler(SimpleHTTPRequestHandler):
         device = q.get("device", ["desktop"])[0].lower()
         if device not in ("desktop", "mobile"):
             device = "desktop"
+        # `entry` is the one caller-controlled string that lands in the page.
+        # It must be a path, and it is escaped before it reaches the attribute.
         entry = q.get("entry", ["/index.html"])[0]
+        if not entry.startswith("/"):
+            entry = "/index.html"
+        entry = html.escape(entry, quote=True)
 
         page = (SHELL_PAGE
                 .replace("__APPEARANCE__", appearance)
@@ -214,20 +240,26 @@ def main():
     if not os.path.exists(os.path.join(root, "index.html")):
         sys.stderr.write("warning: no index.html in %s\n" % root)
 
+    # Everything the operator needs goes to stderr, unbuffered: this server is
+    # normally backgrounded into a log file, and block-buffered stdout would
+    # hold the URLs until the process died.
+    say = lambda line: sys.stderr.write(line + "\n")
+
     if os.path.exists(args.fixtures):
         with open(args.fixtures, encoding="utf-8") as fh:
             Handler.fixtures = json.load(fh)
-        print("fixtures: %s (%d paths)" % (args.fixtures, len(Handler.fixtures)))
+        stubs = [k for k in Handler.fixtures if k.startswith("/")]
+        say("fixtures: %s (%d paths)" % (args.fixtures, len(stubs)))
     else:
-        print("fixtures: none - every /api/* answers {}")
+        say("fixtures: none - every /api/* answers {}")
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port),
-                                 lambda *a: Handler(*a, directory=root))
+    server = PreviewServer(("127.0.0.1", args.port),
+                           lambda *a: Handler(*a, directory=root))
     base = "http://127.0.0.1:%d" % args.port
-    print("serving %s" % root)
-    print("  framed light : %s/__shell" % base)
-    print("  framed dark  : %s/__shell?appearance=dark" % base)
-    print("  unframed     : %s/" % base)
+    say("serving %s" % root)
+    say("  framed light : %s/__shell" % base)
+    say("  framed dark  : %s/__shell?appearance=dark" % base)
+    say("  unframed     : %s/" % base)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

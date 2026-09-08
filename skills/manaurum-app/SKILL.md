@@ -92,14 +92,16 @@ stylesheet loses the guards baked into it, and the loss is silent.
 
 ### The seven rules an app gets sent back for
 
-Not taste, and not optional reading. Each of these has shipped, been seen by a
-customer, and been rejected — and copying `app.css` does not enforce any of
-them, because they are decisions you make in the markup. Check them before the
-first file, and again against the screenshot in Step 3.5.
+Not taste, and not optional reading. Each of these has shipped at least once —
+four of them in a single app, whose interface was rejected on sight while every
+technical check passed. Copying `app.css` enforces none of them, because they
+are decisions you make in the markup. Check them before the first file, and
+again against the screenshot in Step 3.5.
 
-1. **No tab bar and no sidebar.** The window is often 900px wide and sits in a
-   desktop that already has navigation. Sections are cards; two views are two
-   `.btn-ghost`s that swap the content.
+1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
+   and sits in a desktop that already has navigation. Sections are cards; two
+   views are two `.btn-ghost`s that swap the content. (One narrow exception, in
+   `design.md`: a list that genuinely drives a detail pane.)
 2. **Appearance and accent come from `manaurum:init`**, written onto `<html>` as
    `data-appearance` / `data-accent` (Step 2.5). `prefers-color-scheme` is only
    the standalone default — it tracks the *browser*, so an app that styles off
@@ -116,8 +118,12 @@ first file, and again against the screenshot in Step 3.5.
    `allow-modals`, so they return silently — a `confirm()`-gated delete button
    is a button that does nothing. Use an in-app modal, input or toast.
 
-Everything else — patterns, empty states, spacing, mobile, icons —
-`references/design.md`, which opens with the full table of prohibitions.
+These seven are the ones a screenshot catches. Two more prohibitions need a
+window rather than a picture — never clip your root (`overflow: hidden` plus a
+fixed height: the shell cannot scroll an iframe app, so the bottom of every long
+view becomes unreachable), and never build a palette on gold, yellow or
+`hue-rotate`. Those, plus patterns, empty states, spacing, mobile and icons, are
+in `references/design.md` — which opens with the full table of prohibitions.
 
 ## Required project structure
 
@@ -299,7 +305,8 @@ shortcut.** The app comes up, the window works, and it renders in its own
 palette inside a dark desktop — which is what a user sees first. The two belong
 in one listener because they arrive in one message. The starter's `index.html`
 is this same script plus a `prefers-color-scheme` default for the standalone
-URL; copy it rather than retyping this.
+URL, `manaurum:device-change`, and the `window.__manaurum` context object the
+rest of that file reads — copy the whole block rather than retyping this one.
 
 Inline in `<head>` matters: for an SPA with a deferred module bundle, `manaurum:init` can arrive before your bundle has parsed. Put the listener in the HTML **and** fire one proactive `manaurum:ready` after mount — that belt-and-braces pair is what MAN-1321 landed:
 
@@ -391,9 +398,8 @@ cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
 python preview.py --app my-app/src/static
 ```
 
-**2. Photograph both appearances.** Chrome or Edge, same flags. `--user-data-dir`
-is **not** optional — without it the browser can exit silently, writing no file
-and printing no error, which reads as "the page failed to render".
+**2. Photograph both appearances.** Chrome or Edge, same flags (on Windows, the
+full path to `chrome.exe` and any fresh directory for the profile).
 
 ```bash
 chrome --headless=new --disable-gpu --hide-scrollbars \
@@ -404,10 +410,18 @@ chrome --headless=new --disable-gpu --hide-scrollbars \
 # and again with ?appearance=dark → dark.png
 ```
 
+A fresh `--user-data-dir` keeps the run independent of whatever browser profile
+is open; a locked profile is one of the ways this command exits without writing
+a file and without printing an error, which reads as "the page failed to
+render". `--virtual-time-budget` is what waits for the fetches: too short and
+you photograph the skeletons.
+
 Add `&accent=lavender` (or any of the eight) to check you are not hardcoding
 blue. `&device=mobile` posts the mobile device flag — but do not judge phone
-*geometry* from a headless window: both browsers floor the viewport at ~485px,
-so a fine phone layout photographs as clipped.
+*geometry* from a headless window: the layout viewport floors at ~500px, so
+`--window-size=390,800` still lays out at 500 and crops the PNG, and a perfectly
+good phone layout photographs as clipped (measured on Chrome and Edge,
+`--headless=new`). Check narrow layouts in a real browser window instead.
 
 **Headless cannot click.** A view reachable only through a button is a view the
 screenshot never sees. Give each section its own URL fragment (`#customers`,
@@ -415,7 +429,8 @@ read on load and on `hashchange`) and shoot it with
 `…/__shell?entry=/index.html%23customers`. That is better for users anyway.
 
 **3. Open the two pictures and criticise them honestly**, against the seven
-rules above — out loud, in your reply. "It renders" is not the bar; the bar is
+rules above and the `Never` table that opens `references/design.md` — out loud,
+in your reply. "It renders" is not the bar; the bar is
 whether you would show this to the person who asked for it. Name what is wrong
 and fix it before the deploy, not after the rejection. Also read the terminal:
 `preview.py` logs every `/api/*` your UI called, which is the cheapest way to
