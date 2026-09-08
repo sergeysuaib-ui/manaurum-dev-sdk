@@ -1,0 +1,13 @@
+{
+  "_comment": "Stub bodies for preview.py. Key = the /api path your UI calls, value = the JSON it should get back. Copy the shapes from your own route handlers; anything not listed answers {}. The two entries below serve templates/v2-starter.",
+
+  "/api/me": {
+    "user_id": "11111111-2222-3333-4444-555555555555",
+    "nickname": "Preview",
+    "tenant_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  },
+
+  "/api/notes": {
+    "text": "A note that came back from the stub, so the form renders with real content."
+  }
+}

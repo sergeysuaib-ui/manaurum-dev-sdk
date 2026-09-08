@@ -48,6 +48,11 @@ rules". Note the guard arms on the `manaurum:init` handshake, so a standalone
 dev-server tab never reports — check inside the desktop, or call
 `app.checkLayout()` yourself.
 
+And if you have not looked at the app at all yet, do that first: two headless
+screenshots, light and dark, through `<plugin>/templates/preview.py`. The
+procedure is `manaurum-app/SKILL.md` → **Step 3.5**. Deploying an interface
+nobody has seen is how a technically flawless app gets rejected on sight.
+
 ### Quickstart
 
 ```bash

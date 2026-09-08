@@ -90,6 +90,41 @@ unfinished is one a user abandons.
 retry; do **not** fall back to writing the file yourself. Re-deriving the
 stylesheet loses the guards baked into it, and the loss is silent.
 
+### The seven rules an app gets sent back for
+
+Not taste, and not optional reading. Each of these has shipped at least once —
+four of them in a single app, whose interface was rejected on sight while every
+technical check passed. Copying `app.css` enforces none of them, because they
+are decisions you make in the markup. Check them before the first file, and
+again against the screenshot in Step 3.5.
+
+1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
+   and sits in a desktop that already has navigation. Sections are cards; two
+   views are two `.btn-ghost`s that swap the content. (One narrow exception, in
+   `design.md`: a list that genuinely drives a detail pane.)
+2. **Appearance and accent come from `manaurum:init`**, written onto `<html>` as
+   `data-appearance` / `data-accent` (Step 2.5). `prefers-color-scheme` is only
+   the standalone default — it tracks the *browser*, so an app that styles off
+   it sits in its own palette inside a dark desktop.
+3. **A badge is a word, not a sentence.** `overdue` — never "hasn't paid in over
+   90 days". A badge that holds a phrase turns a scannable list into a wall.
+4. **One primary button per view**, never one per row. A column of blue buttons
+   says nothing is the answer.
+5. **Hover states only on what is clickable.** A hover on an inert row is a
+   promise the app does not keep.
+6. **No hex in the markup and no inline `style=`.** Change a token, not 40
+   rules; an inline colour cannot follow an appearance change.
+7. **No `alert()` / `confirm()` / `prompt()`.** The shell's iframe has no
+   `allow-modals`, so they return silently — a `confirm()`-gated delete button
+   is a button that does nothing. Use an in-app modal, input or toast.
+
+These seven are the ones a screenshot catches. Two more prohibitions need a
+window rather than a picture — never clip your root (`overflow: hidden` plus a
+fixed height: the shell cannot scroll an iframe app, so the bottom of every long
+view becomes unreachable), and never build a palette on gold, yellow or
+`hue-rotate`. Those, plus patterns, empty states, spacing, mobile and icons, are
+in `references/design.md` — which opens with the full table of prohibitions.
+
 ## Required project structure
 
 ```
@@ -240,17 +275,38 @@ When the desktop opens your app it loads your URL in an iframe and posts `manaur
 
 **The trap:** opening `https://<slug>.apps.manaurum.com` directly works perfectly without the handshake. There is no parent frame, so nothing times out. Your app looks fine in every browser tab you test it in and is unusable in the only place your users open it. This is not hypothetical — the first-party app *Libi* shipped exactly this way and needed a follow-up release (MAN-1321: "Libi's SPA never replied, making the app unusable as a desktop window or from the mobile home screen").
 
-Minimal correct answer, inline in `<head>` of your entry point:
+Minimal correct answer, inline in `<head>` of your entry point. It does two
+things, because `manaurum:init` carries two things — the handshake **and** the
+appearance the user is in:
 
 ```html
 <script>
   window.addEventListener('message', function (e) {
-    if (e.data && e.data.type === 'manaurum:init') {
+    if (!e.data || typeof e.data.type !== 'string') return;
+    var p = e.data.payload || {};
+
+    // The shell owns light/dark and the accent, and re-posts them whenever the
+    // user changes either. Write them on <html>; every colour token in app.css
+    // keys off these two attributes and nothing else.
+    if (e.data.type === 'manaurum:init' || e.data.type === 'manaurum:theme-change') {
+      if (p.appearance) document.documentElement.dataset.appearance = p.appearance;
+      if (p.accent) document.documentElement.dataset.accent = p.accent;
+    }
+
+    if (e.data.type === 'manaurum:init') {
       window.parent.postMessage({ type: 'manaurum:ready' }, '*');
     }
   });
 </script>
 ```
+
+**Answering the handshake and ignoring the payload is a shipped bug, not a
+shortcut.** The app comes up, the window works, and it renders in its own
+palette inside a dark desktop — which is what a user sees first. The two belong
+in one listener because they arrive in one message. The starter's `index.html`
+is this same script plus a `prefers-color-scheme` default for the standalone
+URL, `manaurum:device-change`, and the `window.__manaurum` context object the
+rest of that file reads — copy the whole block rather than retyping this one.
 
 Inline in `<head>` matters: for an SPA with a deferred module bundle, `manaurum:init` can arrive before your bundle has parsed. Put the listener in the HTML **and** fire one proactive `manaurum:ready` after mount — that belt-and-braces pair is what MAN-1321 landed:
 
@@ -318,6 +374,67 @@ Capabilities available today:
 | `os.calendar.list_events` / `os.calendar.create_event` | The user's calendar. **User-scoped — forward `X-Manaurum-User-Context`.** |
 
 See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
+
+## Step 3.5 — Look at the UI before you deploy it
+
+**The last step of building an interface, and it is as mandatory as `healthz`
+after a deploy.** Up to here you have read code, and nobody has *seen* the app.
+Design rules do not survive a build that is never looked at: the four failures
+that got a real app rejected — tab-bar navigation, sentences in badges, a blue
+button in every row, a light app in a dark desktop — were all obvious in the
+first screenshot and invisible in the diff.
+
+**1. Serve it with stubs.** `<plugin>/templates/preview.py` is a stdlib-only
+script (no install, no dependencies): it serves your static files, answers every
+`/api/*` call from a fixtures file, and adds a `/__shell` page that frames your
+app the way the desktop does — the shell's exact sandbox, a real `manaurum:init`
+with the appearance and accent you ask for, and a red badge if `manaurum:ready`
+never comes back. Keep it **beside** the app directory, never inside it:
+everything inside is packed into the deploy.
+
+```bash
+cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
+# one entry per /api path your UI calls; anything unlisted answers {}
+python preview.py --app my-app/src/static
+```
+
+**2. Photograph both appearances.** Chrome or Edge, same flags (on Windows, the
+full path to `chrome.exe` and any fresh directory for the profile).
+
+```bash
+chrome --headless=new --disable-gpu --hide-scrollbars \
+  --user-data-dir="$(mktemp -d)" --virtual-time-budget=4000 \
+  --window-size=1240,1000 --screenshot=light.png \
+  "http://127.0.0.1:8765/__shell?appearance=light"
+
+# and again with ?appearance=dark → dark.png
+```
+
+A fresh `--user-data-dir` keeps the run independent of whatever browser profile
+is open; a locked profile is one of the ways this command exits without writing
+a file and without printing an error, which reads as "the page failed to
+render". `--virtual-time-budget` is what waits for the fetches: too short and
+you photograph the skeletons.
+
+Add `&accent=lavender` (or any of the eight) to check you are not hardcoding
+blue. `&device=mobile` posts the mobile device flag — but do not judge phone
+*geometry* from a headless window: the layout viewport floors at ~500px, so
+`--window-size=390,800` still lays out at 500 and crops the PNG, and a perfectly
+good phone layout photographs as clipped (measured on Chrome and Edge,
+`--headless=new`). Check narrow layouts in a real browser window instead.
+
+**Headless cannot click.** A view reachable only through a button is a view the
+screenshot never sees. Give each section its own URL fragment (`#customers`,
+read on load and on `hashchange`) and shoot it with
+`…/__shell?entry=/index.html%23customers`. That is better for users anyway.
+
+**3. Open the two pictures and criticise them honestly**, against the seven
+rules above and the `Never` table that opens `references/design.md` — out loud,
+in your reply. "It renders" is not the bar; the bar is
+whether you would show this to the person who asked for it. Name what is wrong
+and fix it before the deploy, not after the rejection. Also read the terminal:
+`preview.py` logs every `/api/*` your UI called, which is the cheapest way to
+find a route missing from `runtime.api_routes` before it 404s in production.
 
 ## Step 4 — Deploy
 

@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.7.3.** Skills that teach Claude Code to build and ship apps for
+**Version 2.8.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -143,6 +143,13 @@ parts inlined. Reading one real app beats reading four pages about apps.
   `tests/`. Apps grow by adding surfaces, not by growing one file. It is **not** identical
   to `manaurum app init` output; when the CLI catches up (MAN-1393) this directory goes
   away in favour of it.
+* `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
+  it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
+  fixtures file, and frames the page the way the desktop shell does: the shell's exact
+  sandbox, a real `manaurum:init` with the appearance and accent you ask for, and a red
+  badge when `manaurum:ready` never comes back. Two headless screenshots (light and
+  dark) are the whole check. Keep it *beside* the app directory — everything inside is
+  packed into the deploy.
 * `templates/legacy-v1/` — the old iframe-bundle artifacts. Kept only for apps that
   already ship on v1; do not start anything new from them.
 
@@ -153,8 +160,11 @@ parts inlined. Reading one real app beats reading four pages about apps.
 Things people reasonably expect that do not exist yet. Better to read it here than to
 discover it at 2 a.m.:
 
-* **No local dev loop.** There is no `manaurum app dev`; the inner loop today is deploy
-  and look.
+* **No local dev loop for the backend.** There is no `manaurum app dev`: capabilities are
+  only reachable from inside a deployed container, so the inner loop for anything that
+  calls the gateway is still deploy and look. The *frontend* now has one —
+  `templates/preview.py` frames the page like the shell and stubs the API — but it stubs,
+  it does not run your app.
 * **Build failures give you one line.** If the image fails to build you get a short
   reason, not the Docker log.
 * **"Succeeded" means built and scheduled**, not "your container answers". A deploy that
