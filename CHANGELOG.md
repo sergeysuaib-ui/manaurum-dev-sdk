@@ -1,3 +1,93 @@
+# 2.8.0 — the design rules travel with the skill, and somebody looks at the app (MAN-2439)
+
+### Why
+
+An app built on 2.7.2 cleared every technical trap on the first attempt —
+manifest v2, `runtime.port`, default-deny `api_routes` (including the
+`/api/x/*`-does-not-cover-`/api/x` edge), managed Postgres, migrations, the
+`manaurum:ready` handshake, a secret through `os.secrets`, deploy and job
+polling. Its interface was then rejected on sight, and correctly: a tab bar as
+navigation, badges holding whole sentences, a primary button in every row of a
+list, and an app that stayed in its own palette inside a dark desktop.
+
+All four are written down in `references/design.md`. That file was never opened.
+
+The mechanism matters more than the miss. The skill pointed at `design.md`
+twice, and both pointers read as further reading — while a complete, correct
+`app.css` sat one directory away. Copying the stylesheet *feels* like the design
+step: the UI assembles, it looks like the template, and every technical check
+passes. Nothing in the skill said otherwise, and two things in it actively
+helped the failure along:
+
+- **The handshake snippet in Step 2.5 dropped the payload on the floor.** It
+  answered `manaurum:ready` and read nothing else — so an app that followed this
+  skill to the letter ignored `appearance` and `accent` by construction. That is
+  the third violation, with a recipe.
+- **Nothing ever asked anyone to look at the result.** Rules cannot survive a
+  build that is never seen. All four failures were obvious in the first
+  screenshot and invisible in the diff.
+
+One correction to the report, checked rather than assumed: the starter template
+does **not** ignore the theme. `index.html` writes `data-appearance` /
+`data-accent` on `<html>` and `app.css` carries the dark block, all eight
+accents and `color-scheme` — that landed in 2.7.0 (MAN-1436) and is present in
+the published 2.7.2. Verified by framing the unmodified starter and
+photographing it in both appearances. The gap was in the skill's own snippet,
+not in the template.
+
+### What changed
+
+- **`manaurum-app/SKILL.md` — "The seven rules an app gets sent back for."**
+  Seven lines in the section that already tells the agent to copy the look,
+  before the first file is written: no tab bar or sidebar; appearance and accent
+  from `manaurum:init`; a badge is a word, not a sentence; one primary button per
+  view; hover only on what is clickable; no hex or inline `style=` in the
+  markup; no `alert()` / `confirm()` / `prompt()`. The link to `design.md` stays,
+  but the checklist works without following it.
+
+- **`manaurum-app/SKILL.md` Step 2.5 — the handshake snippet now applies the
+  theme.** One listener, both jobs, because both arrive in one message; it also
+  handles `manaurum:theme-change`. With a paragraph saying plainly that
+  answering the handshake and discarding the payload is a shipped bug, not a
+  shortcut.
+
+- **`manaurum-app/SKILL.md` Step 3.5 — "Look at the UI before you deploy it."**
+  A mandatory last step of building an interface, in the same position as
+  "check `/healthz`" after a deploy: serve with stubs, screenshot light and
+  dark, then open the pictures and criticise them out loud against the seven
+  rules. Includes the two things that make the procedure fail — `--user-data-dir`
+  is not optional (without it the browser exits silently, writing nothing), and
+  headless cannot click, so a view reachable only through a button needs a URL
+  fragment before a screenshot can reach it.
+
+- **`templates/preview.py` + `templates/preview-fixtures.json` (new).** A
+  stdlib-only preview server, no install and no dependencies: your static files,
+  a JSON stub for every `/api/*` call, and a `/__shell` page that frames the app
+  the way the desktop does — the shell's exact sandbox (so `alert()` is as dead
+  as it is in production), a real `manaurum:init` carrying whichever
+  `appearance`, `accent` and `device` you ask for, and a red badge when
+  `manaurum:ready` never comes back. It lives beside the app directory, never
+  inside it: everything inside is packed into the deploy. Every API hit is
+  logged, which is the cheapest way to find a route missing from
+  `runtime.api_routes` before it 404s in production.
+
+- **`manaurum-app/references/design.md` now opens with a `Never` table.** Nine
+  rows, each a rule an app has shipped without and been sent back for, each with
+  one line of why. The rules were all in the file already — spread through the
+  prose of six sections, where they were visible only to someone reading the
+  whole page.
+
+- **`manaurum-deploy/SKILL.md`** — the pre-flight section now sends you to Step
+  3.5 first if nobody has looked at the app yet.
+
+- **`README.md`** — `templates/preview.py` documented under Templates, and the
+  "no local dev loop" gap corrected: the frontend now has one, the backend still
+  does not.
+
+Version note: 2.7.3 (`os.drive.*`, MAN-1958/1959) has been on `main` since it
+merged and needed no separate publication — a plugin install caches per version,
+so a machine sitting on 2.7.2 is a stale cache, not an unpublished release.
+`/plugin` → update, and both 2.7.3 and this release arrive together.
 # 2.7.3 — an app owns its scroller, and the SDK says so out loud (MAN-2112)
 
 ### Why

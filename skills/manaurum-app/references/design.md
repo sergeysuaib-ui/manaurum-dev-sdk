@@ -1,5 +1,25 @@
 # Designing a v2 app
 
+## Never
+
+Every row here has shipped, been seen by a customer, and been sent back. If you
+read nothing else on this page, read the table.
+
+| Never | Why |
+|---|---|
+| A tab bar or a sidebar as navigation | The window is often 900px wide inside a desktop that already navigates. A sidebar spends a third of the width repeating what the OS said. Stack sections as cards. |
+| Style off `prefers-color-scheme` | It tracks the *browser*, not Manaurum. Appearance and accent arrive in `manaurum:init`; write them on `<html>` and let CSS read them. |
+| A sentence inside a badge | A badge is a status word (`overdue`). A phrase turns a scannable list into a wall of text. |
+| More than one primary button per view | Two blues side by side — or one in every row — means none of them is the answer. |
+| A hover state on something inert | Hover is a promise that clicking does something. Keep the focus ring; keyboard users navigate too. |
+| Hex values in the markup, or inline `style=` | You end up changing 40 rules instead of one token, and an inline colour cannot follow an appearance change. |
+| `alert()` / `confirm()` / `prompt()` | The shell's iframe has no `allow-modals`. They return silently, so a `confirm()`-gated delete button does nothing — and they work on the standalone URL, so testing there proves nothing. |
+| `overflow: hidden` + a fixed height on your root | The window cannot scroll an iframe app. Clip the root and the bottom of every long view is unreachable, with no scrollbar anywhere. |
+| Gold or yellow as a palette, `hue-rotate`, a hot-linked webfont | The first two are banned across Manaurum surfaces; a font that arrives late reflows your app and one that never arrives changes its metrics. |
+
+The rest of this page is *when* to reach for what. The table above is what gets
+an app rejected.
+
 A v2 app is an **isolated iframe that serves its own CSS**. Nothing from the
 Manaurum shell cascades in — no reset, no fonts, no tokens, no component
 classes. You are not styling a React island inside our app; you are building a
@@ -76,6 +96,11 @@ document.documentElement.dataset.accent = ctx.accent;
 :root[data-appearance="dark"] { --app-bg: #17171a; --text-primary: #f5f5f7; }
 :root[data-accent="lavender"] { --accent: #b49dff; }
 ```
+
+Then check it, because this is the one failure that is invisible in a code
+review and obvious in a picture: `<plugin>/templates/preview.py` frames your app
+the way the shell does and lets you ask for any appearance and accent —
+`manaurum-app/SKILL.md` → **Step 3.5**.
 
 ## Window rules
 
