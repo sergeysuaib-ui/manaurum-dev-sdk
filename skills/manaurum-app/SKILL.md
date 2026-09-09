@@ -420,9 +420,10 @@ that had read the rules.
 python <plugin>/templates/check_ui.py my-app/src/static
 ```
 
-`check_ui.py` checks nine of the seven rules mechanically — including the three
-a screenshot cannot show: a hex hidden inside a `var()` fallback whose token
-does not exist, a click target with no `is-interactive`, and appearance read off
+`check_ui.py` runs fifteen checks, covering six of the seven rules — a sentence
+in a badge is the one only a person can see — including the three a screenshot
+cannot show either: a hex hidden inside a `var()` fallback whose token does not
+exist, a click target with no `is-interactive`, and appearance read off
 `e.data` instead of `e.data.payload`. Exit 0 or fix what it names. Do this
 *before* the screenshots: it is cheaper, and half of what it finds would
 otherwise reach the owner rather than you.
@@ -464,8 +465,16 @@ chrome --headless=new --disable-gpu --hide-scrollbars \
 A fresh `--user-data-dir` keeps the run independent of whatever browser profile
 is open; a locked profile is one of the ways this command exits without writing
 a file and without printing an error, which reads as "the page failed to
-render". `--virtual-time-budget` is what waits for the fetches: too short and
-you photograph the skeletons.
+render".
+
+**`--virtual-time-budget` waits for the fetches, and it cannot be shortened to
+catch a skeleton.** Chrome pauses virtual time while a request is in flight, so
+against a `{"delay_ms": 6000}` fixture a budget of 400ms and one of 1200ms both
+wait the full six seconds and photograph the *loaded* page (measured, Chrome
+141 `--headless=new`). To photograph a loading state, **drop the flag
+entirely** — then the shot happens at the load event, with the skeletons still
+up. The trade is that preview's own appearance check has not run yet at that
+moment, so take the theme evidence from one of the other screenshots.
 
 Add `&accent=lavender` (or any of the eight) to check you are not hardcoding
 blue.

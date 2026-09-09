@@ -34,14 +34,22 @@ import sys
 from pathlib import Path
 
 # ── What we look for ────────────────────────────────────────────────────────
-# A hex colour is 3, 4, 6 or 8 digits. Five or seven is not a colour, it is a
-# coincidence, and matching it produces the false positives that get a linter
-# switched off.
-HEX = re.compile(r"#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![0-9a-fA-F])")
+# A 6- or 8-digit hex is a colour wherever it appears. A 3- or 4-digit one is
+# only a colour in a colour context: this skill now teaches a URL fragment per
+# view, so `location.hash === '#add'` and `href="#fed"` are ordinary code, and
+# a linter that calls them hardcoded colours is a linter people switch off.
+HEX_LONG = re.compile(r"#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6})(?![0-9a-fA-F])")
+HEX_SHORT = re.compile(r"#[0-9a-fA-F]{3,4}(?![0-9a-fA-F])")
+COLOUR_WORD = re.compile(
+    r"\b(colou?r|background|border|fill|stroke|shadow|gradient|outline|accent|"
+    r"theme|palette)\b", re.I)
 RGBA = re.compile(r"\brgba?\s*\(")
 VAR_USE = re.compile(r"var\(\s*(--[a-z0-9-]+)")
 VAR_DECL = re.compile(r"(--[a-z0-9-]+)\s*:")
-STYLE_ATTR = re.compile(r"\sstyle\s*=")
+# `style="width:42%"` on a progress bar is legitimate and cannot be a token;
+# `style="color:#333"` is the rule being broken. Only the second is a finding.
+STYLE_ATTR_COLOUR = re.compile(
+    r"""\sstyle\s*=\s*(?P<q>["'])(?P<body>[^"']*)(?P=q)""")
 STYLE_PROP = re.compile(r"\.style\.[a-zA-Z]")
 MODALS = re.compile(r"\b(alert|confirm|prompt)\s*\(")
 BANNED_CLASS = re.compile(r'class="[^"]*\b(tabs?|sidebar)\b')
@@ -75,13 +83,37 @@ def strip_comments(text: str) -> str:
     return LINE_COMMENT.sub("", text)
 
 
+def style_blocks(text: str) -> list:
+    """`<style>` bodies, or nothing.
+
+    The guard is not paranoia: `<style[^>]*>.*?</style>` backtracks
+    quadratically over a file with `<style` tags and no closing one - measured
+    at 2.4s for 64KB and minutes for a large page.
+    """
+    return STYLE_BLOCK.findall(text) if "</style>" in text else []
+
+
+def without_style_blocks(text: str) -> str:
+    return STYLE_BLOCK.sub("", text) if "</style>" in text else text
+
+
+def short_hex_colours(text: str) -> list:
+    """3/4-digit hex sitting in a colour context, not a URL fragment."""
+    out = []
+    for match in HEX_SHORT.finditer(text):
+        window = text[max(0, match.start() - 40):match.end() + 10]
+        if COLOUR_WORD.search(window):
+            out.append(match.group(0))
+    return out
+
+
 def declared_tokens(static_dir: Path) -> set:
     """Every custom property the app declares, wherever it keeps them."""
     names = set()
     for css in sorted(static_dir.rglob("*.css")):
         names |= set(VAR_DECL.findall(css.read_text(encoding="utf-8", errors="replace")))
     for page in sorted(static_dir.rglob("*.htm*")):
-        for block in STYLE_BLOCK.findall(page.read_text(encoding="utf-8", errors="replace")):
+        for block in style_blocks(page.read_text(encoding="utf-8", errors="replace")):
             names |= set(VAR_DECL.findall(block))
     return names
 
@@ -90,27 +122,45 @@ def check(static_dir: Path) -> list:
     problems = []
     declared = declared_tokens(static_dir)
 
+    # A var() whose token does not exist is a hardcoded value wearing a
+    # token's clothes - and a STYLESHEET can do it too. The reference
+    # stylesheet in this very plugin shipped `var(--container-lg, 1024px)`
+    # with that name declared nowhere, and this linter did not see it because
+    # it only read `.css` files for what they DECLARE.
+    for path in sorted(static_dir.rglob("*.css")):
+        name = str(path.relative_to(static_dir)).replace("\\", "/")
+        css = BLOCK_COMMENT.sub("", path.read_text(encoding="utf-8", errors="replace"))
+        for var in sorted(set(VAR_USE.findall(css))):
+            if var not in declared:
+                problems.append(
+                    "%s: var(%s) is declared nowhere in this app - the fallback quietly "
+                    "becomes a hardcoded value" % (name, var))
+
     sources = [p for p in sorted(static_dir.rglob("*"))
-               if p.is_file() and p.suffix in CHECKED_SUFFIXES]
+               if p.is_file() and p.suffix in CHECKED_SUFFIXES
+               and ".min." not in p.name]
 
     for path in sources:
         name = str(path.relative_to(static_dir)).replace("\\", "/")
         text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
         # Stylesheets are exempt from the colour rules and only from those.
-        markup = HREF_FRAGMENT.sub("", STYLE_BLOCK.sub("", text))
+        markup = HREF_FRAGMENT.sub("", without_style_blocks(text))
 
         for var in sorted(set(VAR_USE.findall(text))):
             if var not in declared:
                 problems.append(
                     "%s: var(%s) is declared nowhere in this app - the fallback quietly "
                     "becomes a hardcoded value" % (name, var))
-        for match in sorted(set(HEX.findall(markup))):
+        for match in sorted(set(HEX_LONG.findall(markup))):
+            problems.append("%s: hex %s in markup - use a token" % (name, match))
+        for match in sorted(set(short_hex_colours(markup))):
             problems.append("%s: hex %s in markup - use a token" % (name, match))
         if RGBA.search(markup):
             problems.append("%s: rgba() in markup - use a token" % name)
-        if STYLE_ATTR.search(markup):
-            problems.append("%s: style= attribute - an inline colour cannot follow an "
-                            "appearance change" % name)
+        if any(COLOUR_WORD.search(m.group("body")) or HEX_LONG.search(m.group("body"))
+               for m in STYLE_ATTR_COLOUR.finditer(markup)):
+            problems.append("%s: a colour in a style= attribute - an inline colour "
+                            "cannot follow an appearance change" % name)
         if STYLE_PROP.search(text):
             problems.append("%s: element.style.* assignment - same as style=; toggle a "
                             "class instead" % name)

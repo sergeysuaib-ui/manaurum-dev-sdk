@@ -2,8 +2,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-.env
-.env.local
+# .env* and not just .env: the token file the skill tells you to create is
+# named .env.manaurum, and the packer has no glob support either.
+.env*
 dist/
 build/
 *.egg-info/

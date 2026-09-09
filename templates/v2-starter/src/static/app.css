@@ -57,6 +57,10 @@
   --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
   --space-12: 48px;
 
+  /* Layout. `design.md` caps a page at 1024px: text lines that run the
+     full width of a maximised window are unreadable. */
+  --container-lg: 1024px;
+
   --radius-button: 8px; --radius-input: 10px; --radius-card: 12px;
   --radius-panel: 16px; --radius-pill: 9999px;
 

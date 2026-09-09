@@ -102,21 +102,30 @@ def user_context(keypair):
 
 @pytest.fixture
 def fake_kv(monkeypatch):
-    """Replace the capability gateway with an in-memory dict.
+    """Replace the capability GATEWAY with an in-memory KV, one layer down.
 
-    Unit tests must not depend on Core being reachable. Capability calls
-    are patched where they are USED (src.capability's own helpers), so a
-    test exercises your logic, not httpx.
+    Unit tests must not depend on Core being reachable — but they must
+    still run your own code. An earlier version of this fixture patched
+    `read_note` / `write_note`, which are the functions under test: key
+    naming, the stored shape and the truncation all became fiction, and
+    a test could pass over storage the app never actually wrote. Patch
+    the one seam that IS infrastructure (`call_capability`, i.e. httpx),
+    and everything above it stays real.
+
+    Returns the raw store, keyed exactly as `note_key()` keys it — so an
+    assertion about the key is an assertion about production behaviour.
     """
-    store: dict[str, str] = {}
+    store: dict[str, object] = {}
 
-    async def _read(user_id: str) -> str:
-        return store.get(user_id, "")
+    async def _call(name: str, payload: dict) -> dict:
+        if name == "os.kv.set":
+            store[payload["key"]] = payload["value"]
+            return {"ok": True}
+        if name == "os.kv.get":
+            return {"value": store.get(payload["key"])}
+        raise AssertionError(f"unexpected capability in a unit test: {name}")
 
-    async def _write(user_id: str, text: str) -> str:
-        store[user_id] = text[:10_000]
-        return store[user_id]
-
-    monkeypatch.setattr("src.agent_routes.read_note", _read)
-    monkeypatch.setattr("src.agent_routes.write_note", _write)
+    # Patch where it is DEFINED, so every module that imported the
+    # helpers gets the fake too.
+    monkeypatch.setattr("src.capability.call_capability", _call)
     return store

@@ -53,9 +53,20 @@ so the detail screen at `/api/items/42` is reachable:
 A value may also be an envelope describing the response, which is how you
 photograph the states that are not "it worked":
 
-    { "/api/items":  { "status": 500 },                       // could not load
-      "/api/slow/*": { "delay_ms": 1500, "body": {} },        // still loading
-      "/api/empty":  { "body": [] } }                         // nothing here yet
+    { "/api/items":     { "status": 500 },                    // could not load
+      "/api/slow/*":    { "delay_ms": 1500, "body": {} },     // still loading
+      "/api/empty":     { "body": [] },                       // nothing here yet
+      "PUT /api/items/*": { "ok": true } }                    // a write, not a read
+
+A key may name a method, as the last line does. Paths otherwise match without
+one, the way `runtime.api_routes` does - which means a PUT is answered by the
+GET fixture unless you say so, and a save whose stub replies with the record it
+was reading looks like it worked when it would not have.
+
+To photograph a `delay_ms` fixture mid-flight, run the browser WITHOUT
+`--virtual-time-budget`: Chrome pauses virtual time while a request is in
+flight, so no budget is short enough to catch the skeleton, and dropping the
+flag shoots at the load event instead.
 
 Anything not in that file answers `{}` (GET) or `{"ok": true}` (writes), and
 every API hit is logged — a route your UI calls but your manifest does not
@@ -255,17 +266,39 @@ class Handler(SimpleHTTPRequestHandler):
         `/api/items/<id>` and an exact-key lookup can never photograph it: it
         answers {} and you screenshot an empty card. Exact key first, then the
         longest `/prefix/*` that matches.
+
+        A key may also name a method — `"PUT /api/items/*"` — which wins over
+        the same path without one. `api_routes` has no method dimension, so
+        neither does this by default; but a save whose stub answers with the
+        record it was reading looks like it worked when it would not have.
         """
-        if path in self.fixtures:
-            return self.fixtures[path], path
-        best, best_key = None, None
-        for key, value in self.fixtures.items():
-            if not key.endswith("/*"):
+        for candidates in (("%s %s" % (self.command, path),), (path,)):
+            for key in candidates:
+                if key in self.fixtures:
+                    return self.fixtures[key], key
+            prefix_key = self._longest_prefix(path, method=self.command
+                                              if candidates[0] != path else None)
+            if prefix_key is not None:
+                return self.fixtures[prefix_key], prefix_key
+        return None, None
+
+    def _longest_prefix(self, path, method=None):
+        best_key = None
+        for key in self.fixtures:
+            candidate = key
+            if method is not None:
+                head, _, rest = key.partition(" ")
+                if head != method or not rest:
+                    continue
+                candidate = rest
+            elif " " in key:
                 continue
-            prefix = key[:-1]                       # "/api/items/*" -> "/api/items/"
-            if path.startswith(prefix) and (best_key is None or len(key) > len(best_key)):
-                best, best_key = value, key
-        return best, best_key
+            if not candidate.endswith("/*"):
+                continue
+            if path.startswith(candidate[:-1]) and (
+                    best_key is None or len(candidate) > len(best_key)):
+                best_key = key
+        return best_key
 
     def send_api(self, path, default=None):
         fixture, key = self.match_fixture(path)

@@ -28,8 +28,9 @@ every check stayed green.
 
 ### What changed
 
-**`templates/check_ui.py` (new) — the UI contract, mechanically.** Ten rules
-over the app's static files: a `var()` whose token is declared nowhere (a hex in
+**`templates/check_ui.py` (new) — the UI contract, mechanically.** Fifteen
+checks over the app's static files, covering six of the seven rules (a sentence
+in a badge is the one only a person can see): a `var()` whose token is declared nowhere (a hex in
 a fallback is a hardcoded colour wearing a token's clothes), hex or `rgba()` in
 markup, `style=` and `element.style.*`, `alert`/`confirm`/`prompt`, a
 `tab`/`tabs`/`sidebar` class, `@media max-width`, `<button class="row">`, a click
