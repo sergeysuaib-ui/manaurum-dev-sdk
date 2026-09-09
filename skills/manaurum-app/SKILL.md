@@ -518,7 +518,10 @@ The deploy is one API call plus a poll. Bundle the build context, base64-encode,
 
 ```bash
 cd my-app
-tar cf /tmp/ctx.tar \
+SLUG=$(jq -r .app_id manifest.json); WORK=$(mktemp -d)
+echo "deploying $SLUG $(jq -r .version manifest.json)"   # not your app? stop.
+
+tar cf "$WORK/ctx.tar" \
   --exclude='.env*' --exclude='.git' --exclude='node_modules' \
   --exclude='.venv' --exclude='venv' --exclude='__pycache__' \
   --exclude='.pytest_cache' --exclude='dist' --exclude='build' \
@@ -528,15 +531,21 @@ tar cf /tmp/ctx.tar \
 # Base64 into a FILE and read it with --rawfile / --slurpfile. Passing it
 # as `jq --arg b "$B64"` puts the whole archive on the command line and
 # fails with "Argument list too long" on any real project.
-base64 < /tmp/ctx.tar | tr -d '\n' > /tmp/ctx.b64
-jq -n --rawfile b /tmp/ctx.b64 --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' > /tmp/deploy.json
+base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
+jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
+  '{manifest_json: $m[0], archive_b64: $b}' > "$WORK/deploy.json"
 
 curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
   -H "Content-Type: application/json" \
-  -d @/tmp/deploy.json | jq .
+  -d @"$WORK/deploy.json" | jq .
+rm -rf "$WORK"
 ```
+
+A per-run `mktemp -d`, not `/tmp/ctx.tar`: `/tmp` is shared, and on 2026-09-08
+two sessions deploying two apps collided on fixed filenames — one of them
+shipped the other's archive and reported `activated` for an app it had never
+touched (MAN-2456). Echo the slug before you trust a green deploy.
 
 **The deploy endpoint is asynchronous.** It always returns HTTP **202** with `status: "pending"` — never `succeeded`. Build, push, swarm, Traefik and migrations all run on a background job:
 

@@ -114,6 +114,15 @@ nothing when the copy is current, and it cannot fail a session.
 
 `SKILL.md` also states its own version at the top and tells the agent to look at
 the parent directory of `<plugin>` before trusting what it is reading.
+
+**The deploy recipe stopped using shared filenames** (MAN-2456). Both skills
+told everyone to write the build context to `/tmp/ctx.tar` and the request body
+to `/tmp/deploy.json`. `/tmp` is shared: on 2026-09-08 two sessions deploying
+two apps on one machine collided on exactly this, and one of them shipped the
+other's archive — phases streaming healthily, `activated` reported for an app it
+had never touched, while its own app stayed on the old version. Now: a per-run
+`mktemp -d`, and the slug echoed from the manifest before the upload, because a
+run that reports success for the wrong app is worse than one that fails.
 # 2.8.0 — the design rules travel with the skill, and somebody looks at the app (MAN-2439)
 
 ### Why
