@@ -6,7 +6,7 @@
 # two-page ticket. That happened twice (MAN-2439, MAN-2510) before anyone
 # noticed it was the detector.
 #
-# Three jobs, run in parallel, no secrets, and no network beyond pip for the
+# Four jobs, run in parallel, no secrets, and no network beyond pip for the
 # starter's own pinned dependencies. Target: under two minutes wall clock.
 name: ci
 
@@ -17,7 +17,10 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only a PR's older run is worth cancelling. On main, cancelling means a
+  # commit can land having never completed CI - two merges in quick
+  # succession and the first one's build is gone.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -53,14 +56,24 @@ jobs:
         # The number lives HERE and nowhere else. README said "19 tests" when
         # there were 24, then 27, because a count in prose does not grow with
         # the suite. check_repo.py fails the build if a document quotes one.
+        #
+        # `set -o pipefail` is load-bearing: GitHub's default shell is
+        # `bash -e {0}` with no pipefail, so `count=$(pytest … | tail -1)`
+        # swallowed a pytest failure entirely and wrote "starter suite: "
+        # with no number, green. A step whose whole purpose is the number is
+        # the last place to let it silently go missing.
         working-directory: templates/v2-starter
         run: |
-          count=$(pytest --collect-only -q 2>/dev/null | tail -1)
+          set -o pipefail
+          count=$(pytest --collect-only -q | tail -1)
           echo "starter suite: $count" >> "$GITHUB_STEP_SUMMARY"
           echo "starter suite: $count"
+          case "$count" in *test*) ;; *) echo "no count came back"; exit 1 ;; esac
 
-      - name: The reference app passes the reference linter
-        run: python templates/check_ui.py templates/v2-starter/src/static
+      - name: The reference app passes the reference linters
+        run: |
+          python templates/check_ui.py templates/v2-starter/src/static
+          python templates/check_app.py templates/v2-starter
 
   tools:
     # Everything this plugin tells an agent to RUN. All stdlib, so no install
@@ -76,21 +89,16 @@ jobs:
           python-version: '3.12'
 
       - name: Byte-compile
-        run: python -m compileall -q templates/check_ui.py templates/preview.py scripts/
-
-      - name: check_ui finds what it is for
-        # A linter that has never been shown to fail is a linter nobody has
-        # tested. Feed it a copy of the starter with one rule broken.
         run: |
-          set -e
-          work=$(mktemp -d)
-          cp -r templates/v2-starter/src/static "$work/static"
-          printf '\n.leak { color: var(--nope-not-a-token, #666); }\n' >> "$work/static/app.css"
-          if python templates/check_ui.py "$work/static"; then
-            echo "check_ui.py passed a stylesheet with an undeclared token - it is not checking"
-            exit 1
-          fi
-          echo "check_ui.py fails on an undeclared token, as it should"
+          python -m compileall -q templates/check_ui.py templates/check_app.py \
+            templates/preview.py scripts/
+
+      - name: Both linters are shown to fail, rule by rule
+        # A linter that has never been shown to fail is a linter nobody has
+        # tested. One copy of the starter per rule, that rule broken, and a
+        # demand for red. A surviving mutation means the rule is not checked
+        # at all - which is how the @media rule sat dead in check_ui.py.
+        run: python scripts/linter_mutations.py
 
       - name: preview.py and version_check.py still work
         run: python scripts/smoke_tools.py
@@ -117,4 +125,39 @@ jobs:
         # the list is short, and it is in front of whoever opens the build.
         if: always()
         run: |
+          set -o pipefail
           python scripts/check_repo.py --tickets | tee -a "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    # Not belt-and-braces. This is where these tools are actually run: the
+    # screenshots in Step 3.5 are taken here, `py -3.12` is the documented
+    # interpreter, and check_repo.py makes a whole design decision about the
+    # cp1252 console it would never exercise on a Linux runner. It also has
+    # its own path semantics, which is where a `rglob` and a `\` meet.
+    name: windows
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: check_repo
+        run: python scripts/check_repo.py
+
+      - name: Both linters are shown to fail, rule by rule
+        run: python scripts/linter_mutations.py
+
+      - name: preview.py and version_check.py still work
+        run: python scripts/smoke_tools.py
+
+      # One command per step on purpose. This job's shell is PowerShell, and
+      # GitHub's pwsh wrapper only propagates the LAST command's exit code -
+      # so a failing check_ui.py followed by a passing check_app.py would be
+      # a green step. The two ubuntu jobs get `bash -e`, where it would not.
+      - name: The reference app passes the UI linter
+        run: python templates/check_ui.py templates/v2-starter/src/static
+
+      - name: The reference app passes the manifest linter
+        run: python templates/check_app.py templates/v2-starter

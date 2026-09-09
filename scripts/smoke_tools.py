@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -44,8 +46,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STARTER_STATIC = ROOT / "templates" / "v2-starter" / "src" / "static"
-PORT = int(os.environ.get("SMOKE_PORT", "8766"))
-BASE = "http://127.0.0.1:%d" % PORT
+# Something in preview's own framed page, so we can tell OUR server from
+# whatever else happens to be listening. A fixed port plus "it answered 200"
+# was enough to run the whole suite against a stranger's HTTP server and
+# report nine findings against preview.py, none of which named the real
+# cause.
+PREVIEW_MARKER = "waiting for manaurum:ready"
 
 FIXTURES = {
     "/api/me": {"user_id": "u-1"},
@@ -56,9 +62,27 @@ FIXTURES = {
 }
 
 
-def fetch(path: str, method: str = "GET"):
+def free_port() -> int:
+    """A port nothing is on, chosen by the OS a moment before we use it.
+
+    Not a fixed 8766: a fixed port is how this suite ended up testing an
+    unrelated server. There is still a race between closing this socket and
+    preview binding it, but a stranger arriving in that window would have to
+    also serve preview's own markup to fool the check below.
+    """
+    if os.environ.get("SMOKE_PORT"):
+        try:
+            return int(os.environ["SMOKE_PORT"])
+        except ValueError:
+            print("SMOKE_PORT is not a number; picking a free port instead")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def fetch(base: str, path: str, method: str = "GET"):
     """(status, body bytes). A 4xx/5xx is an answer here, not an error."""
-    request = urllib.request.Request(BASE + path, method=method)
+    request = urllib.request.Request(base + path, method=method)
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return response.status, response.read()
@@ -66,48 +90,72 @@ def fetch(path: str, method: str = "GET"):
         return exc.code, exc.read()
 
 
-def wait_for_server(process, seconds: float = 20.0) -> bool:
+def wait_for_server(process, base: str, seconds: float = 20.0):
+    """"ok", "foreign" or "down" - and the middle one is the point.
+
+    An HTTP 200 from the port is not evidence that the server answering is
+    the one we started: preview needs ~300ms of interpreter startup, and
+    anything already listening answers first. So the page has to be
+    preview's own.
+    """
     deadline = time.time() + seconds
     while time.time() < deadline:
-        if process.poll() is not None:
-            return False
         try:
-            with urllib.request.urlopen(BASE + "/__shell", timeout=1):
-                return True
+            with urllib.request.urlopen(base + "/__shell", timeout=1) as response:
+                body = response.read().decode("utf-8", "replace")
+            if PREVIEW_MARKER in body:
+                return "ok"
+            return "foreign"
+        except urllib.error.HTTPError:
+            # Something answered with an HTTP status. preview always serves
+            # /__shell once it has bound, so this is not preview.
+            return "foreign"
         except Exception:
+            if process.poll() is not None:
+                return "down"
             time.sleep(0.2)
-    return False
+    return "down"
 
 
 def smoke_preview(problems: list) -> None:
     workdir = Path(tempfile.mkdtemp(prefix="smoke-preview-"))
     fixtures = workdir / "fixtures.json"
     fixtures.write_text(json.dumps(FIXTURES), encoding="utf-8")
+    port = free_port()
+    base = "http://127.0.0.1:%d" % port
 
     process = subprocess.Popen(
         [sys.executable, str(ROOT / "templates" / "preview.py"),
          "--app", str(STARTER_STATIC), "--fixtures", str(fixtures),
-         "--port", str(PORT)],
+         "--port", str(port)],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
-        if not wait_for_server(process):
+        state = wait_for_server(process, base)
+        if state == "foreign":
+            problems.append(
+                "port %d is already serving something that is not preview.py - "
+                "every finding below would have blamed preview for a stranger's "
+                "responses, so nothing was run. Free the port, or set SMOKE_PORT."
+                % port)
+            return
+        if state != "ok":
             err = b""
             if process.poll() is not None and process.stderr:
                 err = process.stderr.read()[:400]
             problems.append("templates/preview.py: did not come up on %s %s"
-                            % (BASE, err.decode("utf-8", "replace")))
+                            % (base, err.decode("utf-8", "replace")))
             return
 
         for path in ("/__shell", "/__shell?appearance=dark&width=900",
                      "/index.html", "/app.css", "/"):
-            status, body = fetch(path)
+            status, body = fetch(base, path)
             if status != 200:
                 problems.append("templates/preview.py: GET %s -> %d, expected 200"
                                 % (path, status))
             elif not body:
                 problems.append("templates/preview.py: GET %s answered empty" % path)
 
-        shell = fetch("/__shell?appearance=dark&accent=lavender")[1].decode("utf-8")
+        shell = fetch(base, "/__shell?appearance=dark&accent=lavender")[1].decode("utf-8")
         for needle in ('data-appearance="dark"', "lavender", "manaurum:init"):
             if needle not in shell:
                 problems.append("templates/preview.py: /__shell does not contain %r - "
@@ -129,7 +177,7 @@ def smoke_preview(problems: list) -> None:
             ("/api/never-declared", "GET", 200, {}),
         ]
         for path, method, want_status, want_body in expectations:
-            status, body = fetch(path, method)
+            status, body = fetch(base, path, method)
             if status != want_status:
                 problems.append("templates/preview.py: %s %s -> %d, expected %d"
                                 % (method, path, status, want_status))
@@ -149,14 +197,27 @@ def smoke_preview(problems: list) -> None:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+class HookTimedOut:
+    """A hook that hangs is a five-second stall on every session start."""
+
+    returncode = -1
+    stdout = ""
+    stderr = "timed out - hooks.json gives this hook 5 seconds"
 
 
 def run_hook(plugin_root: Path):
     """version_check.py as the harness runs it: CLAUDE_PLUGIN_ROOT, no args."""
     env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plugin_root))
-    return subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "version_check.py")],
-        env=env, capture_output=True, text=True, timeout=30)
+    try:
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "version_check.py")],
+            env=env, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        # A traceback here would be a crash where a finding belongs.
+        return HookTimedOut()
 
 
 def plugin_cache(base: Path, version: str) -> Path:
@@ -169,7 +230,14 @@ def plugin_cache(base: Path, version: str) -> Path:
 
 
 def smoke_version_check(problems: list) -> None:
-    cache = Path(tempfile.mkdtemp(prefix="smoke-cache-")) / "manaurum-dev-sdk"
+    workdir = Path(tempfile.mkdtemp(prefix="smoke-cache-"))
+    try:
+        _smoke_version_check(workdir / "manaurum-dev-sdk", problems)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _smoke_version_check(cache: Path, problems: list) -> None:
     current = plugin_cache(cache, "2.9.0")
 
     result = run_hook(current)

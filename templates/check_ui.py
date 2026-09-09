@@ -135,6 +135,12 @@ def check(static_dir: Path) -> list:
                 problems.append(
                     "%s: var(%s) is declared nowhere in this app - the fallback quietly "
                     "becomes a hardcoded value" % (name, var))
+        # A media query lives in a stylesheet, and the loop below reads only
+        # .html/.js - so until 2.10.0 this rule could not fire at all on the
+        # one file type that carries it. Found by a mutation, not by reading.
+        if MEDIA_WIDTH.search(css):
+            problems.append("%s: @media max-width - branch on body[data-device], which is "
+                            "what the shell actually reports" % name)
 
     sources = [p for p in sorted(static_dir.rglob("*"))
                if p.is_file() and p.suffix in CHECKED_SUFFIXES

@@ -36,6 +36,7 @@ from __future__ import annotations
 import fnmatch
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,8 +47,14 @@ ROOT = Path(__file__).resolve().parents[1]
 # Checking it for present-tense accuracy would be checking the past.
 LIVE_DOCS = ["README.md"]
 
+# Two files quote the documents at people: the SessionStart hook prints its
+# text into a session's context, and the UI linter's docstring names the rule
+# list. Rename a heading and those strings rot with nothing watching them.
+DOC_QUOTING_SOURCES = ["scripts/version_check.py", "templates/check_ui.py",
+                       "templates/check_app.py"]
+
 # ── Patterns ────────────────────────────────────────────────────────────────
-VERSION = re.compile(r"(\d+\.\d+\.\d+)")
+PLUGIN_VERSION = re.compile(r'"version"\s*:\s*"(\d+\.\d+\.\d+)"')
 README_VERSION = re.compile(r"\*\*Version\s+(\d+\.\d+\.\d+)")
 CHANGELOG_VERSION = re.compile(r"(?m)^#\s+(\d+\.\d+\.\d+)")
 SKILL_VERSION = re.compile(r"This page is SDK\s+(\d+\.\d+\.\d+)")
@@ -62,7 +69,6 @@ REPO_PATH = re.compile(
 # at a numbered section, not a citation of a literal heading.
 SECTION_REF = re.compile(
     r"`([A-Za-z0-9._/-]+\.md)`\s*(?:§|→|->)\s*(?:\"([^\"]+)\"|\*([^*]+)\*)")
-SAME_FILE_SECTION = re.compile(r"(?:§|→)\s*\*([^*]+)\*")
 STEP_REF = re.compile(r"\bStep (\d+(?:\.\d+)?)\b")
 STEP_HEADING = re.compile(r"(?m)^#{1,4}\s+Step (\d+(?:\.\d+)?)\b")
 HEADING = re.compile(r"(?m)^#{1,6}\s+(.*)$")
@@ -76,13 +82,22 @@ NUMBER_WORDS = {
 WORD_OF = {value: word for word, value in NUMBER_WORDS.items()}
 COUNT = r"(\d+|%s)" % "|".join(NUMBER_WORDS)
 
+# "27 tests", but NOT "write two tests for every capability" - the rule is
+# about a count of THIS suite, and an instruction to the reader is not one.
+# Digits are always a claim; a spelled-out number only counts when the line is
+# talking about the suite.
 TEST_COUNT = re.compile(r"(?i)\b%s\s+tests\b" % COUNT)
+TEST_SUBJECT = re.compile(r"(?i)\b(starter|suite|pytest|offline|its)\b")
+TEST_IMPERATIVE = re.compile(r"(?i)\b(write|writing|add|adding|one|two|three)\b")
 # "fifteen checks", "Ten rules over your static files", "fails on nine of them".
-# `the seven rules` is exempt here and checked against the list itself below:
-# that one IS a list on the page, so the number is computable rather than
-# merely asserted.
+# `the seven rules` and `all seven rules` are exempt here and checked against
+# the list itself below: that one IS a list on the page, so the number is
+# computable rather than merely asserted. `N of the` is NOT a pattern here -
+# it matched "one of the two ways a hex reaches the markup" and produced a
+# finding that read as nonsense, which is how a checker gets switched off.
 LINTER_COUNT = re.compile(
-    r"(?i)(?<!the )\b%s\s+(?:checks|rules)\b|\b%s\s+of\s+(?:them|the)\b" % (COUNT, COUNT))
+    r"(?i)(?<!the )(?<!all )\b%s\s+(?:checks|rules)\b|\b%s\s+of\s+them\b"
+    % (COUNT, COUNT))
 LINTER_NAME = re.compile(r"check_(?:ui|app)\.py")
 RULES_HEADING = re.compile(r"(?i)^#{1,4}\s+The (\w+) rules an app gets sent back for")
 RULES_PHRASE = re.compile(r"(?i)\bthe (\w+) rules\b")
@@ -91,29 +106,55 @@ NUMBERED_ITEM = re.compile(r"(?m)^(\d+)\.\s")
 # `/tmp/ctx.tar` is a fixed path in a shared directory: two sessions
 # deploying at the same moment overwrite each other's build context, and the
 # second one ships the first one's app (MAN-2456).
-TMP_PATH = re.compile(r"(?i)(?<!not )(?<!not `)/tmp/[A-Za-z0-9_.+-]+")
+#
+# A path with a `$` in it is per-run and is the FIX, not the defect
+# (`/tmp/ctx-$$.tar`). And the sentence teaching the lesson has to remain
+# writable: "never write it to /tmp/ctx.tar" is not an instruction to do so.
+TMP_PATH = re.compile(r"/tmp/[A-Za-z0-9_.+${}()-]+")
+NEGATION = re.compile(r"(?i)\b(not|never|don't|do not|avoid|instead of|rather than)\b")
+OTHERS_PROJECT = re.compile(r"(?i)\b(your|YOUR|the reader's|a generated) (project|app|repo)\b")
 
 TICKET = re.compile(r"\bMAN-(\d+)\b")
+CLAIM_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 # Deliberately narrow. A bare "deferred" or "still" catches a script bundle
 # that is deferred and a version that still has an archive - noise, and noise
 # is how a check gets switched off. These are the phrasings that actually
 # assert something about the OUTSIDE world's state.
 PENDING_CLAIM = re.compile(
-    r"(?i)\b(not yet\b|not in any released\b|"
+    r"(?i)\b(not yet\b|not in any released\b|in no released\b|"
     r"still (?:open|pending|blocked|missing|unreleased|not\b|404s)|"
-    r"open (?:decision|question)\b|once (?:it|the)\b|catches up\b|blocked on\b|"
-    r"in review\b|(?:is|are|remains?) deferred\b|tracked (?:as|in)\b|"
+    r"open (?:decision|question)\b|catches up\b|blocked on\b|"
+    r"once (?:it|a release|the \w+) (?:lands|ships|closes|carries|catches)\b|"
+    r"in review\b|(?:is|are|remains?) deferred\b|tracked as\b|"
     r"is being (?:rebuilt|ported|written)\b|has not (?:landed|shipped)\b)")
+# A sentence that says the work IS done vetoes the marker in it. "MAN-2532 is
+# Done, but it was blocked on a runner for two days" is a history, not a
+# claim - and a checker that demands a register entry for a closed ticket
+# fills that register with closed tickets, which is the opposite of the point.
+# The lookbehinds are the whole trick: without them "has not landed" vetoed
+# itself on the word `landed` and the claim went unregistered - the check
+# switched off by the sentence it exists to catch.
+RESOLVED_CLAIM = re.compile(
+    r"(?i)(?<!not )(?<!n't )(?<!never )\b(is Done|was (?:merged|shipped|closed|fixed)"
+    r"|shipped|landed|merged|closed|was rebuilt)\b")
 # A table row is its own claim: a "deferred" three rows up says nothing about
 # the ticket on this one.
 TABLE_ROW = re.compile(r"^\s*(?:\||>?\s*\|)")
-SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+# NOT `;` - "MAN-2439 landed; in review it turned out …" is one sentence, and
+# splitting it hid the ticket from its own marker.
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
-ADD_ARGUMENT = re.compile(r"""add_argument\(\s*["'](--[a-z][a-z0-9-]*)""")
+# The whole argument list, not just its first string: `add_argument("-p",
+# "--port", …)` declares --port on its SECOND string, and reading only the
+# first reported the documented --port as unsupported.
+ADD_ARGUMENT = re.compile(r"add_argument\(([^)]*)")
 # A documented invocation of one of this repo's own tools, in a shell block.
+# `py -3.12 …` is how these are run on Windows, which is where they are
+# maintained - a regex that only knew `python` missed every such line.
 TOOL_CALL = re.compile(
-    r"(?m)^\s*(?:py(?:thon)?3?)\s+\S*?((?:check_ui|check_app|preview|version_check)\.py)"
-    r"([^\n]*)$")
+    r"(?m)^\s*\$?\s*(?:py|python|python3)(?:\s+-3(?:\.\d+)?)?\s+\S*?"
+    r"((?:check_ui|check_app|preview|version_check|check_repo|smoke_tools|"
+    r"linter_mutations)\.py)([^\n]*)$")
 LONG_FLAG = re.compile(r"(--[a-z][a-z0-9-]*)")
 
 SKIP_DIRS = (".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
@@ -215,7 +256,7 @@ def check_versions(problems: list) -> None:
     cache is keyed on the real one.
     """
     sources = [
-        (".claude-plugin/plugin.json", VERSION, '"version"'),
+        (".claude-plugin/plugin.json", PLUGIN_VERSION, '"version"'),
         ("README.md", README_VERSION, "**Version X.Y.Z**"),
         ("CHANGELOG.md", CHANGELOG_VERSION, "the newest `# X.Y.Z` heading"),
         ("skills/manaurum-app/SKILL.md", SKILL_VERSION, "This page is SDK X.Y.Z"),
@@ -227,10 +268,7 @@ def check_versions(problems: list) -> None:
             problems.append("%s:1: missing - the version lives here too (%s)" % (name, what))
             continue
         text = read(path)
-        if name == ".claude-plugin/plugin.json":
-            match = re.search(r'"version"\s*:\s*"(\d+\.\d+\.\d+)"', text)
-        else:
-            match = pattern.search(text)
+        match = pattern.search(text)
         if not match:
             problems.append("%s:1: no version found - expected %s" % (name, what))
             continue
@@ -258,19 +296,28 @@ def check_doc_paths(problems: list) -> None:
     """
     for doc in live_docs():
         text = read(doc)
+        lines = text.splitlines()
         for match in REPO_PATH.finditer(text):
             target = match.group(1).rstrip("/")
             if any(ch in target for ch in "*<>…"):
                 continue
+            line_no = line_of(text, match.start())
+            # `scripts/deploy.sh in YOUR project` is a path in the reader's
+            # app, not in this repository, and it shares its first segment
+            # with ours. The reader's own words are the only signal.
+            if OTHERS_PROJECT.search(lines[line_no - 1] if line_no <= len(lines) else ""):
+                continue
             # The docs name files by a partial path and let the reader
             # resolve it: `references/design.md` from inside the references
             # directory, `manaurum-deploy/SKILL.md` from another skill.
-            # These are the roots a reader would try.
+            # Every root has to stay INSIDE the checkout - `doc.parent.parent`
+            # for README.md is the directory above it, and a file there
+            # satisfied this check while not existing in the repo at all.
             roots = [ROOT, doc.parent, doc.parent.parent, ROOT / "skills",
                      ROOT / "skills" / "manaurum-app"]
+            roots = [root for root in roots if root == ROOT or ROOT in root.parents]
             if not any((root / target).exists() for root in roots):
-                problems.append("%s:%d: `%s` does not exist"
-                                % (rel(doc), line_of(text, match.start()), target))
+                problems.append("%s:%d: `%s` does not exist" % (rel(doc), line_no, target))
 
 
 def check_section_refs(problems: list) -> None:
@@ -309,7 +356,13 @@ def check_step_refs(problems: list) -> None:
         problems.append("skills/manaurum-app/SKILL.md:1: missing")
         return
     canonical = set(STEP_HEADING.findall(read(app_skill)))
-    for doc in live_docs():
+    # version_check.py's STALE.md text names Step 3.5 and prints itself into a
+    # session's context. Renumber the step and that string rots with nothing
+    # watching it, because it is not a document.
+    targets = live_docs() + [ROOT / name for name in DOC_QUOTING_SOURCES]
+    for doc in targets:
+        if not doc.is_file():
+            continue
         text = read(doc)
         own = set(STEP_HEADING.findall(text))
         for match in STEP_REF.finditer(text):
@@ -342,14 +395,26 @@ def check_self_counts(problems: list) -> None:
     """
     for doc in live_docs():
         text = read(doc)
+        lines = text.splitlines()
         for match in TEST_COUNT.finditer(text):
+            line_no = line_of(text, match.start())
+            line = lines[line_no - 1] if line_no <= len(lines) else ""
+            spelled = not match.group(1).isdigit()
+            # "Write two tests for every capability you use" is an instruction
+            # to the reader, not a claim about this suite. Only a sentence
+            # that is talking about the suite gets to be a claim about it.
+            if spelled and not TEST_SUBJECT.search(line):
+                continue
+            before = text[max(0, match.start() - 30):match.start()]
+            if TEST_IMPERATIVE.search(before) and not TEST_SUBJECT.search(line):
+                continue
             problems.append(
                 "%s:%d: a hardcoded test count (\"%s\") - the suite grows every "
                 "release and this sentence does not; say what the tests cover, "
                 "and let CI print the number"
-                % (rel(doc), line_of(text, match.start()), match.group(0).strip()))
+                % (rel(doc), line_no, match.group(0).strip()))
 
-        for line_no, line in enumerate(text.splitlines(), start=1):
+        for line_no, line in enumerate(lines, start=1):
             if not LINTER_NAME.search(line):
                 continue
             for match in LINTER_COUNT.finditer(line):
@@ -391,7 +456,9 @@ def check_self_counts(problems: list) -> None:
 
     if declared is None:
         return
-    for doc in live_docs():
+    for doc in live_docs() + [ROOT / name for name in DOC_QUOTING_SOURCES]:
+        if not doc.is_file():
+            continue
         body = read(doc)
         for match in RULES_PHRASE.finditer(body):
             word = match.group(1).lower()
@@ -412,9 +479,14 @@ def check_control_bytes(problems: list) -> None:
     check the regex performed now matched nothing at all.
     """
     for path in source_files():
-        if path.suffix in (".png", ".jpg", ".gif", ".ico", ".pyc", ".gz", ".tar"):
-            continue
         data = path.read_bytes()
+        # A NUL is the classic "this is not text" signal, and it is the only
+        # honest one: a hardcoded list of binary extensions failed a build on
+        # a .zip, a .dat and a .jpeg with a message telling the author to
+        # stop using heredocs. A checker that is wrong in public is one
+        # everybody learns to ignore.
+        if b"\x00" in data:
+            continue
         for offset, byte in enumerate(data):
             if byte == 0x7f or (byte < 0x20 and byte not in ALLOWED_CONTROL):
                 problems.append(
@@ -431,6 +503,11 @@ def check_tmp_paths(problems: list) -> None:
     Both skills taught `/tmp/ctx.tar` and `/tmp/deploy.json`. On 2026-09-08
     two sessions deploying at once crossed build contexts and one app was
     published over another (MAN-2456).
+
+    Two things are NOT this defect and must stay writable: a path carrying a
+    shell expansion (`/tmp/ctx-$$.tar`) is per-run and is the fix; and a
+    sentence teaching the lesson ("never write it to /tmp/ctx.tar") is not an
+    instruction to do it.
     """
     for doc in live_docs():
         text = read(doc)
@@ -438,10 +515,14 @@ def check_tmp_paths(problems: list) -> None:
             if "mktemp" in line or "TMPDIR" in line:
                 continue
             for match in TMP_PATH.finditer(line):
+                path = match.group(0)
+                if "$" in path:
+                    continue
+                if NEGATION.search(line[:match.start()]):
+                    continue
                 problems.append(
                     "%s:%d: fixed path `%s` - /tmp is shared between sessions; "
-                    "use a per-run `mktemp -d`"
-                    % (rel(doc), line_no, match.group(0)))
+                    "use a per-run `mktemp -d`" % (rel(doc), line_no, path))
 
 
 def check_starter_hygiene(problems: list) -> None:
@@ -460,10 +541,18 @@ def check_starter_hygiene(problems: list) -> None:
                     if line.strip() and not line.strip().startswith("#")]
         for filename, why in required:
             base = filename.rsplit("/", 1)[-1]
-            covered = any(fnmatch.fnmatch(filename, pattern)
-                          or fnmatch.fnmatch(base, pattern)
-                          or fnmatch.fnmatch(filename, pattern + "/*")
-                          for pattern in patterns)
+            # gitignore semantics, not fnmatch's: a later `!pattern` UN-ignores
+            # what an earlier line matched, and last match wins. Ignoring that
+            # reported `.env*` as coverage while a `!.env.manaurum` two lines
+            # down meant git would track the token file - the exact leak this
+            # check exists to prevent.
+            covered = False
+            for pattern in patterns:
+                negated = pattern.startswith("!")
+                body = pattern[1:] if negated else pattern
+                if (fnmatch.fnmatch(filename, body) or fnmatch.fnmatch(base, body)
+                        or fnmatch.fnmatch(filename, body + "/*")):
+                    covered = not negated
             if not covered:
                 problems.append("%s:1: nothing here matches `%s` - %s"
                                 % (name, filename, why))
@@ -479,10 +568,24 @@ def check_starter_hygiene(problems: list) -> None:
 
 
 def tool_flags(tool: str) -> set:
-    """The long flags a tool in this repo actually accepts."""
+    """The long flags a tool in this repo actually accepts.
+
+    Every option string in each `add_argument` call, not just the first:
+    `add_argument("-p", "--port", …)` declares `--port` second, and reading
+    only the first string reported a documented `--port` as unsupported.
+    A tool with no argparse at all (check_ui.py, check_app.py) legitimately
+    accepts no flags, and a documented one is then a real finding.
+    """
     for candidate in (ROOT / "templates" / tool, ROOT / "scripts" / tool):
         if candidate.exists():
-            return set(ADD_ARGUMENT.findall(read(candidate)))
+            text = read(candidate)
+            flags = set()
+            for arguments in ADD_ARGUMENT.findall(text):
+                flags |= set(LONG_FLAG.findall(arguments))
+            # A bare `sys.argv` tool can still document a flag it handles.
+            flags |= set(re.findall(r'"(--[a-z][a-z0-9-]*)" in sys\.argv', text))
+            flags |= set(re.findall(r'sys\.argv\[1:\][^\n]*"(--[a-z][a-z0-9-]*)"', text))
+            return flags
     return set()
 
 
@@ -501,6 +604,7 @@ def check_documented_invocations(problems: list) -> None:
             if tool not in known:
                 known[tool] = tool_flags(tool)
             supported = known[tool]
+            rest = rest.split("#", 1)[0]
             for flag in LONG_FLAG.findall(rest):
                 if flag not in supported:
                     problems.append(
@@ -510,20 +614,22 @@ def check_documented_invocations(problems: list) -> None:
 
 
 def check_paired_claims(problems: list) -> None:
-    """A measured fact written down twice has to say the same thing twice."""
+    """A measured fact written down twice has to say the same thing twice.
+
+    The fact is REQUIRED in every listed file, not merely consistent where it
+    happens to appear. An earlier version only fired when one copy
+    contradicted the other, so deleting the paragraph from both files - or
+    renaming the flag it is about - turned the check off silently, which is
+    the same failure it exists to catch one level up.
+    """
     for label, files, required, why in PAIRED_CLAIMS:
-        present = []
         for name in files:
             path = ROOT / name
             if not path.exists():
-                problems.append("%s:1: missing - it is one of the two places that "
+                problems.append("%s:1: missing - it is one of the places that "
                                 "carry the %s fact" % (name, label))
                 continue
-            present.append((name, read(path)))
-        if not any(label.split()[0] in text or label in text for _, text in present):
-            continue
-        for name, text in present:
-            if not required.search(text):
+            if not required.search(read(path)):
                 problems.append("%s:1: %s - %s" % (name, label, why))
 
 
@@ -541,6 +647,24 @@ def open_claims_file() -> dict:
         if match:
             listed["MAN-" + match.group(1)] = (line, line_no)
     return listed
+
+
+def claim_age_days(line: str):
+    """How long since somebody last checked this claim, or None.
+
+    The date is not a gate - a build that turns red because time passed is a
+    build people learn to ignore, and nothing here can re-check Linear
+    anyway. It is printed, because "last verified 143 days ago" is the one
+    thing that makes a human open the ticket.
+    """
+    match = CLAIM_DATE.search(line)
+    if not match:
+        return None
+    try:
+        when = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    except ValueError:
+        return None
+    return (date.today() - when).days
 
 
 def claim_units(text: str):
@@ -585,7 +709,8 @@ def ticket_claims() -> tuple:
     for doc in live_docs():
         text = read(doc)
         for unit, offset in claim_units(text):
-            pending = PENDING_CLAIM.search(unit) is not None
+            pending = (PENDING_CLAIM.search(unit) is not None
+                       and RESOLVED_CLAIM.search(unit) is None)
             for match in TICKET.finditer(unit):
                 ident = "MAN-" + match.group(1)
                 where = (rel(doc), line_of(text, offset + match.start()))
@@ -613,6 +738,11 @@ def check_tickets(problems: list) -> None:
             problems.append(
                 "scripts/open-claims.txt:%d: %s is listed but no live document "
                 "mentions it any more - drop the line" % (line_no, ident))
+        elif claim_age_days(line) is None:
+            problems.append(
+                "scripts/open-claims.txt:%d: %s has no readable YYYY-MM-DD - the "
+                "date is the whole value of the line, because it is what says how "
+                "stale the claim might be" % (line_no, ident))
 
 
 def print_tickets() -> None:
@@ -626,7 +756,10 @@ def print_tickets() -> None:
     print("")
     for ident, places in sorted(claims.items()):
         note = listed.get(ident, (ident + "  (not listed)", 0))[0]
-        print("  %s" % note.strip())
+        age = claim_age_days(note)
+        stamp = "" if age is None else "   [last checked %d day%s ago]" % (
+            age, "" if age == 1 else "s")
+        print("  %s%s" % (note.strip(), stamp))
         for doc, line in sorted(set(places)):
             print("      %s:%d" % (doc, line))
     print("")
@@ -661,7 +794,11 @@ def main() -> int:
         check(problems)
     problems = sorted(set(problems))
     for problem in problems:
-        print("x %s" % problem)
+        # Findings quote the documents, and the documents are full of em
+        # dashes. Forcing ASCII here is what keeps the promise at the top of
+        # this file on a cp1252 console, where the alternative is a
+        # UnicodeEncodeError instead of a finding.
+        print("x %s" % problem.encode("ascii", "replace").decode("ascii"))
     print("%d problem(s)" % len(problems) if problems else "clean")
     return 1 if problems else 0
 
