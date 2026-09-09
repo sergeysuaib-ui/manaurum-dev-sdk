@@ -23,7 +23,25 @@ description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platfo
 - An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → "v2 Tokens (Beta)" → Generate. Shown ONCE, save immediately.
 - A project directory containing `manifest.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
 
-### Pre-flight: a small window with a lot of data
+### Pre-flight: two linters, then a small window with a lot of data
+
+**Run both linters before you pack anything.** They take a second between them
+and each one catches something that otherwise deploys green and fails later as
+something that does not look like its cause:
+
+```bash
+python <plugin>/templates/check_app.py my-app            # manifest vs code
+python <plugin>/templates/check_ui.py my-app/src/static  # the UI contract
+```
+
+`check_app.py` is `manaurum-app/SKILL.md` → **Step 3.6**: an `/api/*` route the
+manifest never declared (`404 route_not_declared`, silent logs), a port that
+disagrees with the `CMD` (`502` on every request), an `/agent/*` handler with no
+user-context check, a capability you call but did not declare, and a `.env`
+inside the directory you are about to upload — that last one gets baked into an
+image layer and retained per version, and there is no way to un-leak it.
+
+### The window: a small one with a lot of data
 
 One check, every deploy, because it is the one the developer never runs and the
 user always does. **Open the app at the smallest window you support, with enough

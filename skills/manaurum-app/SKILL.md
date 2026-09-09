@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.10.0.** A plugin install caches one directory per
+> **This page is SDK 2.11.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -514,6 +514,45 @@ rejection. Also read the terminal: `preview.py` logs every `/api/*` your UI
 called, which is the cheapest way to find a route missing from
 `runtime.api_routes` before it 404s in production.
 
+## Step 3.6 — Check the app against its manifest (MANDATORY)
+
+**The last step before the deploy, and the cheapest one on this page.** Step
+3.5 looked at the interface; this looks at the contract. Everything it checks
+is described somewhere above in prose, and every one of them otherwise fails
+*after* the deploy, in a way that does not look like its cause.
+
+```bash
+python <plugin>/templates/check_app.py my-app
+```
+
+Pass the directory that holds `manifest.json` — the same directory the deploy
+packs. Exit 0 or fix what it names.
+
+| It finds | What you would have seen instead |
+|---|---|
+| an `/api/*` route no `runtime.api_routes` rule covers — including the `/api/x/*`-does-not-cover-`/api/x` case | `404 route_not_declared` at the gateway. Your handler never runs, and your logs are silent, so it reads as a backend bug. |
+| a declared route nothing serves | the manifest describing an app you did not build |
+| an `/agent/*` handler with no user-context verification | nothing. An open endpoint on the public internet, indefinitely. |
+| `runtime.port` disagreeing with what the container binds (and with `EXPOSE`) | a green deploy and `502 upstream_unreachable` on every request |
+| `frontend.entry_point` naming a file that is not there | the window opens on a 404 |
+| any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
+| a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
+| `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
+
+**What it cannot see.** Routes and `/agent/*` handlers are read out of
+**Python** decorators with `ast` — that is the starter's stack, and importing
+your app to ask its router would need its dependencies installed. In any other
+language it says so and skips those two rules; the manifest, port, capability,
+`.env` and migration rules still run, because those read files rather than
+code. A capability name assembled at run time (`f"os.kv.{verb}"`) is invisible
+to it for the same reason.
+
+And **write your own tests** — the starter ships a suite that covers the
+wiring rather than the pieces (remove an auth dependency from a route and a
+test goes red), and it is there to be copied, not just to be run. The one test
+worth writing first is the one this step automates: your routes against your
+manifest.
+
 ## Step 4 — Deploy
 
 You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → "v2 Tokens (Beta)" → Generate**. Shown once, save to `.env.manaurum`:
@@ -647,6 +686,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
 - **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on all of them but rule 3, so this is not a matter of remembering.
+- **Don't deploy without running `templates/check_app.py` (Step 3.6).** An `/api/*` route the manifest does not declare, a port that disagrees with the `CMD`, an `/agent/*` handler with no user-context check, a `.env` inside the app directory, a capability you call but never declared — all of them deploy green, and each one first shows up as something that does not look like its cause. It takes a second and it is the cheapest step on this page.
 
 ## What will bite you
 

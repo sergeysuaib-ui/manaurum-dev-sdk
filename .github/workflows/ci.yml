@@ -59,8 +59,10 @@ jobs:
           echo "starter suite: $count" >> "$GITHUB_STEP_SUMMARY"
           echo "starter suite: $count"
 
-      - name: The reference app passes the reference linter
-        run: python templates/check_ui.py templates/v2-starter/src/static
+      - name: The reference app passes the reference linters
+        run: |
+          python templates/check_ui.py templates/v2-starter/src/static
+          python templates/check_app.py templates/v2-starter
 
   tools:
     # Everything this plugin tells an agent to RUN. All stdlib, so no install
@@ -76,21 +78,16 @@ jobs:
           python-version: '3.12'
 
       - name: Byte-compile
-        run: python -m compileall -q templates/check_ui.py templates/preview.py scripts/
-
-      - name: check_ui finds what it is for
-        # A linter that has never been shown to fail is a linter nobody has
-        # tested. Feed it a copy of the starter with one rule broken.
         run: |
-          set -e
-          work=$(mktemp -d)
-          cp -r templates/v2-starter/src/static "$work/static"
-          printf '\n.leak { color: var(--nope-not-a-token, #666); }\n' >> "$work/static/app.css"
-          if python templates/check_ui.py "$work/static"; then
-            echo "check_ui.py passed a stylesheet with an undeclared token - it is not checking"
-            exit 1
-          fi
-          echo "check_ui.py fails on an undeclared token, as it should"
+          python -m compileall -q templates/check_ui.py templates/check_app.py \
+            templates/preview.py scripts/
+
+      - name: Both linters are shown to fail, rule by rule
+        # A linter that has never been shown to fail is a linter nobody has
+        # tested. One copy of the starter per rule, that rule broken, and a
+        # demand for red. A surviving mutation means the rule is not checked
+        # at all - which is how the @media rule sat dead in check_ui.py.
+        run: python scripts/linter_mutations.py
 
       - name: preview.py and version_check.py still work
         run: python scripts/smoke_tools.py

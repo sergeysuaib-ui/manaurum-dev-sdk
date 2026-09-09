@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.10.0.** Skills that teach Claude Code to build and ship apps for
+**Version 2.11.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -162,6 +162,16 @@ parts inlined. Reading one real app beats reading four pages about apps.
   been rejected on sight for things on this list; a rule a program checks is the only kind
   that survives a hurry. CI runs it against the starter, so the reference app is held to
   the reference linter.
+* `templates/check_app.py` — the same idea for the backend, run on the directory the
+  deploy packs: an `/api/*` route no `runtime.api_routes` rule covers (including the
+  `/api/x/*`-does-not-cover-`/api/x` case), a declared route nothing serves, an
+  `/agent/*` handler with no user-context verification, `runtime.port` disagreeing with
+  the `CMD` or with `EXPOSE`, an `entry_point` naming nothing, a `.env*` inside the app
+  directory, a capability called but not declared (or declared and never called), and
+  migrations that are not ordered `*.sql` or carry destructive DDL without
+  `migration.breaking`. Routes are read out of Python decorators with `ast`; for another
+  language it says so and skips those two rules rather than guessing.
+  `python check_app.py my-app`, exit 1 on findings.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
   it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
   fixtures file, and frames the page the way the desktop shell does: the shell's exact

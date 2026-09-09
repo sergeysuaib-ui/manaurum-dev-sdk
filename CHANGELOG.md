@@ -1,3 +1,79 @@
+# 2.11.0 — the backend contract gets a program that checks it (MAN-2533)
+
+### Why
+
+MAN-2510 named the mechanism, and it is not specific to design:
+
+> **An agent treats as contract what sits in a numbered step marked mandatory,
+> and treats everything else as reference material for if there is time left.**
+
+2.9.0 acted on that for the UI: a mandatory numbered step, a machine check, and
+a library that resists the mistake. The rest of the SDK never got the same
+pass — so everything that is prose today is, by that mechanism, optional today.
+
+The most expensive v2 failure is the clearest case. A route in code that no
+manifest rule covers is described **three times** in the skill and was checked
+nowhere, while being entirely decidable from the app's own source before a
+deploy. The evidence that this is the gap and not carelessness: the acceptance
+build for MAN-2510 wrote fifty tests unprompted, and one of them was exactly
+this check — the agent wrote the SDK's missing linter itself, because the skill
+warns about `route_not_declared` in prose and nothing catches it.
+
+### What changed
+
+**`templates/check_app.py` (new) — the manifest against the code.** Stdlib
+only, `python check_app.py my-app`, exit 1 on findings, run on the directory
+the deploy packs:
+
+* an `/api/*` route no `runtime.api_routes` rule covers — **including the
+  `/api/x/*`-does-not-cover-`/api/x` case**, which is the shape where the
+  detail screen works and the list screen 404s;
+* a declared route nothing serves;
+* an `/agent/*` handler with no user-context verification — that path is on the
+  public internet with no gateway in front of it, and nothing will ever tell
+  you;
+* `runtime.port` disagreeing with what the `CMD` binds, and with `EXPOSE`
+  (which is decoration — but a decoration that disagrees is what the next
+  reader believes);
+* `frontend.entry_point` naming a file that is not there;
+* any `.env*` **inside** the app directory;
+* a capability called but not declared (403 at the first real use), or declared
+  and never called (an over-broad grant a tenant admin is asked to approve for
+  nothing);
+* `migrations/`: a non-`.sql` file, numbers of mixed width, an anonymous
+  `DO $$` block, destructive DDL without `migration.breaking`.
+
+Routes and handlers are read out of **Python** decorators with `ast` — that is
+the starter's stack, and importing the app would need its dependencies. For any
+other language it says so and skips those two rules; the manifest, port,
+capability, `.env` and migration rules still run, because those read files
+rather than code.
+
+**Wired the way the UI linter was wired**, because a tool nobody runs is prose
+with a shebang: **Step 3.6 (MANDATORY)** in `manaurum-app/SKILL.md`, a line in
+`What NOT to do`, a pre-flight in `manaurum-deploy/SKILL.md` that runs both
+linters before anything is packed, a test in the starter that runs it against
+the starter, and a CI job that holds the reference app to it.
+
+**`templates/v2-starter/tests/test_manifest.py` (new).** Four tests over the
+manifest the starter's own suite never had, and the first one is the one worth
+copying: every `/api/*` route the *running app* reports is covered by a
+`runtime.api_routes` rule. It asks the app rather than the source, so it also
+covers a route registered somewhere no decorator scan would look. Plus: no
+`/agent/*` path in `api_routes` (declaring it there configures nothing), every
+declared `agent_capability` has a handler, and every capability declares
+`is_write` — because omitting it is not the same as `false`.
+
+**`scripts/linter_mutations.py` (new) — twenty mutations, one per rule.** A
+linter nobody has seen fail is a linter nobody has tested. Each rule in
+`check_ui.py` and `check_app.py` gets a copy of the starter with that one rule
+broken and a demand for red, and CI runs the lot.
+
+**It immediately found a dead rule.** `check_ui.py`'s `@media max-width` check
+only ever ran over `.html`/`.js` — and a media query lives in a stylesheet, so
+the rule could not fire on the one file type that carries it. It had been dead
+since 2.9.0 and no amount of reading found it; one mutation did.
+
 # 2.10.0 — the plugin can finally catch its own drift (MAN-2532)
 
 ### Why
