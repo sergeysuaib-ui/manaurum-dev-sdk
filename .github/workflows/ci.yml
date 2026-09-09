@@ -1,0 +1,120 @@
+# The plugin checking itself.
+#
+# Until 2.10.0 this repository had no automated checks of any kind: every PR
+# merged with zero CI runs, and the only detector of a stale instruction was
+# an agent building an app, a customer rejecting it, and the agent writing a
+# two-page ticket. That happened twice (MAN-2439, MAN-2510) before anyone
+# noticed it was the detector.
+#
+# Three jobs, run in parallel, no secrets, and no network beyond pip for the
+# starter's own pinned dependencies. Target: under two minutes wall clock.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  starter:
+    # The starter is a real project. Test it like one - and hold it to the
+    # linter it ships. `app.css` shipped `var(--container-lg, 1024px)` with
+    # that token declared nowhere: the reference stylesheet breaking the
+    # exact rule its own Never table names, for a whole release.
+    name: starter app
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            templates/v2-starter/requirements.txt
+            templates/v2-starter/requirements-dev.txt
+
+      - name: Install the starter's pinned dependencies
+        working-directory: templates/v2-starter
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: pytest
+        working-directory: templates/v2-starter
+        run: pytest -q
+
+      - name: How many tests that was
+        # The number lives HERE and nowhere else. README said "19 tests" when
+        # there were 24, then 27, because a count in prose does not grow with
+        # the suite. check_repo.py fails the build if a document quotes one.
+        working-directory: templates/v2-starter
+        run: |
+          count=$(pytest --collect-only -q 2>/dev/null | tail -1)
+          echo "starter suite: $count" >> "$GITHUB_STEP_SUMMARY"
+          echo "starter suite: $count"
+
+      - name: The reference app passes the reference linter
+        run: python templates/check_ui.py templates/v2-starter/src/static
+
+  tools:
+    # Everything this plugin tells an agent to RUN. All stdlib, so no install
+    # step - if this job ever needs one, the tools have stopped being what
+    # the skill promises they are.
+    name: tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Byte-compile
+        run: python -m compileall -q templates/check_ui.py templates/preview.py scripts/
+
+      - name: check_ui finds what it is for
+        # A linter that has never been shown to fail is a linter nobody has
+        # tested. Feed it a copy of the starter with one rule broken.
+        run: |
+          set -e
+          work=$(mktemp -d)
+          cp -r templates/v2-starter/src/static "$work/static"
+          printf '\n.leak { color: var(--nope-not-a-token, #666); }\n' >> "$work/static/app.css"
+          if python templates/check_ui.py "$work/static"; then
+            echo "check_ui.py passed a stylesheet with an undeclared token - it is not checking"
+            exit 1
+          fi
+          echo "check_ui.py fails on an undeclared token, as it should"
+
+      - name: preview.py and version_check.py still work
+        run: python scripts/smoke_tools.py
+
+  docs:
+    # The documents against the repository. Everything here was a real slip
+    # on main on 2026-09-09, and every one of them is decidable from the
+    # files alone.
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: check_repo
+        run: python scripts/check_repo.py
+
+      - name: Tickets the docs call open
+        # No token here, so this cannot be a gate - and nothing offline can
+        # tell you MAN-1393 closed. Printing it every run is the compromise:
+        # the list is short, and it is in front of whoever opens the build.
+        if: always()
+        run: |
+          python scripts/check_repo.py --tickets | tee -a "$GITHUB_STEP_SUMMARY"

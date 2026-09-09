@@ -1,0 +1,20 @@
+# Claims the live documents make about work that is not finished.
+#
+# Nothing in this repository can tell you whether MAN-1393 closed - and it had
+# been Done for months while README.md still called it the blocker for the
+# starter directory. So every sentence in a live document that says some
+# ticket's work is still outstanding has to have a line here, with the state
+# as last verified and the date it was verified.
+#
+# `scripts/check_repo.py` enforces both directions: a claim with no line here
+# fails the build, and a line here that no document mentions any more fails it
+# too, so the file cannot quietly rot into a list of closed tickets.
+#
+# CI prints this list on every run (`check_repo.py --tickets`). Re-check it in
+# Linear when you touch the docs; it is the one check no program can do.
+#
+# format:  MAN-N  <state as verified>  <date>  <what the document claims>
+
+MAN-1385  Backlog      2026-09-09  `pip install manaurum-cli` still 404s on PyPI, so the released wheel predates the new scaffold.
+MAN-1401  In Progress  2026-09-09  How a v2 hosted app consumes the shared design system is still open; design.md and reference-apps.md both say so.
+MAN-1404  In Progress  2026-09-09  Finance is not yet a v2 hosted app, so reference-apps.md cannot use it as the ceiling reference.

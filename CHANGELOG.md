@@ -1,3 +1,96 @@
+# 2.10.0 — the plugin can finally catch its own drift (MAN-2532)
+
+### Why
+
+2.9.0 gave apps a linter. This repository still had nothing: **no automated
+checks of any kind, and every PR merged with zero CI runs.** The only detector
+of an instruction that had drifted from reality was an agent building an app, a
+customer rejecting it, and the agent writing a two-page ticket — which happened
+twice (MAN-2439, MAN-2510) before anyone noticed that this *was* the detector.
+
+One afternoon of reading `main` on 2026-09-09 found nine slips, every one of
+them mechanically decidable:
+
+* `templates/v2-starter/src/static/app.css` used `var(--container-lg, 1024px)`
+  with that token declared nowhere — the reference stylesheet breaking the exact
+  rule its own `Never` table names;
+* `.gitignore` covered `.env` and `.env.local` but not `.env.manaurum`, the one
+  filename the skill tells you to create, next to a paragraph explaining that a
+  leaked deploy token cannot be un-leaked;
+* `README.md` said "19 tests"; the suite had 24, then 27;
+* `SKILL.md` said the linter checked "nine of the seven rules", the CHANGELOG
+  said ten, the truth was fifteen;
+* `README.md` said `**Version 2.7.3**` while `plugin.json` said `2.8.0`;
+* both skills taught a deploy writing to `/tmp/ctx.tar` — a fixed path in a
+  shared directory, which is how two sessions crossed build contexts and one
+  app was published over another (MAN-2456);
+* `.dockerignore` carried a comment describing an effect it cannot have;
+* `README.md` called MAN-1393 the blocker for the starter directory, months
+  after MAN-1393 and MAN-1397 both went Done;
+* Step 3.5 described the opposite of what the browser does.
+
+None of them is serious alone. Together they are the SDK lying about itself,
+and an agent has no way to tell which sentence is the stale one.
+
+### What changed
+
+**`.github/workflows/ci.yml` (new) — three jobs, on every PR and on `main`.**
+No secrets, no network beyond `pip` for the starter's own pinned dependencies,
+and under two minutes.
+
+* **starter** — `pytest` in `templates/v2-starter`, then
+  `python templates/check_ui.py templates/v2-starter/src/static`. *The reference
+  app is held to the reference linter*, which is the single line that would have
+  caught the `--container-lg` bug on the day it landed. The test count is
+  printed into the job summary, so it lives in exactly one place.
+* **tools** — byte-compiles what the skill tells you to run, feeds `check_ui.py`
+  a deliberately broken copy of the starter and fails if it stays green (a
+  linter never shown to fail is a linter nobody has tested), and runs
+  `scripts/smoke_tools.py`.
+* **docs** — `scripts/check_repo.py`.
+
+**`scripts/check_repo.py` (new) — the documents against the repository.**
+Stdlib only, `path:line: message` findings that always name the file first.
+Eleven checks, each one a slip from the list above: one version string across
+four files; every `templates/…` / `references/…` path a document names exists;
+every quoted `§ "Heading"` citation resolves; every `Step N` reference has a
+Step N; no hardcoded count of tests or of what the linter checks (and the
+"seven rules" heading is checked against the list under it); no control byte in
+any source file; no fixed `/tmp/<name>` in a shell recipe; the starter's ignore
+files cover `.env.manaurum` and the `.dockerignore` still carries the note
+correcting its own `migrations/` line; every documented flag is one the tool
+accepts; and two measured facts that live in two files at once must still agree
+there.
+
+**`scripts/smoke_tools.py` (new).** `preview.py` is a server a MANDATORY step
+tells you to start, and `version_check.py` is a hook whose every failure path is
+a deliberate silent success — so a hook that raises on line 3 looks exactly like
+a hook with nothing to report. This starts both. It checks preview's four
+fixture behaviours (exact, longest `/prefix/*`, method-qualified, and the
+`{"status": 500}` envelope), because those are what make *empty*, *could not
+load* and *still loading* three different screenshots instead of one; and it
+checks that `version_check.py` prints **nothing** when the copy is current.
+
+**`scripts/open-claims.txt` (new).** Nothing offline can tell you MAN-1393
+closed. So every sentence in a live document claiming some ticket's work is
+still outstanding needs a line here with the state as last verified and the
+date — enforced both ways, so the file cannot rot into a list of closed
+tickets. CI prints it on every run.
+
+**The drift itself, fixed.** The `/tmp/ctx.tar` recipes now use a per-run
+`mktemp -d` with a cleanup trap; the MAN-1393 and MAN-1397 claims are gone; the
+three counts are sentences instead of numbers; a stale `§ "Legacy v1 deploy"`
+citation now names the heading that exists.
+
+**One correction that is not cosmetic.** `references/v2-platform.md` still said
+`is_write` was *declarative only — the runtime ignores it for hosted apps*.
+That stopped being true on 2026-08-21 (MAN-1425/MAN-1872): the manifest value is
+persisted and read, **but the column is nullable and NULL is not `false`** — a
+capability that omits the key falls back to `is_write=True`, so a reader that
+says nothing is journalled, confirmation-gated and excluded from cross-app
+insight. Write `"is_write": false` explicitly. The starter's `read_my_note` now
+does.
+
 # 2.9.0 — a rule a program checks (MAN-2510, MAN-2455)
 
 ### Why

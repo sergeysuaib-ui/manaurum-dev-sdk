@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.9.0.** A plugin install caches one directory per
+> **This page is SDK 2.10.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -114,7 +114,8 @@ four of them in a single app, whose interface was rejected on sight while every
 technical check passed, and then most of them again in a second app a week
 later. Copying `app.css` enforces none of them, because they are decisions you
 make in the markup. Check them before the first file, and again in Step 3.5,
-where `check_ui.py` checks nine of them for you.
+where `check_ui.py` checks them for you — every rule here except rule 3, which
+is a judgement rather than a pattern.
 
 1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
    and sits in a desktop that already has navigation. Sections are cards; two
@@ -420,11 +421,11 @@ that had read the rules.
 python <plugin>/templates/check_ui.py my-app/src/static
 ```
 
-`check_ui.py` runs fifteen checks, covering six of the seven rules — a sentence
-in a badge is the one only a person can see — including the three a screenshot
-cannot show either: a hex hidden inside a `var()` fallback whose token does not
-exist, a click target with no `is-interactive`, and appearance read off
-`e.data` instead of `e.data.payload`. Exit 0 or fix what it names. Do this
+`check_ui.py` covers every rule above except rule 3 — a sentence in a badge is
+the one only a person can see — including the three a screenshot cannot show
+either: a hex hidden inside a `var()` fallback whose token does not exist, a
+click target with no `is-interactive`, and appearance read off `e.data`
+instead of `e.data.payload`. Exit 0 or fix what it names. Do this
 *before* the screenshots: it is cheaper, and half of what it finds would
 otherwise reach the owner rather than you.
 
@@ -645,7 +646,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
-- **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on nine of them, so this is not a matter of remembering.
+- **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on all of them but rule 3, so this is not a matter of remembering.
 
 ## What will bite you
 
@@ -696,7 +697,7 @@ Quick v1 reminder for porting context:
 { "manifest_version": "1", "slug": "my-app", "version": "1.0.0", "entry_point": "index.html" }
 ```
 
-The full v1 surface is in the references. If the user is on v1 and wants to ship, use `manaurum-deploy/SKILL.md` § "Legacy v1 deploy".
+The full v1 surface is in the references. If the user is on v1 and wants to ship, use `manaurum-deploy/SKILL.md` § "v1 deploy (legacy — iframe apps only)".
 
 ---
 

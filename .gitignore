@@ -1,0 +1,12 @@
+# Byte-code and pytest state from running the starter's suite in place.
+# check_repo.py scans the working tree for control bytes; a stray .pyc is
+# noise it would have to special-case forever.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Never. The whole skill is built around keeping these out of a build
+# context, and this repository is the one people copy from.
+.env*

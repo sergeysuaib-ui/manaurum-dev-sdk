@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.9.0.** Skills that teach Claude Code to build and ship apps for
+**Version 2.10.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -94,24 +94,25 @@ manaurum auth login --token mna_...
 ```bash
 cp -r templates/v2-starter my-app && cd my-app
 grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'
-pip install -r requirements.txt -r requirements-dev.txt && pytest   # 27 passed
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # all green, offline
 manaurum app validate           # manifest against the v2 schema
 manaurum app deploy             # 202 + poll; prints the live URL when it activates
 ```
 
-Copy the starter rather than running `manaurum app init`. The CLI's scaffold is being
-rebuilt to this same shape (MAN-1397), but that rewrite is not in any released wheel yet —
-and `pip install manaurum-cli` still 404s on PyPI (MAN-1385), so the wheel you can actually
-install is `cli-v0.2.0`, built before it. This section points at the CLI once a release
-carries the new scaffold; until then the directory below is the one that is tested.
+Copy the starter rather than running `manaurum app init`. The CLI's scaffold was rebuilt
+to this same shape (MAN-1397). That rewrite is in no released wheel, and
+`pip install manaurum-cli` still 404s on PyPI (MAN-1385), so the wheel you can actually
+install is `cli-v0.2.0`, built before it. Until a release carries the new scaffold, the
+directory below is the one that is tested on every PR.
 
 The starter deploys unchanged. It is not a hello-world stub: it serves a UI that answers
 the shell handshake, verifies a real user-context JWT on `/api/me`, does a real key-value
 round trip through the capability gateway on `/api/notes`, and exposes two
 `agent_capabilities` so the OS Assistant can read and write on the user's behalf. Its
-27 tests run offline — no database, no account, no network — and they cover the wiring,
-not just the pieces: remove an auth dependency from a route and a test goes red. Read its
-`README.md`, then replace the note-taking parts with your own.
+suite runs offline — no database, no account, no network — and it covers the wiring, not
+just the pieces: remove an auth dependency from a route and a test goes red. CI runs it on
+every PR and prints the count. Read its `README.md`, then replace the note-taking parts
+with your own.
 
 Useful afterwards:
 
@@ -149,17 +150,18 @@ parts inlined. Reading one real app beats reading four pages about apps.
   exists today. It is deliberately shaped like a real app: `auth.py` + `capability.py` as
   shared infrastructure, `main.py` + `agent_routes.py` as the two surfaces on top, and
   `tests/`. Apps grow by adding surfaces, not by growing one file. It is **not** identical
-  to `manaurum app init` output; when the CLI catches up (MAN-1393) this directory goes
-  away in favour of it.
-* `templates/check_ui.py` — the UI contract, mechanically. Ten rules over your static
-  files: a hex hidden in a `var()` fallback whose token does not exist, `style=`, a
-  `tab`/`sidebar` class, `<button class="row">`, a click target with no
-  `is-interactive`, `alert`/`confirm`/`prompt`, more than one primary button in a view,
-  a missing `manaurum:ready`, appearance read off `e.data` instead of `e.data.payload`.
-  Comments are stripped first, so a comment explaining a rule is not a violation of it.
-  `python check_ui.py src/static`, exit 1 on findings. Two apps have now been rejected
-  on sight for things on this list; a rule a program checks is the only kind that
-  survives a hurry.
+  to `manaurum app init` output, and it stays here until a CLI release ships the same
+  scaffold (MAN-1385).
+* `templates/check_ui.py` — the UI contract, mechanically. It reads your static files and
+  fails on what a green deploy hides: a hex hidden in a `var()` fallback whose token does
+  not exist, `style=`, a `tab`/`sidebar` class, `<button class="row">`, a click target
+  with no `is-interactive`, `alert`/`confirm`/`prompt`, more than one primary button in a
+  view, a missing `manaurum:ready`, appearance read off `e.data` instead of
+  `e.data.payload`. Comments are stripped first, so a comment explaining a rule is not a
+  violation of it. `python check_ui.py src/static`, exit 1 on findings. Two apps have now
+  been rejected on sight for things on this list; a rule a program checks is the only kind
+  that survives a hurry. CI runs it against the starter, so the reference app is held to
+  the reference linter.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
   it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
   fixtures file, and frames the page the way the desktop shell does: the shell's exact

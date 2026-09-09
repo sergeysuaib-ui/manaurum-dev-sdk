@@ -219,7 +219,7 @@ All of this runs **inside the background job**, after the 202 has already gone b
 ### Bump version + redeploy
 
 ```bash
-jq '.version = "1.0.1"' manifest.json > /tmp/m && mv /tmp/m manifest.json
+jq '.version = "1.0.1"' manifest.json > manifest.json.new && mv manifest.json.new manifest.json
 # rerun the curl above — the platform updates the swarm service in-place
 ```
 
@@ -366,12 +366,15 @@ cd my-app
 zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
 
 # Via a file, not `--arg`: the bundle is far larger than the argv limit.
-base64 < bundle.zip | tr -d '\n' > /tmp/bundle.b64
-jq -n --rawfile b /tmp/bundle.b64 --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
+# A per-run directory, never a fixed name: /tmp is shared between sessions.
+WORK=$(mktemp -d)
+base64 < bundle.zip | tr -d '\n' > "$WORK/bundle.b64"
+jq -n --rawfile b "$WORK/bundle.b64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
   | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
       -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
       -H "Content-Type: application/json" \
       -d @- | jq .
+rm -rf "$WORK"
 ```
 
 Success body:
@@ -456,9 +459,14 @@ if [ ! -f Dockerfile ]; then
 fi
 
 echo "Bundling build context…"
+# A per-run directory, cleaned on every exit path. NOT /tmp/ctx.tar: /tmp is
+# shared, and on 2026-09-08 two sessions deploying at the same moment crossed
+# build contexts — one app was published over another (MAN-2456).
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 # Excluding .venv/__pycache__ is not cosmetic: a locally pip-installed
 # project otherwise ships its whole virtualenv (58 MB vs 60 KB measured).
-tar cf /tmp/ctx.tar \
+tar cf "$WORK/ctx.tar" \
   --exclude='.env*' \
   --exclude='.git' \
   --exclude='node_modules' \
@@ -479,14 +487,14 @@ echo "Deploying…"
 # `jq --arg b "$B64"` puts the entire archive on the command line and
 # dies with "Argument list too long" on any real project (Windows caps
 # argv at 32 KB; a 60 KB tar is already 80 KB of base64).
-base64 < /tmp/ctx.tar | tr -d '\n' > /tmp/ctx.b64
-RESP=$(jq -n --rawfile b /tmp/ctx.b64 --slurpfile m manifest.json \
+base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
+RESP=$(jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
   '{manifest_json: $m[0], archive_b64: $b}' \
   | curl -sS -X POST "$BASE_URL/api/dev/v2/deploy" \
       -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
       -H "Content-Type: application/json" \
       -d @-)
-rm -f /tmp/ctx.tar /tmp/ctx.b64
+rm -f "$WORK/ctx.tar" "$WORK/ctx.b64"
 
 # The POST is 202 + {"deploy_job_id": ..., "status": "pending"} — ALWAYS.
 # Never treat its "status" as the outcome; poll the job instead.
