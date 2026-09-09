@@ -225,6 +225,21 @@ body {
 
 .header-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
 
+/* ── Deliberately absent: .tab, .tabs, .sidebar, .switch ─────────────────────
+   These are missing on purpose. They are not a gap in the library for you to
+   close yourself — an app that adds them gets sent back.
+
+   An app window is often 900px wide and lives inside a desktop that already
+   has navigation, so a tab bar or a sidebar spends a third of the width
+   repeating what the OS already told the user. If a page needs sections,
+   stack them as cards. If it needs two views, use two `.btn-ghost`s and a URL
+   fragment per view (see `index.html`). If it needs a boolean, use a checkbox
+   with a `.field-label`. The one narrow exception is a list that genuinely
+   drives a detail pane, and that is `.list` + `.row`, not a new component.
+
+   references/design.md -> Never. `templates/check_ui.py` fails on a
+   `tab` / `tabs` / `sidebar` class, so this is checked, not just asked. */
+
 /* ── Card / panel ────────────────────────────────────────────────────────────
    The default container. Group related things in one card; do not wrap every
    element in its own. `.card-title` is the small uppercase eyebrow. */
@@ -261,7 +276,19 @@ body {
 /* ── List + rows ─────────────────────────────────────────────────────────────
    THE most common shape in a real app. A list is rows separated by hairlines,
    never boxes-inside-boxes. `.row-main` takes the space, `.row-meta` hugs
-   right. Use <ul> so it is a list to a screen reader too. */
+   right. Use <ul> so it is a list to a screen reader too.
+
+   A ROW IS AN <li>, EVEN WHEN IT IS CLICKABLE. `<button class="row">` is the
+   obvious guess and it is wrong: a button brings its own ButtonFace
+   background, its own border, Arial over your tokens, and a width that hugs
+   its content, so the list stops reaching the edge of the card. That shipped.
+   The neutralisers below undo it if you do reach for a button anyway — but the
+   shape you want is:
+
+     <li class="row is-interactive" data-id="42" tabindex="0">…</li>
+
+   with one click handler on the <ul>. `.is-interactive` is not decoration: it
+   is what supplies the cursor, the hover, and the focus ring. */
 
 .list { margin: 0; padding: 0; list-style: none; }
 
@@ -272,6 +299,17 @@ body {
   padding: var(--space-3) var(--space-5);
   border-top: 1px solid var(--border-hairline);
   transition: background var(--motion-fast) var(--ease-standard);
+  /* Neutralisers, for a row built from <button> or <a> despite the above.
+     `.btn` does the same thing four blocks down; a row needs it just as much. */
+  appearance: none;
+  -webkit-appearance: none;
+  border-left: 0; border-right: 0; border-bottom: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  width: 100%;
 }
 
 .list > .row:first-child { border-top: none; }
@@ -284,7 +322,12 @@ body {
 
 .row-main { min-width: 0; flex: 1; }
 
+/* `display: block` is load-bearing, not tidiness. These are usually <span>s,
+   and an inline element ignores `text-overflow: ellipsis` and sits on the same
+   line as its sibling — so a title and its subtitle run together into one
+   string that then overflows instead of truncating. */
 .row-title {
+  display: block;
   font-size: var(--fs-body-lg);
   font-weight: var(--fw-medium);
   /* Long user-supplied strings truncate rather than break the layout. */
@@ -292,9 +335,11 @@ body {
 }
 
 .row-sub {
+  display: block;
   margin-top: 2px;
   font-size: var(--fs-footnote);
   color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .row-meta {
@@ -347,6 +392,33 @@ body {
 .btn-danger { background: var(--color-danger); color: #fff; }
 
 .btn:disabled { opacity: 0.5; cursor: default; }
+
+/* A link styled as a button is a normal thing to want ("Open the original"),
+   and without this it arrives underlined. */
+a.btn { text-decoration: none; }
+
+/* A horizontal strip of controls above a list: filter, search, a ghost action.
+   `gap` + `flex-wrap` is the whole component; without it every app invents its
+   own margins and they never line up. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+.toolbar .input { width: auto; flex: 1; min-width: 160px; }
+.toolbar-spacer { flex: 1; }
+
+/* Search hit highlighting. The browser default is yellow, and gold/yellow is
+   banned across Manaurum surfaces — so it is defined here rather than left to
+   be reinvented. */
+mark {
+  background: var(--accent-soft);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
 
 /* Keyboard focus must stay visible. Do not replace this with outline:none. */
 .btn:focus-visible,

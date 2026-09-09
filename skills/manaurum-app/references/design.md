@@ -9,7 +9,9 @@ passed. If you read nothing else on this page, read the table.
 | Never | Why |
 |---|---|
 | A tab bar or a sidebar as navigation | The window is often 900px wide inside a desktop that already navigates. A sidebar spends a third of the width repeating what the OS said. Stack sections as cards. |
-| Style off `prefers-color-scheme` as your only signal | It tracks the *browser*, not Manaurum, so the app ends up light inside a dark desktop. Appearance and accent arrive in `manaurum:init`; write them on `<html>` and let CSS read them. Keep the media query only as the standalone default, and let the shell win the moment it speaks. |
+| Style off `prefers-color-scheme` as your only signal | It tracks the *browser*, not Manaurum, so the app ends up light inside a dark desktop. Appearance and accent arrive in `manaurum:init` **inside `e.data.payload`** — reading them off `e.data` is `undefined` and applies nothing while the handshake still looks fine. Write them on `<html>`; keep the media query only as the standalone default. |
+| A `var()` fallback with a token that does not exist | `var(--text-muted, #666)` is a hardcoded colour wearing a token's clothes: no appearance change will ever touch it, and nobody reviewing the diff sees a hex. The list of real names is the token table below. |
+| A click target that does not look like one | The mirror of the hover rule. A row with a handler needs `.row.is-interactive` — cursor, hover, focus ring — and stays an `<li>`; `<button class="row">` brings ButtonFace, Arial and a content-width box, so the list stops filling the card. |
 | A sentence inside a badge | A badge is a status word (`overdue`). A phrase turns a scannable list into a wall of text. |
 | More than one primary button per view | Two blues side by side — or one in every row — means none of them is the answer. |
 | A hover state on something inert | Hover is a promise that clicking does something. Keep the focus ring; keyboard users navigate too. |
@@ -101,7 +103,39 @@ document.documentElement.dataset.accent = ctx.accent;
 Then check it, because this is the one failure that is invisible in a code
 review and obvious in a picture: `<plugin>/templates/preview.py` frames your app
 the way the shell does and lets you ask for any appearance and accent —
-`manaurum-app/SKILL.md` → **Step 3.5**.
+`manaurum-app/SKILL.md` → **Step 3.5**. Its second badge answers exactly this
+question: `appearance applied` or `appearance IGNORED`.
+
+**The values arrive in `e.data.payload`, not on `e.data`.** An app that reads
+`e.data.appearance` gets `undefined`, applies nothing, and still answers the
+handshake perfectly — so every check stays green while it renders light inside a
+dark desktop. The standalone URL hides it too, because there the
+`prefers-color-scheme` fallback runs. This shipped and lived four days.
+
+## The tokens, and which neighbour to pick
+
+This is the whole list. **A name that is not here does not exist**, and
+`var(--text-muted, #666)` with a name that does not exist is not a token with a
+safety net — it is a hardcoded colour that no appearance change will ever
+touch, and the fallback is what you will see. `check_ui.py` fails on it.
+
+| Token | What it is | vs its neighbour |
+|---|---|---|
+| `--app-bg` | The page behind everything. | Recedes in light, and is the *darkest* layer in dark. Never put content directly on it without a card. |
+| `--surface-card` | A card: the raised surface content lives on. | Lighter than `--app-bg` in dark, white in light. If your cards and page look the same, you inverted this. |
+| `--surface-panel` | A quieter inset area inside a card (a toolbar strip, a preview well). | Sits *behind* card content, not in front of it. |
+| `--surface-input` | Field backgrounds only. | Same value as the card in light, distinct in dark — do not substitute one for the other. |
+| `--surface-hover` / `--surface-active` | Row and control feedback. | Translucent overlays, so they work on any surface. Only ever on something clickable. |
+| `--border-hairline` | The line between rows, and card edges. | `--border-hairline-strong` is for a border that must read as an edge (inputs, dividers between sections), not for emphasis. |
+| `--text-primary` | Titles and body copy. | `--text-secondary` is a subtitle or help text; `--text-tertiary` is metadata (timestamps, counts) and is too faint for anything a user must read. |
+| `--text-inverted` | Text on a filled dark surface. | Not "white" — it flips with appearance. |
+| `--accent` | The user's accent, from the shell. | `--accent-hover` for the hover state, `--accent-soft` for tinted backgrounds (badges, ghost hover, `mark`), `--accent-contrast` for text *on* the accent. Never write your own tint of it. |
+| `--color-danger` / `-success` / `-warning` | Status meaning, not decoration. | Each has a `-soft` companion for the background of a badge or banner; the solid one is for text and icons. |
+| `--space-1…12` | The spacing scale (4, 8, 12, 16, 20, 24, 32, 40, 48). | Use few of them: small inside a group, medium between groups, large before a section. |
+| `--radius-button` / `-input` / `-card` / `-panel` / `-pill` | Corner radii, by role. | Pick by what the thing *is*, so a card and a button never share a radius by accident. |
+| `--fs-caption…--fs-title-2` | The type scale. | `--fs-body` is default copy, `--fs-body-lg` a row title, `--fs-footnote` a subtitle, `--fs-caption` a label. |
+| `--motion-fast` / `--motion-normal`, `--ease-standard` / `--ease-spring` | Transition timing. | Fast for hover and colour, normal for anything that moves. |
+| `--shadow-card` / `--shadow-button` | Elevation. | Two levels exist on purpose; a third one you invent will not match the OS. |
 
 ## Window rules
 
@@ -204,9 +238,23 @@ report waiting to happen.
 It keeps the layout from jumping when data lands, which is most of what makes an
 app feel fast. Give every skeleton an explicit width.
 
-**Interactive affordances.** Only give a row a hover state if clicking it does
-something — a hover on an inert row is a promise the app does not keep. And
-never remove the focus ring; keyboard users navigate your app too.
+**Interactive affordances — the rule runs both ways.** Only give a row a hover
+state if clicking it does something: a hover on an inert row is a promise the
+app does not keep. And the mirror of it, which is the half that ships broken:
+**anything clickable must say so.** A `.row` with a handler gets
+`.row.is-interactive`, which is where the cursor, the hover and the focus ring
+come from — without it you have a silent click target that only the person who
+wrote it knows about.
+
+It stays an `<li>`. `<button class="row">` is the obvious guess and it is wrong:
+a button arrives with its own ButtonFace background, its own border, Arial over
+your tokens, and a width that hugs its content — so the list visibly stops
+short of the card edge. That is what an owner saw and described as "the list is
+not full width, the rows look like buttons". Put one delegated handler on the
+`<ul>`, give each row `data-id` and `tabindex="0"`, and answer Enter as well as
+click. `check_ui.py` fails on both halves of this rule.
+
+Never remove the focus ring; keyboard users navigate your app too.
 
 ## Mobile
 

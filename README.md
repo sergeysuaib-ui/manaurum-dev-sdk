@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.8.0.** Skills that teach Claude Code to build and ship apps for
+**Version 2.9.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://manaurum.com), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -60,6 +60,14 @@ claude plugin update manaurum-dev-sdk@manaurum-sdk
 Restart Claude Code afterwards. If a skill still describes something this README
 contradicts, your local plugin cache is stale — run `/plugin` and update.
 
+**A session that is already running does not notice the update**: the cache keeps one
+directory per version, and a skill loaded from the old one keeps reading it. Since 2.9.0
+the plugin ships a `SessionStart` hook (`hooks/hooks.json` → `scripts/version_check.py`)
+that says so out loud when it happens, leaves a `STALE.md` in the superseded directory
+and a `current` pointer beside it. It prints nothing when your copy is current, and it
+cannot fail a session — but it only speaks at session start, so after `/plugin update`
+the honest move is still to re-invoke the skill.
+
 ## Install the CLI
 
 The `manaurum` CLI scaffolds, validates and deploys. It is **not on PyPI yet**; until it
@@ -86,7 +94,7 @@ manaurum auth login --token mna_...
 ```bash
 cp -r templates/v2-starter my-app && cd my-app
 grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'
-pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # 27 passed
 manaurum app validate           # manifest against the v2 schema
 manaurum app deploy             # 202 + poll; prints the live URL when it activates
 ```
@@ -101,7 +109,7 @@ The starter deploys unchanged. It is not a hello-world stub: it serves a UI that
 the shell handshake, verifies a real user-context JWT on `/api/me`, does a real key-value
 round trip through the capability gateway on `/api/notes`, and exposes two
 `agent_capabilities` so the OS Assistant can read and write on the user's behalf. Its
-19 tests run offline — no database, no account, no network — and they cover the wiring,
+27 tests run offline — no database, no account, no network — and they cover the wiring,
 not just the pieces: remove an auth dependency from a route and a test goes red. Read its
 `README.md`, then replace the note-taking parts with your own.
 
@@ -143,12 +151,24 @@ parts inlined. Reading one real app beats reading four pages about apps.
   `tests/`. Apps grow by adding surfaces, not by growing one file. It is **not** identical
   to `manaurum app init` output; when the CLI catches up (MAN-1393) this directory goes
   away in favour of it.
+* `templates/check_ui.py` — the UI contract, mechanically. Ten rules over your static
+  files: a hex hidden in a `var()` fallback whose token does not exist, `style=`, a
+  `tab`/`sidebar` class, `<button class="row">`, a click target with no
+  `is-interactive`, `alert`/`confirm`/`prompt`, more than one primary button in a view,
+  a missing `manaurum:ready`, appearance read off `e.data` instead of `e.data.payload`.
+  Comments are stripped first, so a comment explaining a rule is not a violation of it.
+  `python check_ui.py src/static`, exit 1 on findings. Two apps have now been rejected
+  on sight for things on this list; a rule a program checks is the only kind that
+  survives a hurry.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
   it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
   fixtures file, and frames the page the way the desktop shell does: the shell's exact
-  sandbox, a real `manaurum:init` with the appearance and accent you ask for, and a red
-  badge when `manaurum:ready` never comes back. Two headless screenshots (light and
-  dark) are the whole check. Keep it *beside* the app directory — everything inside is
+  sandbox, a real `manaurum:init` with the appearance and accent you ask for, and two
+  badges — one for `manaurum:ready`, one saying whether the appearance was actually
+  applied. Fixtures match like `runtime.api_routes` does (`/api/items/*`), a fixture can
+  describe a failure or a delay (`{"status": 500}`, `{"delay_ms": 1500}`), and `?width=`
+  sizes the app's frame so the narrow window the design contract is written for can be
+  photographed honestly. Keep it *beside* the app directory — everything inside is
   packed into the deploy.
 * `templates/legacy-v1/` — the old iframe-bundle artifacts. Kept only for apps that
   already ship on v1; do not start anything new from them.

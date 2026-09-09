@@ -5,6 +5,16 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
+> **This page is SDK 2.9.0.** A plugin install caches one directory per
+> version, and an update that lands mid-session does not reach a skill that is
+> already loaded — that gap has already cost one app its interface: 2.8.0
+> appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
+> session went on reading the old paths for another day. So when you resolve
+> `<plugin>` (see "Before you write anything"), look at its **parent**: if a
+> higher version directory sits next to the one you are reading, you are on a
+> stale copy. Read that one instead, and re-check anything you have already
+> built against it. The orphaned directory carries a `STALE.md` saying the same.
+
 > ## ⚡ Platform v2 is the new default (2026-05)
 >
 > ManAurum now has two runtime models:
@@ -36,6 +46,13 @@ not find out you guessed wrong until the app exists and is wrong.
    them read it. It is the spec, and it is theirs.
 4. **Derive the build from it**: §3 → the data model, §2 → the screens and
    `api_routes`, §4 → `agent_capabilities`. Keep the derivation visible.
+5. **Give every screen a URL fragment while they are still a list on paper** —
+   `#customers`, `#customer/42`. It costs eight lines in `index.html` (the
+   starter ships them) and it is what makes the app deep-linkable, gives the
+   back button something to do, and lets the Step 3.5 screenshot reach past the
+   first screen. Decide it now: bolting it on after the app exists is expensive,
+   which is why it gets skipped, and then every check only ever photographs the
+   home view.
 
 Two things this is not. It is **not a gate**: if they say "just build me a todo
 list", draft the brief yourself, show it, ask one confirming question, and go.
@@ -94,26 +111,37 @@ stylesheet loses the guards baked into it, and the loss is silent.
 
 Not taste, and not optional reading. Each of these has shipped at least once —
 four of them in a single app, whose interface was rejected on sight while every
-technical check passed. Copying `app.css` enforces none of them, because they
-are decisions you make in the markup. Check them before the first file, and
-again against the screenshot in Step 3.5.
+technical check passed, and then most of them again in a second app a week
+later. Copying `app.css` enforces none of them, because they are decisions you
+make in the markup. Check them before the first file, and again in Step 3.5,
+where `check_ui.py` checks nine of them for you.
 
 1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
    and sits in a desktop that already has navigation. Sections are cards; two
    views are two `.btn-ghost`s that swap the content. (One narrow exception, in
    `design.md`: a list that genuinely drives a detail pane.)
-2. **Appearance and accent come from `manaurum:init`**, written onto `<html>` as
-   `data-appearance` / `data-accent` (Step 2.5). `prefers-color-scheme` is only
-   the standalone default — it tracks the *browser*, so an app that styles off
-   it sits in its own palette inside a dark desktop.
+2. **Appearance and accent come from `manaurum:init` — they arrive in
+   `e.data.payload`, not on the message root** — written onto `<html>` as
+   `data-appearance` / `data-accent` (Step 2.5). Reading them off `e.data`
+   answers the handshake, applies nothing, and leaves a light app in a dark
+   desktop for as long as nobody looks; the standalone URL hides it, because
+   the `prefers-color-scheme` fallback runs there. `prefers-color-scheme` is
+   only that fallback — it tracks the *browser*, never Manaurum.
 3. **A badge is a word, not a sentence.** `overdue` — never "hasn't paid in over
    90 days". A badge that holds a phrase turns a scannable list into a wall.
 4. **One primary button per view**, never one per row. A column of blue buttons
    says nothing is the answer.
-5. **Hover states only on what is clickable.** A hover on an inert row is a
-   promise the app does not keep.
-6. **No hex in the markup and no inline `style=`.** Change a token, not 40
-   rules; an inline colour cannot follow an appearance change.
+5. **Hover if and only if the click does something.** No hover on an inert row —
+   it is a promise the app does not keep; and no silent click target either, so
+   a row with a handler gets `.row.is-interactive` (cursor, hover, focus ring)
+   and stays an `<li>`. `<button class="row">` is not the shortcut it looks
+   like: it drops to ButtonFace, Arial and its own width, and the list stops
+   reaching the edge of the card.
+6. **No hex in the markup and no inline `style=`** — and that includes a hex
+   inside a `var()` fallback. `var(--text-muted, #666)` with a token that does
+   not exist is a hardcoded colour wearing a token's clothes, and it is the one
+   the eye slides over. The token list is in `design.md`; if a name is not in
+   it, the token is not there.
 7. **No `alert()` / `confirm()` / `prompt()`.** The shell's iframe has no
    `allow-modals`, so they return silently — a `confirm()`-gated delete button
    is a button that does nothing. Use an in-app modal, input or toast.
@@ -375,22 +403,38 @@ Capabilities available today:
 
 See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
 
-## Step 3.5 — Look at the UI before you deploy it
+## Step 3.5 — Check the UI before you deploy it (MANDATORY)
 
-**The last step of building an interface, and it is as mandatory as `healthz`
-after a deploy.** Up to here you have read code, and nobody has *seen* the app.
-Design rules do not survive a build that is never looked at: the four failures
-that got a real app rejected — tab-bar navigation, sentences in badges, a blue
-button in every row, a light app in a dark desktop — were all obvious in the
-first screenshot and invisible in the diff.
+**The last step of building an interface, and it is as mandatory as the
+handshake in Step 2.5 or `healthz` after a deploy.** Up to here you have read
+code, and nobody has *seen* the app. Design rules do not survive a build that is
+never looked at: the four failures that got a real app rejected — tab-bar
+navigation, sentences in badges, a blue button in every row, a light app in a
+dark desktop — were all obvious in the first screenshot and invisible in the
+diff. Most of them then shipped again in a second app a week later, by an agent
+that had read the rules.
 
-**1. Serve it with stubs.** `<plugin>/templates/preview.py` is a stdlib-only
+**1. Run the linter. It is 200 lines and it takes a second.**
+
+```bash
+python <plugin>/templates/check_ui.py my-app/src/static
+```
+
+`check_ui.py` checks nine of the seven rules mechanically — including the three
+a screenshot cannot show: a hex hidden inside a `var()` fallback whose token
+does not exist, a click target with no `is-interactive`, and appearance read off
+`e.data` instead of `e.data.payload`. Exit 0 or fix what it names. Do this
+*before* the screenshots: it is cheaper, and half of what it finds would
+otherwise reach the owner rather than you.
+
+**2. Serve it with stubs.** `<plugin>/templates/preview.py` is a stdlib-only
 script (no install, no dependencies): it serves your static files, answers every
 `/api/*` call from a fixtures file, and adds a `/__shell` page that frames your
 app the way the desktop does — the shell's exact sandbox, a real `manaurum:init`
-with the appearance and accent you ask for, and a red badge if `manaurum:ready`
-never comes back. Keep it **beside** the app directory, never inside it:
-everything inside is packed into the deploy.
+with the appearance and accent you ask for, and two badges: one for
+`manaurum:ready`, one that says whether the appearance was actually *applied*.
+Keep it **beside** the app directory, never inside it: everything inside is
+packed into the deploy.
 
 ```bash
 cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
@@ -398,7 +442,14 @@ cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
 python preview.py --app my-app/src/static
 ```
 
-**2. Photograph both appearances.** Chrome or Edge, same flags (on Windows, the
+Fixture paths match the way `runtime.api_routes` does — exact first, then the
+longest `/prefix/*` — so `/api/items/42` is reachable and the detail screen
+photographs with real content. A fixture value can also be an envelope,
+`{"status": 500}` or `{"delay_ms": 1500, "body": {…}}`, which is how you
+photograph the three states `design.md` asks you to distinguish: nothing yet,
+could not load, still loading.
+
+**3. Photograph both appearances.** Chrome or Edge, same flags (on Windows, the
 full path to `chrome.exe` and any fresh directory for the profile).
 
 ```bash
@@ -417,24 +468,41 @@ render". `--virtual-time-budget` is what waits for the fetches: too short and
 you photograph the skeletons.
 
 Add `&accent=lavender` (or any of the eight) to check you are not hardcoding
-blue. `&device=mobile` posts the mobile device flag — but do not judge phone
-*geometry* from a headless window: the layout viewport floors at ~500px, so
-`--window-size=390,800` still lays out at 500 and crops the PNG, and a perfectly
-good phone layout photographs as clipped (measured on Chrome and Edge,
-`--headless=new`). Check narrow layouts in a real browser window instead.
+blue.
 
-**Headless cannot click.** A view reachable only through a button is a view the
-screenshot never sees. Give each section its own URL fragment (`#customers`,
-read on load and on `hashchange`) and shoot it with
-`…/__shell?entry=/index.html%23customers`. That is better for users anyway.
+**And photograph the narrow window, because that is the one the contract is
+written for.** Add `&width=900` (or 760, or whatever your smallest supported
+window is): it sizes *your app's frame* inside a large browser window, so the
+headless viewport floor never applies.
 
-**3. Open the two pictures and criticise them honestly**, against the seven
-rules above and the `Never` table that opens `references/design.md` — out loud,
-in your reply. "It renders" is not the bar; the bar is
-whether you would show this to the person who asked for it. Name what is wrong
-and fix it before the deploy, not after the rejection. Also read the terminal:
-`preview.py` logs every `/api/*` your UI called, which is the cheapest way to
-find a route missing from `runtime.api_routes` before it 404s in production.
+```bash
+… --window-size=1240,1000 --screenshot=narrow.png \
+  "http://127.0.0.1:8765/__shell?width=900&appearance=light"
+```
+
+Do not try to do this by shrinking the browser instead: both browsers floor
+their own layout viewport at ~500px, so `--window-size=390,800` still lays out
+at 500 and merely crops the PNG — a perfectly good phone layout photographs as
+broken (measured on Chrome and Edge, `--headless=new`). `&device=mobile` posts
+the mobile device flag, which is a different thing from geometry and worth
+combining with `&width=390`.
+
+**Headless cannot click, so the second screen is only reachable by URL.** A view
+behind a button is a view no screenshot ever sees. Each view gets its own
+fragment — `#customers`, `#item/42`, read on load and on `hashchange` — and you
+shoot it with `…/__shell?entry=/index.html%23item/42`. The starter's
+`index.html` ships this router; decide the fragments in Step 0, because
+retrofitting them after the app exists is exactly why this check gets skipped.
+
+**4. Open the pictures and criticise them honestly**, against the seven rules
+above and the `Never` table that opens `references/design.md` — out loud, in
+your reply. The linter has already taken the mechanical half; what is left is
+the half only a person (or you, looking) can see: is the hierarchy right, is the
+empty state saying something useful, would you show this to the person who asked
+for it. Name what is wrong and fix it before the deploy, not after the
+rejection. Also read the terminal: `preview.py` logs every `/api/*` your UI
+called, which is the cheapest way to find a route missing from
+`runtime.api_routes` before it 404s in production.
 
 ## Step 4 — Deploy
 
@@ -559,6 +627,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
+- **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on nine of them, so this is not a matter of remembering.
 
 ## What will bite you
 

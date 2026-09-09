@@ -101,6 +101,53 @@ def test_stylesheet_defeats_the_hidden_attribute():
     assert re.search(r"\[hidden\]\s*\{[^}]*display:\s*none\s*!important", css)
 
 
+def test_every_view_has_a_url():
+    """A view reachable only by clicking is a view nothing can check.
+
+    The desktop cannot deep-link into it, the back button does nothing, and a
+    headless screenshot — which cannot click — never gets past the first
+    screen, so every UI check you run only ever sees the home view.
+    """
+    views = re.findall(r'data-view="([a-z0-9-]+)"', _INDEX)
+    assert len(views) >= 2, "no second view: the router has nothing to route"
+    assert "hashchange" in _INDEX, "views exist but the URL never selects one"
+
+
+def test_clickable_rows_are_list_items_that_say_they_are_clickable():
+    """`<button class="row">` is the obvious guess and it is wrong.
+
+    A button brings ButtonFace, its own border, Arial over the tokens and a
+    width that hugs its content, so the list stops reaching the card edge —
+    which is what an owner saw and rejected. And a row with a handler but no
+    `is-interactive` has no cursor, no hover and no focus ring.
+    """
+    assert not re.search(r'<button[^>]*class="[^"]*\brow\b', _INDEX), (
+        "a list row is <li class=\"row is-interactive\">, never a <button>"
+    )
+    assert "'row is-interactive'" in _INDEX or '"row is-interactive"' in _INDEX, (
+        "rows are built without is-interactive — a silent click target"
+    )
+
+
+def test_the_ui_linter_is_clean():
+    """The contract in `templates/check_ui.py`, run against this app.
+
+    Skipped in a copied app that did not take the linter along; in the SDK
+    repo it guards the starter itself, which is what every app is copied from.
+    """
+    import subprocess
+    import sys
+
+    linter = Path(__file__).resolve().parents[2] / "check_ui.py"
+    if not linter.exists():                                   # pragma: no cover
+        import pytest
+
+        pytest.skip("check_ui.py not alongside this template — copy it from the plugin's templates/")
+    done = subprocess.run([sys.executable, str(linter), str(_STATIC)],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
 def _hrefs(html: str) -> list[str]:
     """Every root-relative href in the document."""
     return [h for h in re.findall(r'href="([^"]+)"', html) if h.startswith("/")]

@@ -1,3 +1,119 @@
+# 2.9.0 — a rule a program checks (MAN-2510, MAN-2455)
+
+### Why
+
+2.8.0 put the design rules in the body of the skill, added Step 3.5 and shipped
+`preview.py`. A week later a second app — technically flawless again, every
+platform trap cleared on the first attempt — was rejected on sight again, by an
+agent that had the rules in its context.
+
+The mechanism is worth naming, because it is not carelessness: **an agent treats
+as contract what sits in a numbered step marked mandatory, and treats everything
+else as reference material for if there is time left.** Beside that sits
+`app.css`, and copying it looks and feels like the design step being done — the
+UI assembles, it resembles the template, every technical check is green. A rule
+in another file loses to an artifact in your hands.
+
+So 2.9.0 is mostly not new rules. It is checks, a library that refuses to build
+the wrong thing, and one honest promotion of design into the mandatory part.
+
+What the second app shipped, all of it described in `design.md` already:
+`<button class="row">` instead of `<li class="row">` (which is why the owner saw
+"the list is not full width, the rows look like buttons"), a tab bar as
+navigation, `var(--text-muted, #666)` with four token names that exist nowhere,
+and a card per field. And a fifth, from MAN-2455: an app that answered the
+handshake and read `e.data.appearance` instead of `e.data.payload.appearance`,
+so it applied nothing and sat light inside a dark desktop for four days while
+every check stayed green.
+
+### What changed
+
+**`templates/check_ui.py` (new) — the UI contract, mechanically.** Ten rules
+over the app's static files: a `var()` whose token is declared nowhere (a hex in
+a fallback is a hardcoded colour wearing a token's clothes), hex or `rgba()` in
+markup, `style=` and `element.style.*`, `alert`/`confirm`/`prompt`, a
+`tab`/`tabs`/`sidebar` class, `@media max-width`, `<button class="row">`, a click
+target with no `is-interactive`, more than one primary button in a view, and a
+missing `manaurum:ready` / `data-appearance` / `data-device` / `payload` read.
+Stdlib only, `python check_ui.py src/static`, exit 1 on findings.
+
+Three things it does deliberately: it strips comments first (without that, the
+sentence "never call `confirm()`" in a comment is itself a finding — that is how
+its first run failed); it treats `*.css` and `<style>` blocks as the place
+colours are allowed to live and everything else as markup; and it counts primary
+buttons **per `data-view`**, because a hash-routed app keeps every view in one
+file and each view is allowed one.
+
+**Step 3.5 is now `(MANDATORY)` in its heading, and the linter is its first
+step.** The only signal of obligation that an agent reliably reads is the one in
+the heading — Step 2.5 had it, Step 3.5 did not. The linter runs before the
+screenshots because it is cheaper and it catches what a picture cannot show.
+
+**The seven rules gained the two sentences that were missing.** Rule 2 now says
+where the values arrive (`e.data.payload`, not `e.data`) and what the failure
+looks like, because an agent that already has a handshake reads "appearance
+comes from `manaurum:init`" as "yes, I do that" and never re-opens Step 2.5.
+Rule 5 now runs both ways: hover if and only if the click does something — so a
+row with a handler must carry `.row.is-interactive`, and stays an `<li>`.
+
+**`What NOT to do` has a UI line.** It is the only section on the page whose
+title is "what not to do", so everything absent from it reads as "not what you
+get sent back for". Six technical entries, and the thing that actually got two
+apps rejected was not among them.
+
+**`preview.py`:**
+- fixtures match the way `runtime.api_routes` does — exact, then longest
+  `/prefix/*`. An exact-key dict could never answer `/api/items/42`, so the
+  detail screen photographed as an empty card, every time;
+- a fixture may be an envelope — `{"status": 500}`, `{"delay_ms": 1500, "body":
+  …}` — so that *nothing yet*, *could not load* and *still loading*, which
+  `design.md` asks you to distinguish, are all photographable rather than one of
+  three;
+- `?width=` / `?height=` size the app's frame inside a large browser window. The
+  whole contract is written for a window that is "often 900px", the recommended
+  shot is 1240×1000, and both headless browsers floor their own viewport at
+  ~500px — so this is the only honest way to photograph the narrow case;
+- a second badge: **appearance applied / appearance IGNORED**, read back off the
+  framed page's `<html>`. MAN-2455's bug fails this badge with no judgement call
+  from anyone.
+
+**The starter stops making the mistakes easy to make.** `.row-title` and
+`.row-sub` get `display: block` (as `<span>`s they ran together on one line and
+`text-overflow: ellipsis` did nothing); `.row` gets the button neutralisers that
+`.btn` four blocks below it already had, plus a comment saying a row is an
+`<li>`; `a.btn` loses the underline; `.toolbar` and `mark` exist (the second so
+that search highlighting is not reinvented in the banned yellow); and where
+`.tab`, `.tabs`, `.sidebar` and `.switch` would be there is now a comment
+saying they are absent on purpose. A missing class and a gap in the library look
+identical, and that is how a tab bar gets built.
+
+**Hash routing moved into the starter and into Step 0.** `index.html` ships an
+eight-line router, two `data-view`s and a list whose rows are `<li class="row
+is-interactive">` with one delegated handler and a keyboard path. The
+requirement used to arrive in Step 3.5, when the app already exists and
+retrofitting it is expensive — so it was skipped, and every screenshot only ever
+showed the first screen.
+
+**`references/design.md` gained the token table**, name by name, each with what
+it is and which neighbour it is not. There was no list anywhere, so names were
+invented by analogy — and an invented name in a `var()` fallback breaks no
+stated rule while being exactly the hardcode the rules forbid. Plus the two
+`Never` rows for that and for a silent click target.
+
+**The plugin now says when your copy of it is stale** (`hooks/hooks.json` →
+`scripts/version_check.py`). Measured in MAN-2510: a session loaded 2.7.2, the
+cache received 2.8.0 fifty-one minutes later, and the session kept reading 2.7.2
+paths for another day — the release meant to prevent that app's failure missed
+it by an hour and was never noticed. The SessionStart hook compares this copy
+against its siblings in the cache, says so in one paragraph when it is behind
+(or when its directory carries `.orphaned_at`), writes `STALE.md` into the
+superseded directory and a `current` pointer beside it — because SKILL.md
+teaches agents to find the plugin root by walking the filesystem, and two
+directories that differ only by a hidden marker are indistinguishable. It prints
+nothing when the copy is current, and it cannot fail a session.
+
+`SKILL.md` also states its own version at the top and tells the agent to look at
+the parent directory of `<plugin>` before trusting what it is reading.
 # 2.8.0 — the design rules travel with the skill, and somebody looks at the app (MAN-2439)
 
 ### Why
