@@ -57,7 +57,17 @@ nobody has seen is how a technically flawless app gets rejected on sight.
 
 ```bash
 cd my-app
-tar cf /tmp/ctx.tar \
+
+# Say out loud what you are about to deploy, and get it from the manifest
+# rather than from memory. /tmp is shared: two sessions building two apps on
+# one machine collide on any fixed filename, and the loser's deploy reports
+# `activated` for someone else's app while its own never went out (MAN-2456).
+SLUG=$(jq -r .app_id manifest.json)
+VERSION=$(jq -r .version manifest.json)
+WORK=$(mktemp -d)                      # per-run, never a shared path
+echo "deploying $SLUG $VERSION"        # if that is not your app, stop here
+
+tar cf "$WORK/ctx.tar" \
   --exclude='.env*' --exclude='.git' --exclude='node_modules' \
   --exclude='.venv' --exclude='venv' --exclude='__pycache__' \
   --exclude='.pytest_cache' --exclude='dist' --exclude='build' \
@@ -70,17 +80,25 @@ tar cf /tmp/ctx.tar \
 # any real project (Windows caps argv at 32 KB; a 60 KB tar is already
 # 80 KB of base64). `tr -d '\n'` leaves no trailing newline, which the
 # archive must not have.
-base64 < /tmp/ctx.tar | tr -d '\n' > /tmp/ctx.b64
-jq -n --rawfile b /tmp/ctx.b64 --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' > /tmp/deploy.json
+base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
+jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
+  '{manifest_json: $m[0], archive_b64: $b}' > "$WORK/deploy.json"
 
 curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
   -H "Content-Type: application/json" \
-  -d @/tmp/deploy.json | jq .
+  -d @"$WORK/deploy.json" | jq .
 
-rm -f /tmp/ctx.tar /tmp/ctx.b64
+rm -rf "$WORK"
 ```
+
+**Never write the build context, the base64 or the request body to a fixed
+path** — not `/tmp/ctx.tar`, and not a shared helper script on a server. It
+happened on 2026-09-08: a second session overwrote the operator's deploy script
+and the next run shipped *their* archive, phases streaming healthily for an app
+nobody meant to touch, while the app the operator was deploying stayed on its
+old version. A run that reports success for the wrong app is worse than one that
+fails, so check the echoed slug before you trust the result.
 
 The `.venv` / `__pycache__` excludes are not cosmetic: without them a Python
 project that has been `pip install`ed locally ships its whole virtualenv —

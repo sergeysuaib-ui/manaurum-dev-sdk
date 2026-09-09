@@ -121,6 +121,21 @@
       </div>
     </header>
 
+    <!-- ROUTING. Every view has its own URL fragment: `#overview`,
+         `#cap/os.kv.get`. Decide this before you write the second screen, not
+         after — retrofitting it once the app exists is what makes people skip
+         it, and then three things break at once:
+
+           - the desktop cannot deep-link into your app,
+           - the back button does nothing,
+           - and a headless screenshot (Step 3.5) cannot click, so every check
+             you run only ever photographs the first screen.
+
+         The router is the eight lines at the bottom of this file. Views are
+         marked with `data-view` and toggled with `el.hidden`, which works
+         because app.css carries `[hidden] { display: none !important }`. -->
+    <div data-view="overview">
+
     <!-- FORM. Label above the input, help text below, one primary action,
          feedback next to the button that caused it. -->
     <section class="card">
@@ -183,6 +198,23 @@
       <h2 class="card-title">Shell context</h2>
       <dl class="kv" id="shell-ctx"></dl>
     </section>
+
+    </div><!-- /view: overview -->
+
+    <!-- SECOND VIEW — the detail screen behind a list row. This is the shape
+         nearly every app needs (a list, and one thing from it), and the reason
+         the list rows below are `<li class="row is-interactive">` with one
+         delegated handler rather than a button each. -->
+    <div data-view="cap" hidden>
+      <div class="toolbar">
+        <a class="btn btn-ghost" href="#overview">&larr; All capabilities</a>
+      </div>
+      <section class="card">
+        <h2 class="card-title mono" id="cap-name">—</h2>
+        <p class="card-hint" id="cap-hint"></p>
+        <dl class="kv" id="cap-kv"></dl>
+      </section>
+    </div><!-- /view: cap -->
 
   </div>
 
@@ -311,14 +343,23 @@
     empty.hidden = true;
     for (const cap of caps) {
       const name = typeof cap === 'string' ? cap : cap.name || String(cap);
+      // A clickable row is an <li> that SAYS it is clickable. Not a <button>:
+      // that arrives with ButtonFace, its own border, Arial over your tokens
+      // and a width that hugs its content, so the list stops filling the card.
+      // `is-interactive` is what supplies cursor, hover and focus ring.
       const li = document.createElement('li');
-      li.className = 'row';
+      li.className = 'row is-interactive';
+      li.dataset.id = name;
+      li.tabIndex = 0;
       const main = document.createElement('div');
       main.className = 'row-main';
-      const title = document.createElement('div');
+      const title = document.createElement('span');
       title.className = 'row-title mono';
       title.textContent = name;
-      main.append(title);
+      const sub = document.createElement('span');
+      sub.className = 'row-sub';
+      sub.textContent = 'granted on this install';
+      main.append(title, sub);
       const badge = document.createElement('span');
       badge.className = 'badge badge-success';
       badge.textContent = 'granted';
@@ -326,6 +367,62 @@
       list.append(li);
     }
   }
+
+  // One delegated handler for the whole list, not one per row — and a keyboard
+  // path, because a row that only answers the mouse is half a control.
+  function openRow(el) {
+    if (el && el.dataset.id) location.hash = 'cap/' + encodeURIComponent(el.dataset.id);
+  }
+  $('caps').addEventListener('click', (e) => openRow(e.target.closest('.row[data-id]')));
+  $('caps').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    openRow(e.target.closest('.row[data-id]'));
+  });
+
+  // ── The detail view for one capability.
+  function renderCapability(name) {
+    const init = window.__manaurum.init;
+    const granted = ((init && init.granted_capabilities) || [])
+      .map((c) => (typeof c === 'string' ? c : c.name || String(c)));
+
+    $('cap-name').textContent = name || '—';
+    $('cap-hint').textContent = granted.includes(name)
+      ? 'This install may call it. The call itself goes from your container to the gateway.'
+      : 'Not in this install’s grant set — every call returns 403 capability_not_granted.';
+
+    const rows = {
+      capability: name || '—',
+      status: granted.includes(name) ? 'granted' : 'not granted',
+      endpoint: 'POST ${MANAURUM_CORE_URL}/api/capability/' + (name || ''),
+      called: 'from the container, never from this page',
+    };
+    const dl = $('cap-kv');
+    dl.innerHTML = '';
+    for (const [k, v] of Object.entries(rows)) {
+      const dt = document.createElement('dt');
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      dd.textContent = v;
+      dl.append(dt, dd);
+    }
+  }
+
+  // ── The router. Eight lines, and they are what makes the app deep-linkable,
+  // back-button-correct and screenshot-able past the first screen.
+  const VIEWS = Array.from(document.querySelectorAll('[data-view]'));
+  function route() {
+    const raw = location.hash.slice(1);
+    const cut = raw.indexOf('/');
+    const name = cut === -1 ? raw : raw.slice(0, cut);
+    const arg = cut === -1 ? '' : decodeURIComponent(raw.slice(cut + 1));
+    const view = VIEWS.some((el) => el.dataset.view === name) ? name : 'overview';
+    for (const el of VIEWS) el.hidden = el.dataset.view !== view;
+    if (view === 'cap') renderCapability(arg);
+  }
+  window.addEventListener('hashchange', route);
+  window.addEventListener('manaurum-init', route);
+  route();
 
   // ── Shell context → the values that drive layout and colour.
   function renderShellCtx() {

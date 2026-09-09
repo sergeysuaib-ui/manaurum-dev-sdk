@@ -23,6 +23,10 @@ build/
 *.tar.gz
 
 # Applied by Core per tenant, never needed inside the image.
+# NOTE: on a platform deploy this line changes nothing - the tarball goes
+# straight to Docker's build endpoint, which does not apply .dockerignore
+# server-side. It is what keeps migrations out of a LOCAL `docker build`.
+# The platform copy is excluded by your Dockerfile's COPY list instead.
 migrations/
 
 # Tests run on your machine and in CI, never in the runtime image.

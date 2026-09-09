@@ -1,5 +1,5 @@
 {
-  "_comment": "Stub bodies for preview.py. Key = the /api path your UI calls, value = the JSON it should get back. Copy the shapes from your own route handlers; anything not listed answers {}. The two entries below serve templates/v2-starter.",
+  "_comment": "Stub bodies for preview.py. Key = the /api path your UI calls, value = the JSON it should get back. Paths match like runtime.api_routes does: exact key first, then the longest '/prefix/*'. A value may be an envelope -- {\"status\": 500}, {\"delay_ms\": 1500, \"body\": {...}}, {\"body\": []} -- so that 'could not load', 'still loading' and 'nothing here yet' are all photographable. Copy the shapes from your own route handlers; anything unlisted answers {}. The entries below serve templates/v2-starter; the last three are examples for your own list/detail screens.",
 
   "/api/me": {
     "user_id": "11111111-2222-3333-4444-555555555555",
@@ -9,5 +9,20 @@
 
   "/api/notes": {
     "text": "A note that came back from the stub, so the form renders with real content."
-  }
+  },
+
+  "/api/items": [
+    { "id": 1, "title": "First item", "subtitle": "from the stub", "status": "open" },
+    { "id": 2, "title": "Second item", "subtitle": "from the stub", "status": "done" }
+  ],
+
+  "/api/items/*": {
+    "id": 1,
+    "title": "First item",
+    "subtitle": "from the stub",
+    "status": "open",
+    "note": "This is what the detail screen gets. Without prefix matching it would be {}."
+  },
+
+  "/api/slow/*": { "delay_ms": 1500, "body": { "note": "screenshot the skeleton" } }
 }
