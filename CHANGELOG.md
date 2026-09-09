@@ -74,6 +74,50 @@ only ever ran over `.html`/`.js` — and a media query lives in a stylesheet, so
 the rule could not fire on the one file type that carries it. It had been dead
 since 2.9.0 and no amount of reading found it; one mutation did.
 
+**And `check_repo.py` now gets the same treatment.** 2.10.0 shipped it with no
+negative test at all — the file whose own docstring tells the story of a regex
+silently disabled by one byte. Eighteen more mutations cover it, and half of
+them are the other direction: prose a person would legitimately write, with a
+demand that it stays **green**. Each of those was a real false positive first:
+
+* `` Never write the build context to `/tmp/ctx.tar` `` — the sentence
+  teaching the MAN-2456 lesson could not be written, and neither could
+  `/tmp/ctx-$$.tar`, which is the *fix* rather than the defect.
+* "Write two tests for every capability you use" read as a hardcoded count of
+  this repository's own suite.
+* "`check_ui.py` catches one of the two ways a hex reaches the markup" produced
+  `a hardcoded count of what the linter checks ("one of the")`.
+* "MAN-2532 is Done, but it was blocked on a runner for two days" demanded a
+  register entry for a closed ticket — which would have filled the open-claims
+  register with closed tickets.
+* "`scripts/deploy.sh` in YOUR project" was reported as a missing file in this
+  one.
+* A `.zip` and a `.jpeg` failed the build with `control byte 0x03 … rewrite the
+  file with a real editor, not a shell heredoc`. The binary test is now a NUL
+  byte rather than a list of extensions somebody has to maintain.
+
+Also real, and fixed: a `!.env.manaurum` line in the starter's `.gitignore`
+satisfied the coverage check while git would have tracked the token file
+(gitignore's last-match-wins is not `fnmatch`); `doc.parent.parent` let a file
+*outside the checkout* satisfy a documented path; `add_argument("-p", "--port")`
+made the documented `--port` report as unsupported; and a `;` in the sentence
+splitter separated a ticket from its own marker.
+
+**`smoke_tools.py` was testing whatever was on port 8766.** A fixed port plus
+"it answered 200" ran the entire suite against an unrelated HTTP server and
+produced nine findings blaming `preview.py`, none of which named the real
+cause. It now takes a port from the OS and refuses to run unless the page it
+gets back is preview's own.
+
+**Three ways CI could pass while failing.** `count=$(pytest --collect-only -q |
+tail -1)` swallowed a pytest failure entirely — GitHub's default shell is
+`bash -e` with no `pipefail` — and wrote `starter suite: ` with no number,
+green; the same pipe hid a crash in the ticket listing. `cancel-in-progress`
+applied to `push: main` too, so two merges in quick succession could land a
+commit whose build was cancelled. And there is now a **windows** job: these
+tools are maintained and run on Windows, `check_repo.py` makes a whole design
+decision about the cp1252 console, and CI had never once exercised that path.
+
 # 2.10.0 — the plugin can finally catch its own drift (MAN-2532)
 
 ### Why

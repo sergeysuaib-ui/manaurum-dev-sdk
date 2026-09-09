@@ -74,6 +74,6 @@
     "mode": "private"
   },
   "metadata": {
-    "description": "TODO: describe my-app"
+    "description": "One note per user, kept in os.kv through the capability gateway. Replace this line with what your app does for the person installing it - it is what a tenant admin reads on the install screen, and check_app.py fails on a description that still starts with TODO."
   }
 }

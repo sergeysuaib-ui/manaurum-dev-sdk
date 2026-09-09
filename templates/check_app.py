@@ -52,7 +52,7 @@ from pathlib import Path
 HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options",
                 "api_route", "route")
 SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", "dist",
-             "build", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".ruff_cache"}
+             "build", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 STATIC_ROOTS = ("", "src/static", "static", "public", "www", "dist", "build",
                 "src/public", "frontend/dist")
 
@@ -67,6 +67,13 @@ EXPOSE = re.compile(r"(?mi)^\s*EXPOSE\s+(\d+)")
 PORT_IN_COMMAND = re.compile(r"--port[=\s]+(\d+)|\s-p[=\s]+(\d+)|0\.0\.0\.0:(\d+)")
 DOCKER_RUNLINE = re.compile(r"(?mi)^\s*(?:CMD|ENTRYPOINT)\s+(.*)$")
 MIGRATION_NUMBER = re.compile(r"^(\d+)")
+# The manifest's root object is strict, so a typo up there is a 422 that finds
+# itself. `runtime` is not, which is why this list has to exist here.
+RUNTIME_KEYS = {"mode", "port", "api_routes", "egress_allowed_hosts",
+                "replicas", "sandbox"}
+# Long enough not to match `mna_*`, `mna_<...>` or `mna_…` in a comment that is
+# telling you not to do this.
+TOKEN_LITERAL = re.compile(r"\bmn[au]_[A-Za-z0-9]{16,}")
 SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 DOLLAR_BLOCK = re.compile(r"(?i)\bDO\s*\$\$")
 DESTRUCTIVE = (
@@ -343,6 +350,86 @@ def check_port(root: Path, manifest: dict, problems: list, notes: list) -> None:
                 "disagrees is what the next reader will believe" % (port, declared))
 
 
+def check_manifest_shape(manifest: dict, problems: list) -> None:
+    """Rules the skill states and nothing enforced.
+
+    The root object is strict - `additionalProperties: false` over 23 keys -
+    so a typo up there is a 422 and finds itself. `runtime` is NOT: an
+    invented key, or `"prot": 8000`, validates, deploys green and is silently
+    ignored. That costs a debugging session rather than a rejection, which is
+    the worse of the two.
+    """
+    runtime = manifest.get("runtime", {})
+    if isinstance(runtime, dict):
+        for key in sorted(set(runtime) - RUNTIME_KEYS):
+            problems.append(
+                "manifest.json: runtime.%s is not a key the platform reads. The "
+                "runtime object is not strict, so this validates, deploys green "
+                "and does nothing - check the spelling against %s"
+                % (key, ", ".join(sorted(RUNTIME_KEYS))))
+
+    for entry in runtime.get("api_routes", []) if isinstance(runtime, dict) else []:
+        if isinstance(entry, dict) and str(entry.get("path", "")).startswith("/agent"):
+            problems.append(
+                "manifest.json: runtime.api_routes declares %s - /agent/* is "
+                "dispatched straight to your container and is not a gateway route, "
+                "so listing it here configures nothing while looking like it did"
+                % entry["path"])
+
+    icon = manifest.get("frontend", {}).get("icon")
+    if isinstance(icon, str) and icon and not icon.startswith(("/", "http://", "https://")):
+        if "/" in icon or "." in icon:
+            problems.append(
+                "manifest.json: frontend.icon is %r, a relative path - it is not "
+                "resolved, it is painted into the tile as that literal string. Use "
+                "an emoji, an absolute URL, or omit the field for a clean "
+                "placeholder" % icon)
+
+    description = manifest.get("metadata", {}).get("description", "")
+    if isinstance(description, str) and description.strip().upper().startswith("TODO"):
+        problems.append(
+            "manifest.json: metadata.description is still the starter's "
+            "placeholder (%r) - it is what a tenant admin reads on the install "
+            "screen" % description)
+
+
+def check_secret_literals(root: Path, problems: list) -> None:
+    """A deploy token baked into the image.
+
+    Your `mna_*` token is a laptop credential for `POST /api/dev/v2/deploy`.
+    An image containing it hands every future reader your deploy rights, and
+    the build context is retained per version in object storage.
+    """
+    for path in source_files(root):
+        if path.suffix in (".png", ".jpg", ".gif", ".ico", ".woff", ".woff2"):
+            continue
+        for match in TOKEN_LITERAL.finditer(read(path)):
+            problems.append(
+                "%s: what looks like a live %s... token - never bake one into the "
+                "build context; the platform injects MANAURUM_RUNTIME_TOKEN at run "
+                "time" % (rel(path, root), match.group(0)[:8]))
+            break
+
+
+def note_missing_tests(root: Path, notes: list) -> None:
+    """Nothing here makes you write tests. This at least says so out loud.
+
+    The starter ships a suite that covers the wiring rather than the pieces,
+    and it is meant to be copied. An app with no tests at all is the common
+    shape, and the only signal today is prose in a section nobody re-reads.
+    """
+    for path in source_files(root):
+        name = path.name
+        if name.startswith("test_") or name.endswith("_test.py") or ".test." in name:
+            return
+        if path.parent.name in ("tests", "test", "__tests__"):
+            return
+    notes.append("no tests in this app. The starter's suite covers the wiring - "
+                 "remove an auth dependency from a route and a test goes red - and "
+                 "it is there to be copied. Start with your routes against your "
+                 "manifest, which is what this linter automates.")
+
+
 def check_env_files(root: Path, problems: list) -> None:
     """Rule 5 - no `.env*` anywhere inside the deployed directory.
 
@@ -491,6 +578,9 @@ def check(root: Path) -> tuple:
     check_env_files(root, problems)
     check_capabilities(root, manifest, problems)
     check_migrations(root, manifest, problems)
+    check_manifest_shape(manifest, problems)
+    check_secret_literals(root, problems)
+    note_missing_tests(root, notes)
     return problems, notes
 
 

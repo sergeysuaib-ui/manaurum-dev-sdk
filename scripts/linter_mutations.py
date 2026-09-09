@@ -146,6 +146,32 @@ def migrations_out_of_order(app: Path) -> None:
                                              encoding="utf-8")
 
 
+def a_typo_in_runtime(app: Path) -> None:
+    # `runtime` is not strict, so this validates, deploys green and is
+    # silently ignored - a debugging session rather than a 422.
+    patch_manifest(app, lambda data: data["runtime"].update(prot=8000))
+
+
+def agent_path_in_api_routes(app: Path) -> None:
+    def mutate(data):
+        data["runtime"]["api_routes"].append({"path": "/agent/*", "auth": "user"})
+    patch_manifest(app, mutate)
+
+
+def a_relative_icon(app: Path) -> None:
+    patch_manifest(app, lambda data: data["frontend"].update(icon="icons/app.svg"))
+
+
+def a_todo_description(app: Path) -> None:
+    patch_manifest(app, lambda data: data["metadata"].update(
+        description="TODO: describe my-app"))
+
+
+def a_baked_deploy_token(app: Path) -> None:
+    edit(app / "Dockerfile", "ENV PYTHONUNBUFFERED=1",
+         "ENV MANAURUM_V2_TOKEN=mna_9f3c1de77a04b26e5c81\nENV PYTHONUNBUFFERED=1")
+
+
 APP_MUTATIONS = [
     ("routes: a path the manifest does not declare", undeclared_route,
      "no runtime.api_routes rule covers it"),
@@ -175,6 +201,16 @@ APP_MUTATIONS = [
      "not a .sql file"),
     ("migrations: numbers of different widths", migrations_out_of_order,
      "zero-padded"),
+    ("manifest: a typo in runtime", a_typo_in_runtime,
+     "runtime.prot is not a key the platform reads"),
+    ("manifest: /agent/* declared in api_routes", agent_path_in_api_routes,
+     "configures nothing while looking like it did"),
+    ("manifest: a relative frontend.icon", a_relative_icon,
+     "painted into the tile as that literal string"),
+    ("manifest: the starter's TODO description", a_todo_description,
+     "still the starter's placeholder"),
+    ("secrets: a deploy token baked into the image", a_baked_deploy_token,
+     "live mna_9f3c... token"),
 ]
 
 
@@ -222,9 +258,146 @@ UI_MUTATIONS = [
 ]
 
 
+# ── check_repo.py, over a copy of the whole repository ──────────────────────
+# The checker that guards the documents had no negative test at all, and its
+# own docstring tells the story of a regex silently disabled by one byte. So
+# it gets the same treatment: break one check, demand red - and, just as
+# importantly, write the prose a person would legitimately write and demand
+# that it stays GREEN. Every false positive below was reproduced before it
+# was fixed; each is now a test that it stays fixed.
+
+CHECK_REPO = ROOT / "scripts" / "check_repo.py"
+README = "README.md"
+APP_SKILL = "skills/manaurum-app/SKILL.md"
+
+
+def append(repo: Path, name: str, text: str) -> None:
+    with (repo / name).open("a", encoding="utf-8") as handle:
+        handle.write("\n" + text + "\n")
+
+
+def version_drift(repo: Path) -> None:
+    edit(repo / README, "**Version ", "**Version 1.0.0.** Once: **Version ")
+
+
+def a_path_that_is_not_there(repo: Path) -> None:
+    append(repo, README, "See `templates/ghost-helper.py` for the details.")
+
+
+def a_heading_that_is_not_there(repo: Path) -> None:
+    append(repo, README, 'Read `skills/manaurum-app/SKILL.md` -> "The Fourth Rule".')
+
+
+def a_step_that_is_not_there(repo: Path) -> None:
+    append(repo, README, "The screenshots are Step 9, and they are mandatory.")
+
+
+def a_test_count(repo: Path) -> None:
+    append(repo, README, "The starter suite is 27 tests and runs offline.")
+
+
+def a_control_byte(repo: Path) -> None:
+    path = repo / README
+    data = path.read_bytes()
+    path.write_bytes(data + b"\nA stray byte: \x08 right here.\n")
+
+
+def a_fixed_tmp_path(repo: Path) -> None:
+    append(repo, APP_SKILL, "```bash\ntar cf /tmp/ctx.tar .\n```")
+
+
+def an_ungitignored_token_file(repo: Path) -> None:
+    # gitignore's last-match-wins: `.env*` above, un-ignored here.
+    append(repo, "templates/v2-starter/.gitignore", "!.env.manaurum")
+
+
+def a_flag_that_does_not_exist(repo: Path) -> None:
+    append(repo, README, "```bash\npython preview.py --app x --nope 1\n```")
+
+
+def a_deleted_paired_claim(repo: Path) -> None:
+    path = repo / APP_SKILL
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("drop the flag", "keep the flag"), encoding="utf-8")
+
+
+def an_unregistered_open_ticket(repo: Path) -> None:
+    append(repo, README, "The rewrite is blocked on MAN-9999 and has not landed.")
+
+
+def a_stale_claims_line(repo: Path) -> None:
+    path = repo / "scripts" / "open-claims.txt"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("2026-09-09", "not-a-date", 1), encoding="utf-8")
+
+
+# The must-stay-green half.
+
+
+def teaching_the_tmp_lesson(repo: Path) -> None:
+    append(repo, README,
+           "Never write the build context to `/tmp/ctx.tar` - /tmp is shared.\n"
+           "Do not use /tmp/deploy.json either.")
+
+
+def a_per_run_tmp_path(repo: Path) -> None:
+    append(repo, README, "```bash\nrm -f /tmp/ctx-$$.tar\n```")
+
+
+def an_instruction_to_write_tests(repo: Path) -> None:
+    append(repo, README, "Write two tests for every capability you use.")
+
+
+def a_ticket_that_is_done(repo: Path) -> None:
+    append(repo, README,
+           "MAN-2532 is Done, but it was blocked on a missing runner for two days.")
+
+
+def a_path_in_the_readers_project(repo: Path) -> None:
+    append(repo, README,
+           "The scaffold lives in `scripts/deploy.sh` in YOUR project, not in this one.")
+
+
+def a_binary_file(repo: Path) -> None:
+    (repo / "templates" / "sample.bin").write_bytes(b"PK\x03\x04\x00\x01\x02\x03rest")
+
+
+REPO_MUTATIONS = [
+    ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
+    ("repo: a documented path that is not there", a_path_that_is_not_there,
+     "ghost-helper.py` does not exist"),
+    ("repo: a cited heading that is not there", a_heading_that_is_not_there,
+     "no heading matching"),
+    ("repo: a Step that does not exist", a_step_that_is_not_there, "Step 9"),
+    ("repo: a hardcoded test count", a_test_count, "hardcoded test count"),
+    ("repo: a control byte", a_control_byte, "control byte 0x08"),
+    ("repo: a fixed /tmp path", a_fixed_tmp_path, "/tmp is shared between sessions"),
+    ("repo: the token file un-gitignored", an_ungitignored_token_file,
+     "nothing here matches `.env.manaurum`"),
+    ("repo: a documented flag the tool rejects", a_flag_that_does_not_exist,
+     "does not accept --nope"),
+    ("repo: a paired claim contradicted", a_deleted_paired_claim,
+     "--virtual-time-budget"),
+    ("repo: an open ticket in no register", an_unregistered_open_ticket,
+     "MAN-9999 is still open"),
+    ("repo: a claims line with no date", a_stale_claims_line,
+     "no readable YYYY-MM-DD"),
+    ("repo-green: teaching the /tmp lesson", teaching_the_tmp_lesson, None),
+    ("repo-green: a per-run /tmp path", a_per_run_tmp_path, None),
+    ("repo-green: an instruction to write tests", an_instruction_to_write_tests, None),
+    ("repo-green: a ticket that is Done", a_ticket_that_is_done, None),
+    ("repo-green: a path in the reader's project", a_path_in_the_readers_project, None),
+    ("repo-green: a binary file", a_binary_file, None),
+]
+
+
 def run(linter: Path, target: Path):
     return subprocess.run([sys.executable, str(linter), str(target)],
                           capture_output=True, text=True)
+
+
+IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git",
+                                ".venv", "venv", "*.pyc")
 
 
 def sanity(problems: list) -> None:
@@ -238,6 +411,44 @@ def sanity(problems: list) -> None:
                             % (linter.name, done.stdout.strip()))
 
 
+def run_repo_mutation(name, mutate, expected, problems: list) -> None:
+    """One mutation against a COPY of the whole repository.
+
+    A copy, because check_repo.py resolves its root from its own `__file__` -
+    which is also what makes this honest: the copy's checker reads the copy's
+    documents, exactly as it would on a runner.
+    """
+    workdir = Path(tempfile.mkdtemp(prefix="mutation-repo-"))
+    repo = workdir / "repo"
+    try:
+        shutil.copytree(ROOT, repo, ignore=IGNORE)
+        mutate(repo)
+        done = run_no_arg(repo / "scripts" / "check_repo.py")
+        if expected is None:
+            if done.returncode != 0:
+                problems.append("%s: check_repo.py went RED on prose it should "
+                                "accept. It said:\n%s" % (name, done.stdout.strip()))
+            else:
+                print("ok  %s" % name)
+        elif done.returncode == 0:
+            problems.append("%s SURVIVED - check_repo.py said `clean` on it. That "
+                            "rule is not being checked." % name)
+        elif expected not in done.stdout:
+            problems.append("%s: check_repo.py went red but did not say %r. It "
+                            "said:\n%s" % (name, expected, done.stdout.strip()))
+        else:
+            print("ok  %s" % name)
+    except AssertionError as exc:
+        problems.append("%s: could not apply the mutation - %s" % (name, exc))
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def run_no_arg(script: Path):
+    return subprocess.run([sys.executable, str(script)],
+                          capture_output=True, text=True)
+
+
 def main() -> int:
     wanted = [arg.lower() for arg in sys.argv[1:]]
     problems = []
@@ -247,9 +458,15 @@ def main() -> int:
             print("x %s" % problem)
         return 1
 
+    ran = 0
+    for name, mutate, expected in REPO_MUTATIONS:
+        if wanted and not any(word in name.lower() for word in wanted):
+            continue
+        ran += 1
+        run_repo_mutation(name, mutate, expected, problems)
+
     cases = ([(CHECK_APP, "app", *case) for case in APP_MUTATIONS]
              + [(CHECK_UI, "ui", *case) for case in UI_MUTATIONS])
-    ran = 0
     for linter, kind, name, mutate, expected in cases:
         if wanted and not any(word in name.lower() for word in wanted):
             continue

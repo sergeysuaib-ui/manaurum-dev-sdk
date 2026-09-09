@@ -538,6 +538,13 @@ packs. Exit 0 or fix what it names.
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
 | `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
+| an invented key in `runtime` (`"prot": 8000`) | the `runtime` sub-object is not strict, so it validates, deploys green and is silently ignored — a debugging session rather than a 422 |
+| an `/agent/*` path listed in `api_routes` | nothing. It configures nothing while looking exactly like it did. |
+| a relative `frontend.icon` (`icons/app.svg`) | that literal string painted into the launcher tile |
+| an `mna_*`/`mnu_*` token literal anywhere in the directory | your deploy rights handed to every future reader of the image |
+| `metadata.description` still starting with `TODO` | what the tenant admin reads on the install screen |
+
+It also prints a **note** — not a failure — when the app has no tests at all.
 
 **What it cannot see.** Routes and `/agent/*` handlers are read out of
 **Python** decorators with `ast` — that is the starter's stack, and importing
@@ -568,6 +575,7 @@ The deploy is one API call plus a poll. Bundle the build context, base64-encode,
 ```bash
 cd my-app
 SLUG=$(jq -r .app_id manifest.json); WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT             # a failed curl must not leave the tar behind
 echo "deploying $SLUG $(jq -r .version manifest.json)"   # not your app? stop.
 
 tar cf "$WORK/ctx.tar" \

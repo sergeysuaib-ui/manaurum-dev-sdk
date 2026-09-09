@@ -82,7 +82,7 @@ cd my-app
 # `activated` for someone else's app while its own never went out (MAN-2456).
 SLUG=$(jq -r .app_id manifest.json)
 VERSION=$(jq -r .version manifest.json)
-WORK=$(mktemp -d)                      # per-run, never a shared path
+WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT   # per-run, cleaned on every exit
 echo "deploying $SLUG $VERSION"        # if that is not your app, stop here
 
 tar cf "$WORK/ctx.tar" \
@@ -385,7 +385,7 @@ zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
 
 # Via a file, not `--arg`: the bundle is far larger than the argv limit.
 # A per-run directory, never a fixed name: /tmp is shared between sessions.
-WORK=$(mktemp -d)
+WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 base64 < bundle.zip | tr -d '\n' > "$WORK/bundle.b64"
 jq -n --rawfile b "$WORK/bundle.b64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
   | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \

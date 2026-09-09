@@ -172,6 +172,13 @@ parts inlined. Reading one real app beats reading four pages about apps.
   `migration.breaking`. Routes are read out of Python decorators with `ast`; for another
   language it says so and skips those two rules rather than guessing.
   `python check_app.py my-app`, exit 1 on findings.
+* `scripts/check_repo.py` + `scripts/linter_mutations.py` + `scripts/smoke_tools.py` —
+  the plugin checking itself, run by CI on every PR. `check_repo.py` holds the documents
+  to the repository (one version string, every documented path and heading citation
+  resolves, no hardcoded self-counts, no control byte, no fixed `/tmp` path, no
+  documented flag the tool rejects); `linter_mutations.py` breaks the starter once per
+  rule and demands that each linter goes red; `smoke_tools.py` starts `preview.py` and
+  the version hook and checks they still behave. All stdlib, all runnable locally.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
   it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
   fixtures file, and frames the page the way the desktop shell does: the shell's exact
