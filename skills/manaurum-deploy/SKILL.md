@@ -462,7 +462,7 @@ if [ -f .env.manaurum ]; then
 fi
 
 if [ -z "${MANAURUM_V2_TOKEN:-}" ]; then
-  echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://manaurum.com (Dev Hub → v2 Tokens)."
+  echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://app.manaurum.com (Dev Hub → v2 Tokens)."
   echo "Save as MANAURUM_V2_TOKEN=mna_<...> in .env.manaurum"
   exit 1
 fi
