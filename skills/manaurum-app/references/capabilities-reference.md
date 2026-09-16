@@ -543,7 +543,7 @@ is `{"detail": {"error": …, …}}`, or `{"detail": "<code>"}` for the two stri
 
 | HTTP | `detail` / `detail.error` | Meaning | Retry? |
 |---|---|---|---|
-| 403 | `capability_not_granted` | The install is not granted this capability (gateway gate, above). It is on the **sensitive** list, so an install can be created with it withheld even though your manifest declares it. A grant screen is not yet available to tenant admins (MAN-2570); ask the platform operator. | no |
+| 403 | `capability_not_granted` | The install is not granted this capability (gateway gate, above). A redeploy never widens an existing install's grant, so a capability you added in a later version is missing; with strict grants switched on, this **sensitive** capability is withheld even at first install. A grant screen is not yet available to tenant admins (MAN-2570); ask the platform operator. | no |
 | 404 | `user_not_in_tenant` | `to_user_id` is not a member of your tenant. | no |
 | 412 | `in_app_unavailable`, `reason: app_not_live` | The platform found no live install of your app in this tenant (not deployed, disabled, or uninstalled), so it cannot deliver **any** in-app notification. | no — fix the install |
 | 412 | `in_app_unavailable`, `reason: app_slug_conflict` | Your `app_id` is also a built-in's or a catalogue app's, so the desktop could not tell your notifications from that app's. | no — redeploy under another `app_id` |
@@ -559,7 +559,9 @@ to your iframe — `payload` is `{}` when you sent no `link`. It arrives inside
 `manaurum:init` as `payload.deepLink` when the click opened your window, and as a
 `manaurum:deep-link` message when the window was already open. The platform does not
 navigate your iframe; route to `link` yourself. The v2 SDK does not surface either
-message (`sdk-api.md`), so add your own `message` listener.
+message (`sdk-api.md`), so add your own `message` listener — and attach it synchronously
+at startup: the shell sends the link once and then forgets it, so a listener registered
+later (in a React effect, after a fetch) never sees it.
 
 ---
 
