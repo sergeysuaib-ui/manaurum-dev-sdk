@@ -15,9 +15,10 @@ private half. Same algorithm, same issuer, same audience, no network.
 This starter declares `data: {"none": true}` and persists through
 `os.kv`, so there is no database fixture here. If your app uses the
 managed Postgres mode instead, the DB fixture to copy is in
-`references/reference-apps.md` § Testing — it applies your
-`migrations/*.sql` into a throwaway schema and skips cleanly when no
-DSN is configured.
+`templates/recipes/postgres/tests/` — it applies your `migrations/*.sql`
+into a throwaway schema, skips cleanly when no DSN is configured, and
+exercises the pool the way production uses it.
+`references/reference-apps.md` § Testing explains libi's version.
 """
 from __future__ import annotations
 

@@ -35,7 +35,15 @@
 
 <!-- One line per thing a person needs to accomplish, in their words.
      Each becomes a screen or an action. If a line needs the word "and",
-     it is probably two lines. -->
+     it is probably two lines.
+
+     After each line, in brackets, the kind of screen it needs:
+       (sorting)  going through records and acting on them - orders, tasks
+       (reading)  taking in text - posts, articles, documents, notes
+       (entering) putting something in - a form, a log entry, settings
+     "Find an old post about pricing and read it" is (reading), even though
+     it starts with a list. The kind decides the layout; getting it wrong is
+     how an app passes every check and still looks wrong. -->
 
 -
 

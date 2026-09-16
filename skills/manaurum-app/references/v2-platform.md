@@ -88,7 +88,7 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 
 | Field | Type | Notes |
 |---|---|---|
-| `data` | object | Storage mode. **Omit it and you get managed mode**, which provisions a Postgres schema + login role per (app, tenant) and needs `MANAURUM_DDL_DSN` on Core — a deploy that fails at `swarm_applying` if it isn't set. A stateless app (persists only via `os.kv` / `os.files`) must declare `{"none": true}`. Other modes: `{"byo": true}` (your own DSN, no isolation guarantees), `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`), `connection_cap`. `additionalProperties: false` on this sub-object. |
+| `data` | object | Storage mode. **Omit it and you get managed mode**, which provisions a Postgres schema + login role per (app, tenant) and needs `MANAURUM_DDL_DSN` on Core — a deploy that fails at `swarm_applying` if it isn't set. A stateless app (persists only via `os.kv` / `os.files`) must declare `{"none": true}`. Other modes: `{"byo": true}` (your own DSN, no isolation guarantees), `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`), `connection_cap`. `"extensions": ["vector", "pg_trgm"]` *requests* those two extensions for a managed schema — an operator must grant each one before it is provisioned, in a schema of its own (`ext_vector`, `ext_pg_trgm`); until then deploys succeed and a migration using its types fails per tenant. `additionalProperties: false` on this sub-object. |
 | `frontend` | object | `entry_point` (the URL the desktop shell loads in the app's window — normally `/index.html`; without it your app has no desktop window), `icon`, `bundle_path`, `window: {default_width, default_height}`. `frontend.icon` is an unconstrained string: an emoji works, so does an absolute URL or `/api/catalog/media/...` path. A **relative** path (`icons/app.svg`) is painted as literal text in the tile. Omit it entirely and the launcher serves a generic placeholder. |
 | `visibility` | object | `mode: "private" \| "public" \| "allow_list"`, optional `tenants: [uuid…]`. Default `private`. |
 | `platforms` | object | `desktop: {supported}` and `mobile: {supported, optimized, entrypoint, supportLevel, navigationPattern}`. Declare both explicitly. `platforms.mobile.entrypoint` is a separate HTTPS URL the shell loads on mobile devices. |
@@ -463,6 +463,10 @@ Consequences worth planning around:
 - **No `DO $$ … $$`** — expand the block into plain statements. This bites real apps: the first-party app Libi shipped a `DO $$` block in `migrations/0002` and needed a follow-up commit to drop it (MAN-1327).
 - **No `BEGIN` / `COMMIT`** — the runner owns the transaction.
 - An `ALTER TABLE` carrying several subcommands takes the **strictest** verdict across them: one destructive subcommand poisons the whole statement.
+- **`CREATE INDEX CONCURRENTLY` goes in a file of its own.** It is the only way to index a table an *earlier* migration created (plain `CREATE INDEX` there is destructive), and Postgres refuses it inside a transaction block — so the runner executes a file made only of `CONCURRENTLY` statements outside one, and **refuses a file that mixes them with anything else**. That path also runs without the 30s / 5s statement and lock timeouts, and a build that fails leaves an `INVALID` index behind that only a later (breaking) migration can drop.
+- **Spell out `LANGUAGE sql` or `LANGUAGE plpgsql`** on every `CREATE FUNCTION`. A function whose language the validator cannot read is `forbidden`, even when it is a one-line SQL body.
+- **The whole `migrations/` directory is capped at 64 KB.** Every deploy validates every file joined together, including the ones already applied. Seed data belongs in the app, not in a migration.
+- **Comments and string literals are not statements.** The validator parses; `-- never DROP anything` in a comment, or `DROP` inside a string or a function body, is not a `DROP`. `check_app.py` reads SQL the same way since SDK 2.12.0.
 
 For genuinely destructive work, set `migration.breaking: true` with a written `reason` — and remember it buys you the `destructive` tier only, never the `forbidden` one.
 
@@ -476,6 +480,14 @@ manaurum app validate-migration migrations/ --breaking            # mirrors migr
 
 It runs the exact same validator the deploy pipeline runs, so green here means green there.
 
+**What a refusal looks like.** The deploy job ends `failed` with
+`error: "migration validation failed (N disallowed statement[s]): <tier>: <reason>; …"`.
+For `destructive` statements the reason names the target (`ALTER TABLE DROP COLUMN notes`);
+for `forbidden` ones it names only the class (`SET — session/role/search_path manipulation`),
+and the statement text itself is not in the response. When the reason does not
+tell you which line it means, `manaurum app validate-migration` on the single
+file does, and `templates/check_app.py` names the file.
+
 ### Runtime is read/write, not DDL
 
 At runtime your container reads `DATABASE_URL` — a per-(app, tenant) `appusr_*` **login** role, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on exactly one schema plus `SELECT/INSERT/UPDATE/DELETE` on its objects. It holds **no `CREATE`**, so runtime DDL is impossible: a `CREATE TABLE IF NOT EXISTS` on boot — a common framework default — dies with `permission denied for schema app_<slug>__<hex>`. Schema changes happen only through `migrations/*.sql`.
@@ -483,6 +495,94 @@ At runtime your container reads `DATABASE_URL` — a per-(app, tenant) `appusr_*
 The role's `search_path` is locked to your schema, so write plain unqualified SQL. Your schema is already per-tenant, so there is no `tenant_id` column to filter on and no RLS to satisfy.
 
 **Your container serves exactly one tenant.** The platform runs a separate Swarm service per (app, tenant) — the service DNS name is derived from both — and injects a fixed `MANAURUM_TENANT_ID` that never changes for the life of that container. So process-local state (in-memory caches, module globals, connection pools) is already single-tenant: you do **not** need to key caches by tenant, and doing so adds complexity that buys nothing. What you must still not assume is that `sub` is stable-shaped — treat it as opaque TEXT (see the user-context section).
+
+### Connecting from the container
+
+Copy `templates/recipes/postgres/db.py`. It is short, and the one decision in
+it is the one that shipped wrong:
+
+```python
+_pool = await asyncpg.create_pool(
+    dsn=os.environ["DATABASE_URL"],
+    min_size=1, max_size=5, command_timeout=30,
+    server_settings={
+        "search_path": search_path(schema),   # '"app_…", pg_temp' — survives RESET ALL
+        "statement_timeout": "30s",
+    },
+    init=configure_connection,                # json/jsonb codecs only
+)
+```
+
+**Why `search_path` is a connection parameter and not a `SET`.** asyncpg runs
+`RESET ALL` on every connection it takes back into the pool. Anything set with
+`SET` — in `init=`, in a startup query — is gone after the first release, and
+the session falls back to the *role's* default. So a pool that does
+`SET search_path` in `init=` answers the first request on a fresh connection
+and fails the next one with `relation "…" does not exist`.
+
+In the cloud this hides, because the platform gives the app's role a default
+`search_path` of its own schema, and the reset lands back on it. On a plain
+local Postgres the role's default is `"$user", public`, so the bug fires
+exactly where you run the app by hand — which reads as "the platform is
+broken". A value in `server_settings` travels in the startup packet, and
+Postgres keeps it as the session's own default: `RESET ALL` restores it. No
+round trip per acquire. (`setup=` with a `SET` also works, and pays a round
+trip on every request.) `check_app.py` fails on `SET search_path` in `init=`.
+
+**The value is the platform's own:** the schema, one `ext_<name>` schema per
+extension in `data.extensions`, then `pg_temp`. `public` is not on the role's
+path in production, and nothing an app needs lives there —
+`gen_random_uuid()` and the text search configurations are in `pg_catalog`,
+which Postgres always searches. Because this value *replaces* the role's
+default, an extension you requested must be in the recipe's `EXTENSIONS`
+tuple, or its types stop resolving.
+
+Type codecs are not session state — they live in the asyncpg connection
+object — so `init=` is the right place for them. The recipe's tests
+(`templates/recipes/postgres/tests/`) run against a real Postgres and include
+the failing `init=` version, so the lesson cannot quietly rot. Point them at
+any local server:
+
+```bash
+MANAURUM_TEST_PG_DSN=postgresql://postgres:postgres@localhost:5432/postgres \
+  pytest templates/recipes/postgres
+```
+
+### Full-text search
+
+A content app needs search on its second day, and the obvious query makes the
+app look broken: `websearch_to_tsquery` joins words with AND, so a question
+typed the way people type — "why do clients leave after the first month" —
+needs every content word in one document and returns nothing. The recipe
+(`templates/recipes/postgres/search.py` and `migrations/`) does four things:
+
+1. **A generated, weighted `tsvector` column.** `setweight(…, 'A')` for the
+   title, `'B'` for tags, `'D'` for the body, so a title hit ranks first.
+   A generated column accepts only IMMUTABLE functions, and two common ones
+   are not: `array_to_string()` (wrap it in a one-line `LANGUAGE sql IMMUTABLE`
+   function — honest for `text[]`) and the one-argument `to_tsvector(text)`
+   (always write `to_tsvector('russian', …)`). Postgres refuses both with
+   `generation expression is not immutable`; `check_app.py` catches them first.
+2. **A GIN index.** In the same file as `CREATE TABLE`, a plain
+   `CREATE INDEX … USING gin`. On a table an earlier migration created,
+   `CREATE INDEX CONCURRENTLY` in a file of its own (above).
+3. **Strict, then relaxed.** The query as typed first. If it finds nothing,
+   the same words joined with `or` — still `websearch_to_tsquery`, which never
+   raises on odd input — ranked by `ts_rank_cd`, so documents matching more of
+   the words come first. The response says which one answered (`mode`), and the
+   screen should too: "no post has all of these words — these have some of
+   them". Paging passes the mode back, so page two answers page one's question.
+4. **A snippet that is safe to insert.** `ts_headline` returns the document's
+   own text with markers around the hits, and that text came from people.
+   It is not a sanitiser: it drops what its parser takes for a whole tag and
+   passes a fragment like `<img src=x onerror=alert` straight through. The
+   recipe uses control characters as markers, HTML-escapes the snippet, and
+   only then turns the markers into `<mark>` — and runs `ts_headline` on the
+   returned page only, because it re-parses every document it is given.
+
+`russian`, `english` and `simple` are built into Postgres and live in
+`pg_catalog`. The configuration in the query must be the one the column was
+built with, or query words are stemmed differently from indexed ones.
 
 ### `migrate_command` does nothing
 

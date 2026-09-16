@@ -1,3 +1,169 @@
+# 2.12.0 — screens people read, and a database template that lasts past one request
+
+### Why
+
+A third app in a row was rejected on sight: dindex-kb, a knowledge base over
+1679 selected posts, built on 2.8.0. It passed every technical check, its own
+copy of the UI linter said clean, and the deploy was green on the first try.
+Its author's report is worth reading for the mechanism, not the miss.
+
+**The rules were obeyed, and the screen was still the wrong kind of screen.**
+The author copied the shape of a working app, as the skill says to — a
+meeting-triage app — and a reader came out looking like a ledger: `.row-meta`
+on the right, a title one typographic step above its caption, thirteen
+category filters built from `.btn-ghost`. Nothing in the SDK named the
+difference between an app you read and an app you sort through, and
+`app.css` had nothing for the first kind at all. So the only classes to
+reach for were the triage ones.
+
+**Each rule was followed to the letter and still failed in spirit.**
+"One primary button per view" held while more than twenty accent-coloured
+things sat on the first screen, because filters had no pattern and
+`.btn-ghost` is accent. "A badge is a word" held for a badge on 816 rows of
+1679.
+
+**Looking at the screenshot did not work.** Step 3.5 was done: pictures
+taken, looked at, criticised out loud — against the list of prohibitions,
+which was not broken. Every mistake the owner then named was in that first
+picture.
+
+And one finding that has nothing to do with design and would have cost the
+most: the `db.py` several apps were copied from sets `search_path` with `SET`
+in the asyncpg pool's `init=`. asyncpg runs `RESET ALL` on every release, so
+the setting lasts one request. In the cloud the role's default search_path
+hides it; on any other Postgres the second request fails with
+`relation ... does not exist` — exactly when the author ran the app locally
+for Step 3.5. The platform team had found and fixed it in three apps
+(MAN-1443); the SDK had no database template at all, so the broken one kept
+being copied.
+
+The report was written against 2.8.0 while 2.11.0 was current, and it offered
+back a `check_ui.py` — which the SDK has shipped since 2.9.0. The version
+hook that exists for this did not reach that machine.
+
+### What changed
+
+**`references/design.md` — "What kind of screen is it".** Three kinds —
+sorting, reading, entering — with what must look most important in each and
+which classes build it. The difference is type scale, not palette. Two tells
+that you picked the wrong one, and a caution about copying: copy a backend
+from any app, a layout only from an app of the same kind. **Step 0** now asks
+for the kind of every screen, and `BRIEF.md` §2 records it next to each line.
+
+**`app.css` gained the half it was missing**, every class mobile-aware:
+
+* `.row.row-text` with `.row-headline` (17/600, wraps to two lines),
+  `.row-excerpt` (two lines) and `.row-foot` (metadata under the text,
+  middle-dot separated) — a row for texts, where the headline is the content;
+* `.reader`, `.article-title`, `.article-meta`, `.lead`, `.prose`, `.pull` —
+  one text on its own screen, in a 68ch column, paragraphs at the OS's own
+  `--lh-relaxed` (1.7), now a token here too;
+* `.chips` / `.chip` / `.chip-n` — filters that are quiet until chosen; only
+  the selected one is accent, solid with `--accent-contrast` so teal and
+  amber stay legible; on mobile the row scrolls sideways instead of wrapping;
+* `.toolbar > .field` takes the free width. The forms rule asks for a label
+  around every input, and the toolbar rule only worked for a bare input — the
+  two contradicted each other and the input collapsed;
+* `.row-meta` is capped and truncates, so a long value cannot eat the row;
+* `a` takes the accent instead of the browser's `#0000ee`.
+
+**`templates/patterns/index.html` (new)** — the two kinds of screen the
+starter does not show, built only from those classes: a list of texts with
+chips and a labelled search field, one article, and a list of records to sort
+through with one badge on the one row that needs it. `check_ui.py` holds it to
+the same contract as the starter.
+
+**Accent has a budget, and three places count it.** The seven rules keep
+their number; rule 4 now reads "one primary button per view, and at most four
+accent-coloured things on the first screen", rule 3 adds "and it marks the
+few". `design.md` gained "Accent is a pointer, not a paint" and four `Never`
+rows. Then:
+
+* `check_ui.py` fails on an accent class (`btn-primary`, `btn-ghost`,
+  `badge-accent`) set inside a render loop — the thirteen-blue-buttons shape
+  — and on more than four accent classes in one view of `index.html`. Toggling
+  `.is-on` / `aria-pressed` over a chip group in a loop stays green, because
+  that is the right way to do it;
+* `preview.py` measures the **rendered** first screen and prints it in the
+  bar every screenshot carries: how many elements paint the accent (red above
+  four), whether one badge sits on more than half the rows of a list (red),
+  and how far down the first list row starts (information). Its first version
+  counted 0 on a teal screen with two teal buttons: the shell's accent arrives
+  after first paint, `.btn` fades into it, and headless Chrome was still
+  mid-transition. It now switches transitions off for the measurement;
+* `smoke_tools.py` drives a real headless Chrome through it: the patterns page
+  must read green and a copy with thirteen ghost filters and a badge on every
+  row must read red on both counts.
+
+**Step 3.5 has a questionnaire.** `templates/design-review.md` — five
+questions answered in writing, per screen, with the answers in the reply:
+what matters most and does it look it; how many accent things; does a row
+survive with its metadata covered; how much of the first screen precedes the
+data; and is this screen laid out as the kind it is. The last one is the one
+that would have caught this app.
+
+**`templates/recipes/postgres/` (new) — the database template the SDK never
+had.**
+
+* `db.py` — the pool passes `search_path` in `server_settings`, which travels
+  in the startup packet and which `RESET ALL` restores rather than clears. The
+  value is the platform's own for the role — schema, `ext_<name>` per
+  requested extension, `pg_temp` — so names resolve identically on a laptop
+  and in production. Codecs stay in `init=`, because they are not session
+  state.
+* `search.py` + three migrations — a weighted generated `tsvector`
+  (`array_to_string` wrapped in an IMMUTABLE SQL function, `to_tsvector` with
+  its configuration spelled out), a GIN index added `CONCURRENTLY` in a file of
+  its own, a strict query that falls back to any-of-the-words instead of
+  answering a question with zero and says it did, and a `ts_headline` snippet
+  escaped *before* it is highlighted. `ts_headline` is not a sanitiser: on
+  Postgres 16 it drops whole tags and passes `<img src=x onerror=alert`
+  through untouched, which the test now pins.
+* `tests/` — against a real Postgres, including the broken `init=` version,
+  which must fail on the second acquire. A new **postgres** CI job runs them
+  on `postgres:16-alpine`, with a flag that turns a missing DSN into an error,
+  because a green job made of skips is the failure it exists to catch.
+
+**`check_app.py` learned what the recipe had to learn:**
+
+* `SET search_path` reached from `create_pool(init=...)` — through a lambda or
+  a factory — with no `setup=` or `server_settings`;
+* code that reads `DATABASE_URL` while the manifest says `"data": {"none": true}`;
+* `CREATE INDEX CONCURRENTLY` in a file with anything else — the runner
+  refuses that file;
+* a generated column on `array_to_string()`, one-argument `to_tsvector()`,
+  `now()` and friends;
+* more than 64 KB of SQL in `migrations/` — the deploy validates every file
+  joined together, applied or not;
+* and it now reads SQL the way the deploy's parser does. A `-- never DROP
+  TABLE` comment was already skipped; a `DROP` inside a string literal or a
+  function body was not, and `DO $body$` escaped the anonymous-block rule.
+
+`linter_mutations.py` covers each new rule in both directions: a mutation that
+must go red, and three pieces of correct code — the recipe itself, `setup=`
+carrying the `SET`, SQL words inside comments, strings and bodies — that must
+stay green. The harness now accepts a green expectation for app and UI cases,
+not only for the repository checker.
+
+**`references/v2-platform.md`** gained "Connecting from the container" and
+"Full-text search", `data.extensions`, and four migration facts read out of
+the runner: `CONCURRENTLY` only in a file of its own (and without the 30s / 5s
+timeouts), `LANGUAGE` spelled out on every function, the 64 KB cap on the
+whole directory, and what a refusal looks like — including that for a
+`forbidden` statement the deploy names the class but not the statement, and
+`manaurum app validate-migration` on the file does. The report's suspicion
+that the validator reads comments is not true of the platform: it parses.
+
+**Also fixed.**
+
+* The starter's cards touched. `.app` spaced its own children, and once the
+  router arrived in 2.9.0 its only child was the view. `.app > [data-view]`
+  now has the same rhythm.
+* `design.md`'s pattern table named neither `.card-flush` nor `.card-head`,
+  though the starter uses both; it now lists every class `app.css` ships.
+* `reference-apps.md` says what none of the three apps is (a reader), and why
+  libi's `SET search_path` is fine in a test fixture and wrong in a pool.
+
 # 2.11.0 — the backend contract gets a program that checks it (MAN-2533)
 
 ### Why

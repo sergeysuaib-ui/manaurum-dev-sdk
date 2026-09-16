@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>patterns</title>
+
+<!--
+  THE TWO OTHER KINDS OF SCREEN, next to the starter's form-and-records one.
+
+  `design.md` -> "What kind of screen is it" names three kinds: sorting,
+  reading, entering. The starter shows entering and a short record list. This
+  page shows the other two as they should look, built only from classes in
+  the starter's app.css:
+
+    #library   a list of TEXTS: chips to filter, a search field with a label,
+               rows with a headline, an excerpt and metadata underneath
+    #post      one text on its own screen: .reader, .article-title, .lead,
+               .prose, .pull
+    #orders    a list of RECORDS to go through: .row-title / .row-sub /
+               .row-meta, a status badge on the few rows that need it
+
+  Copy the markup, not the words. It is not part of any app and is not
+  deployed; it exists so the shape you copy is a shape made for your kind of
+  screen. Look at it framed, from the templates directory:
+
+    python templates/preview.py --app templates
+    http://127.0.0.1:8765/__shell?entry=/patterns/index.html%23library
+
+  The <head> script is the starter's, shortened: handshake, appearance,
+  device. A real app copies the starter's whole block.
+-->
+<script>
+  (function () {
+    var root = document.documentElement;
+    var framed = false;
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+    root.dataset.appearance = media.matches ? 'dark' : 'light';
+    window.__device = 'desktop';
+
+    window.addEventListener('message', function (event) {
+      var data = event.data;
+      if (!data || typeof data.type !== 'string') return;
+      var payload = data.payload || {};
+      if (data.type === 'manaurum:init' || data.type === 'manaurum:theme-change') {
+        framed = true;
+        if (payload.appearance) root.dataset.appearance = payload.appearance;
+        if (payload.accent) root.dataset.accent = payload.accent;
+      }
+      if ((data.type === 'manaurum:init' || data.type === 'manaurum:device-change') && payload.device) {
+        window.__device = payload.device;
+        if (document.body) document.body.dataset.device = payload.device;
+      }
+      if (data.type === 'manaurum:init') {
+        event.source.postMessage({ type: 'manaurum:ready' }, event.origin);
+      }
+    });
+  })();
+</script>
+
+<link rel="stylesheet" href="../v2-starter/src/static/app.css" />
+</head>
+
+<body>
+  <div class="app">
+
+    <!-- READING, the list. The headline is the content, so it is the biggest
+         thing in the row and it wraps instead of truncating. Date, topic and
+         length sit UNDER the text: they vary in length, and on the right
+         they would make a jagged edge and squeeze the headline. -->
+    <div data-view="library">
+      <header class="page-header">
+        <div>
+          <h1>Field notes</h1>
+          <p class="subtitle">412 posts from the team channel, searchable.</p>
+        </div>
+      </header>
+
+      <div>
+        <div class="toolbar">
+          <!-- The forms rule still holds in a toolbar: a label exists, it is
+               just not shown. `.toolbar > .field` takes the free width. -->
+          <div class="field">
+            <label class="field-label sr-only" for="q">Search posts</label>
+            <input class="input" id="q" type="search" placeholder="Search posts" />
+          </div>
+        </div>
+
+        <!-- Filters. Quiet until chosen; only the chosen one is accent.
+             Seven, not thirteen: the rest would go behind a <select>. -->
+        <div class="chips" role="group" aria-label="Topic" id="topics">
+          <button class="chip" type="button" aria-pressed="true">All <span class="chip-n">412</span></button>
+          <button class="chip" type="button" aria-pressed="false">Sales <span class="chip-n">96</span></button>
+          <button class="chip" type="button" aria-pressed="false">Pricing <span class="chip-n">71</span></button>
+          <button class="chip" type="button" aria-pressed="false">Hiring <span class="chip-n">58</span></button>
+          <button class="chip" type="button" aria-pressed="false">Suppliers <span class="chip-n">44</span></button>
+          <button class="chip" type="button" aria-pressed="false">Customers <span class="chip-n">39</span></button>
+          <button class="chip" type="button" aria-pressed="false">More&hellip;</button>
+        </div>
+      </div>
+
+      <section class="card card-flush">
+        <ul class="list" id="posts">
+          <li class="row row-text is-interactive" data-id="leave" tabindex="0">
+            <div class="row-main">
+              <span class="row-headline">Why clients leave after the first month, and the one reason we can fix</span>
+              <span class="row-excerpt">Three patterns in forty cancellations. Two are about price and fit; the third is that nobody called them in week two.</span>
+              <span class="row-foot"><span>12 Mar</span><span>Customers</span><span>4 min</span></span>
+            </div>
+          </li>
+          <li class="row row-text is-interactive" data-id="margin" tabindex="0">
+            <div class="row-main">
+              <span class="row-headline">Margin per order is not margin per customer</span>
+              <span class="row-excerpt">The same basket earns twice as much from a regular as from a first-timer once delivery and returns are counted.</span>
+              <span class="row-foot"><span>9 Mar</span><span>Pricing</span><span>6 min</span></span>
+            </div>
+          </li>
+          <li class="row row-text is-interactive" data-id="supplier" tabindex="0">
+            <div class="row-main">
+              <span class="row-headline">What to ask a new supplier before the first pallet</span>
+              <span class="row-excerpt">Lead times, who pays for a short delivery, and the question that saved us in January.</span>
+              <span class="row-foot"><span>4 Mar</span><span>Suppliers</span><span>3 min</span><span class="badge">new</span></span>
+            </div>
+          </li>
+          <li class="row row-text is-interactive" data-id="hiring" tabindex="0">
+            <div class="row-main">
+              <span class="row-headline">A trial shift tells you more than two interviews</span>
+              <span class="row-excerpt">How we run one, what we pay for it, and the three things we watch for.</span>
+              <span class="row-foot"><span>28 Feb</span><span>Hiring</span><span>5 min</span></span>
+            </div>
+          </li>
+          <li class="row row-text is-interactive" data-id="discounts" tabindex="0">
+            <div class="row-main">
+              <span class="row-headline">Discounts that brought people back, and the ones that only cost money</span>
+              <span class="row-excerpt">A year of promo codes, sorted by how many people ordered again without one.</span>
+              <span class="row-foot"><span>21 Feb</span><span>Sales</span><span>7 min</span></span>
+            </div>
+          </li>
+          <li class="row row-text is-interactive" data-id="calls" tabindex="0">
+            <div class="row-main">
+              <span class="row-headline">The five-minute call script</span>
+              <span class="row-excerpt">What to say when a regular has not ordered for three weeks.</span>
+              <span class="row-foot"><span>14 Feb</span><span>Customers</span><span>2 min</span></span>
+            </div>
+          </li>
+        </ul>
+      </section>
+    </div><!-- /view: library -->
+
+    <!-- READING, one text. No card: the text is the surface. A reading
+         screen has almost no accent - the back link and the links in the
+         text. The pulled quote is grey on purpose. -->
+    <div data-view="post" hidden>
+      <article class="reader">
+        <!-- The way back sits in the text column, not at the window edge:
+             on a wide window the two would be a screen apart. -->
+        <div class="toolbar">
+          <a class="btn btn-ghost" href="#library">&larr; All posts</a>
+        </div>
+        <h1 class="article-title">Why clients leave after the first month, and the one reason we can fix</h1>
+        <p class="article-meta"><span>12 March 2026</span><span>Customers</span><span>4 min read</span></p>
+        <p class="lead">We read forty cancellation notes side by side. Most reasons were out of our hands. One was not, and it costs a phone call.</p>
+        <div class="prose">
+          <p>Every cancellation note since September went into one table: when the customer joined, how many orders they placed, what they wrote when they left. Forty of them, and three patterns.</p>
+          <h2>Price and fit</h2>
+          <p>Half left because the product was not for them, or not at that price. That is a question for the landing page, not for the first month, and <a href="#library">the pricing notes</a> cover it.</p>
+          <blockquote class="pull">
+            Nobody asked how the first two weeks went. I assumed nobody would notice if I stopped.
+            <cite>one of the forty</cite>
+          </blockquote>
+          <h2>Silence in week two</h2>
+          <p>The rest had one thing in common: no contact between the welcome message and the first invoice. The customers who got a call in week two stayed at three times the rate.</p>
+          <ul>
+            <li>Call on day ten, not day thirty.</li>
+            <li>Ask one question: what almost made you stop?</li>
+            <li>Write the answer down where the next person will see it.</li>
+          </ul>
+          <p>That is the whole change. It is in the call script from February.</p>
+        </div>
+      </article>
+    </div><!-- /view: post -->
+
+    <!-- SORTING. Records, so the old row is right: the name is a label, it
+         truncates, and short even values (an amount, a date) hug the right.
+         One badge, on the one row that needs a decision. One primary. -->
+    <div data-view="orders" hidden>
+      <header class="page-header">
+        <div>
+          <h1>Orders</h1>
+          <p class="subtitle">This week, oldest first.</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" type="button">New order</button>
+        </div>
+      </header>
+
+      <div class="chips" role="group" aria-label="Status">
+        <button class="chip" type="button" aria-pressed="true">Open <span class="chip-n">7</span></button>
+        <button class="chip" type="button" aria-pressed="false">Delivered <span class="chip-n">23</span></button>
+        <button class="chip" type="button" aria-pressed="false">Cancelled <span class="chip-n">2</span></button>
+      </div>
+
+      <section class="card card-flush">
+        <ul class="list">
+          <li class="row is-interactive" data-id="312" tabindex="0">
+            <div class="row-main"><span class="row-title">Ivanova Maria</span><span class="row-sub">#312 &middot; 4 items &middot; pickup</span></div>
+            <span class="badge badge-danger">overdue</span>
+            <span class="row-meta">2 480 ₽</span>
+          </li>
+          <li class="row is-interactive" data-id="313" tabindex="0">
+            <div class="row-main"><span class="row-title">Petrov Alexei</span><span class="row-sub">#313 &middot; 1 item &middot; delivery</span></div>
+            <span class="row-meta">890 ₽</span>
+          </li>
+          <li class="row is-interactive" data-id="314" tabindex="0">
+            <div class="row-main"><span class="row-title">Kafe Solnce</span><span class="row-sub">#314 &middot; 12 items &middot; delivery</span></div>
+            <span class="row-meta">14 200 ₽</span>
+          </li>
+          <li class="row is-interactive" data-id="315" tabindex="0">
+            <div class="row-main"><span class="row-title">Sidorova Anna</span><span class="row-sub">#315 &middot; 2 items &middot; pickup</span></div>
+            <span class="row-meta">1 150 ₽</span>
+          </li>
+          <li class="row is-interactive" data-id="316" tabindex="0">
+            <div class="row-main"><span class="row-title">Orlov Dmitry</span><span class="row-sub">#316 &middot; 3 items &middot; delivery</span></div>
+            <span class="row-meta">3 040 ₽</span>
+          </li>
+          <li class="row is-interactive" data-id="317" tabindex="0">
+            <div class="row-main"><span class="row-title">Studio Linia</span><span class="row-sub">#317 &middot; 6 items &middot; delivery</span></div>
+            <span class="row-meta">7 600 ₽</span>
+          </li>
+          <li class="row is-interactive" data-id="318" tabindex="0">
+            <div class="row-main"><span class="row-title">Morozov Ilya</span><span class="row-sub">#318 &middot; 1 item &middot; pickup</span></div>
+            <span class="row-meta">420 ₽</span>
+          </li>
+        </ul>
+      </section>
+    </div><!-- /view: orders -->
+
+  </div>
+
+<script>
+  document.body.dataset.device = window.__device;
+
+  // A chip group is single-choice here: one handler per group, and the state
+  // lives in aria-pressed, which is also what paints it.
+  document.querySelectorAll('.chips').forEach(function (group) {
+    group.addEventListener('click', function (e) {
+      var chip = e.target.closest('.chip');
+      if (!chip) return;
+      group.querySelectorAll('.chip').forEach(function (c) {
+        c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');
+      });
+    });
+  });
+
+  document.getElementById('posts').addEventListener('click', function (e) {
+    var row = e.target.closest('.row[data-id]');
+    if (row) location.hash = 'post';
+  });
+
+  var views = Array.prototype.slice.call(document.querySelectorAll('[data-view]'));
+  function route() {
+    var name = location.hash.slice(1).split('/')[0];
+    var known = views.some(function (el) { return el.dataset.view === name; });
+    views.forEach(function (el) { el.hidden = el.dataset.view !== (known ? name : 'library'); });
+  }
+  window.addEventListener('hashchange', route);
+  route();
+</script>
+</body>
+</html>

@@ -27,6 +27,16 @@ shell sent — an app that reads `e.data.appearance` instead of
 `e.data.payload.appearance` answers the handshake perfectly and still renders
 light inside a dark desktop.
 
+It also measures the first screen of the rendered app, because these are the
+failures a rule list does not name and a hurried look does not see:
+
+* how many elements are painted in the accent - more than four is red. One
+  primary button beside a dozen accent filters is still a screen where
+  nothing stands out;
+* whether one badge sits on more than half the rows of a list - red. A
+  status on most rows is wallpaper;
+* how far down the first list row starts - information, not a verdict.
+
 `?width=` / `?height=` size the app's frame inside a large browser window.
 Both headless browsers floor their OWN viewport at ~500px, so this is the only
 honest way to photograph the narrow layout the design contract is written for.
@@ -109,13 +119,14 @@ SHELL_PAGE = """<!doctype html>
   html, body { height: 100%; margin: 0; }
   body { display: flex; flex-direction: column; background: var(--desk); color: var(--hud-fg);
          font: 12px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
-  .hud { flex: none; display: flex; align-items: center; gap: 14px; padding: 6px 12px;
+  .hud { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 6px 12px;
          background: var(--hud-bg); border-bottom: 1px solid var(--line); }
   .hud b { font-weight: 600; }
-  .pill { padding: 2px 9px; border-radius: 999px; font-weight: 600; }
+  .pill { padding: 2px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
   .pill-wait { background: rgba(128,128,128,.25); }
   .pill-ok { background: rgba(48,209,88,.22); color: var(--ok-fg); }
   .pill-bad { background: #d0342c; color: #fff; }
+  .pill-info { background: rgba(128,128,128,.14); }
   .frame { flex: 1; min-height: 0; display: flex; justify-content: center;
            align-items: stretch; overflow: auto; }
   iframe { flex: 1; width: 100%; height: 100%; border: 0; background: transparent; }
@@ -136,6 +147,9 @@ SHELL_PAGE = """<!doctype html>
     <span __SIZE_HIDDEN__>size <b>__SIZE_LABEL__</b></span>
     <span id="handshake" class="pill pill-wait">waiting for manaurum:ready...</span>
     <span id="themecheck" class="pill pill-wait">checking appearance...</span>
+    <span id="accentcheck" class="pill pill-wait">counting accent...</span>
+    <span id="badgecheck" class="pill pill-wait" hidden></span>
+    <span id="foldcheck" class="pill pill-info" hidden></span>
   </div>
   <div class="frame __SIZED__">
     <!-- The shell's own sandbox, verbatim: no allow-modals, so alert() /
@@ -179,13 +193,151 @@ SHELL_PAGE = """<!doctype html>
     }
   }
 
+  // Three numbers about the FIRST SCREEN of the frame, measured off the
+  // rendered page rather than the source, so they are in every screenshot and
+  // nobody has to remember to count. They are the questions a rule list does
+  // not ask: is anything allowed to stand out, does a badge mark the few rows
+  // it should, and how far down does the content start.
+  var ACCENT_BUDGET = 4;
+  var NONE = 'rgba(0, 0, 0, 0)';
+
+  function resolved(doc, win, prop, token) {
+    // `var(--x, transparent)`: an app with no such token reads as "none"
+    // instead of inheriting the text colour and counting every word.
+    var probe = doc.createElement('span');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText = 'position:absolute;visibility:hidden;' + prop +
+                          ':var(' + token + ', transparent)';
+    doc.body.appendChild(probe);
+    var style = win.getComputedStyle(probe);
+    var value = prop === 'color' ? style.color : style.backgroundColor;
+    probe.remove();
+    return value;
+  }
+
+  function ownText(el) {
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3 && n.nodeValue.trim()) return true;
+    }
+    return false;
+  }
+
+  function measure() {
+    var doc = null;
+    try { doc = app.contentDocument; } catch (err) { doc = null; }
+    if (!doc || !doc.body) return;
+    var win = app.contentWindow;
+    var height = win.innerHeight;
+    // A colour mid-transition is neither the old accent nor the new one, and a
+    // headless browser can leave it there: the shell's accent arrives after
+    // first paint, so every .btn fades from blue. Measured on Chrome: teal
+    // counted 0. Switching transitions off lands every element on its final
+    // value before we read it.
+    var freeze = doc.createElement('style');
+    freeze.textContent = '*, *::before, *::after { transition: none !important; }';
+    doc.head.appendChild(freeze);
+    void doc.body.offsetHeight;
+    var accent = resolved(doc, win, 'color', '--accent');
+    var soft = resolved(doc, win, 'background-color', '--accent-soft');
+    var pill = document.getElementById('accentcheck');
+
+    // 1. Accent. An element counts when it paints the accent itself: as a
+    // background, or as the colour of text it holds directly. Search hits
+    // (`mark`) and links inside running text are emphasis, not interface.
+    var count = 0;
+    if (accent === NONE) {
+      pill.className = 'pill pill-info';
+      pill.textContent = 'accent: no --accent token to measure';
+    } else {
+      var all = doc.body.getElementsByTagName('*');
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.tagName === 'MARK' || el.closest('.prose')) continue;
+        var box = el.getBoundingClientRect();
+        if (box.width < 1 || box.height < 1 || box.bottom <= 0 || box.top >= height) continue;
+        var cs = win.getComputedStyle(el);
+        if (cs.visibility !== 'visible' || cs.opacity === '0') continue;
+        if (cs.backgroundColor === accent || (soft !== NONE && cs.backgroundColor === soft) ||
+            (cs.color === accent && ownText(el))) {
+          count++;
+        }
+      }
+      var over = count > ACCENT_BUDGET;
+      pill.className = over ? 'pill pill-bad' : 'pill pill-ok';
+      pill.textContent = over
+        ? 'accent ' + count + ' on the first screen - ' + ACCENT_BUDGET + ' at most'
+        : 'accent ' + count + ' on the first screen';
+    }
+    document.body.setAttribute('data-accent-count', String(count));
+    freeze.remove();
+
+    // 2. Badges. A badge that sits on most rows of a list has stopped being a
+    // status. Only visible lists long enough for the share to mean something.
+    var worst = null;
+    var lists = doc.querySelectorAll('.list');
+    var measured = 0;
+    for (var l = 0; l < lists.length; l++) {
+      var rows = [];
+      for (var c = lists[l].firstElementChild; c; c = c.nextElementSibling) {
+        if (c.classList.contains('row') && c.getClientRects().length) rows.push(c);
+      }
+      if (rows.length < 6) continue;
+      measured++;
+      var tally = {};
+      rows.forEach(function (row) {
+        var seen = {};
+        row.querySelectorAll('.badge').forEach(function (b) {
+          var word = b.textContent.trim().toLowerCase();
+          if (word && !seen[word]) { seen[word] = 1; tally[word] = (tally[word] || 0) + 1; }
+        });
+      });
+      Object.keys(tally).forEach(function (word) {
+        var share = tally[word] / rows.length;
+        if (share > 0.5 && (!worst || share > worst.share)) {
+          worst = { word: word, n: tally[word], of: rows.length, share: share };
+        }
+      });
+    }
+    var badge = document.getElementById('badgecheck');
+    if (worst) {
+      badge.hidden = false;
+      badge.className = 'pill pill-bad';
+      badge.textContent = 'badge "' + worst.word + '" on ' + worst.n + ' of ' + worst.of +
+                          ' rows - a status is for the few';
+      document.body.setAttribute('data-badge-flood', worst.word);
+    } else if (measured) {
+      badge.hidden = false;
+      badge.className = 'pill pill-ok';
+      badge.textContent = 'badges mark the few';
+      document.body.removeAttribute('data-badge-flood');
+    }
+
+    // 3. Where the content starts. Information, not a verdict: a form can
+    // rightly come first. On a list screen, filters above the fold are the
+    // question to ask.
+    var fold = document.getElementById('foldcheck');
+    var first = doc.querySelectorAll('.list > .row');
+    for (var r = 0; r < first.length; r++) {
+      var top = first[r].getBoundingClientRect();
+      if (top.height > 0) {
+        fold.hidden = false;
+        fold.textContent = top.top >= height
+          ? 'first list row: below the first screen'
+          : 'first list row at ' + Math.round(100 * top.top / height) + '% of the window';
+        break;
+      }
+    }
+  }
+
   app.addEventListener('load', function () {
     app.contentWindow.postMessage({ type: 'manaurum:init', payload: INIT }, location.origin);
     setTimeout(checkTheme, 400);
+    setTimeout(measure, 600);
     // The real shell waits 10s and then covers the app with "App is not
     // responding". Three seconds is enough to put the failure in a screenshot.
     setTimeout(function () {
       checkTheme();
+      measure();
       if (ready) return;
       badge.className = 'pill pill-bad';
       badge.textContent = 'NO manaurum:ready - the shell would cover this app';

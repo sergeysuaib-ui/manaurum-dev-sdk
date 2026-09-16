@@ -74,8 +74,27 @@ RUNTIME_KEYS = {"mode", "port", "api_routes", "egress_allowed_hosts",
 # Long enough not to match `mna_*`, `mna_<...>` or `mna_…` in a comment that is
 # telling you not to do this.
 TOKEN_LITERAL = re.compile(r"\bmn[au]_[A-Za-z0-9]{16,}")
-SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
-DOLLAR_BLOCK = re.compile(r"(?i)\bDO\s*\$\$")
+# `DO $$`, `DO $body$` and `DO LANGUAGE plpgsql $$` are all the same refusal.
+DOLLAR_BLOCK = re.compile(r"(?i)\bDO\s+(?:LANGUAGE\s+\w+\s+)?\$[A-Za-z_]*\$")
+DOLLAR_QUOTE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+CONCURRENTLY = re.compile(r"(?i)\bCONCURRENTLY\b")
+GENERATED_AS = re.compile(r"(?i)\bGENERATED\s+ALWAYS\s+AS\s*\(")
+# What Postgres refuses in a generated column, as people actually write it.
+# `to_tsvector(title)` reads default_text_search_config and is STABLE;
+# `to_tsvector('russian', title)` is IMMUTABLE. After `sql_code()` a literal
+# is `''`, so "no configuration" is "the first argument is not a quote".
+NOT_IMMUTABLE = (
+    (re.compile(r"(?i)\barray_to_string\s*\("), "array_to_string()"),
+    (re.compile(r"(?i)\bto_tsvector\s*\(\s*[^'\s]"), "to_tsvector() without a configuration"),
+    (re.compile(r"(?i)\b(?:now|clock_timestamp|statement_timestamp|random)\s*\("),
+     "a time or random function"),
+    (re.compile(r"(?i)\bcurrent_(?:date|time|timestamp)\b"), "current_date/current_timestamp"),
+)
+# The deploy validates every migration file joined into one text, on every
+# deploy, applied or not - so this is a cap on the whole directory.
+MIGRATIONS_MAX_BYTES = 64 * 1024
+SET_SEARCH_PATH = re.compile(r"(?i)\bSET\s+(?:SESSION\s+)?search_path\b")
+READS_DATABASE_URL = re.compile(r"""(?:environ|getenv|env)[\w.\[(\s"']{0,8}DATABASE_URL""")
 DESTRUCTIVE = (
     (re.compile(r"(?i)\bDROP\s+(TABLE|SCHEMA|DATABASE|TYPE|SEQUENCE)\b"), "DROP"),
     (re.compile(r"(?i)\bDROP\s+COLUMN\b"), "DROP COLUMN"),
@@ -501,6 +520,14 @@ def check_migrations(root: Path, manifest: dict, problems: list) -> None:
         return
     breaking = bool(manifest.get("migration", {}).get("breaking"))
 
+    total = sum(p.stat().st_size for p in directory.iterdir()
+                if p.is_file() and p.suffix.lower() == ".sql")
+    if total > MIGRATIONS_MAX_BYTES:
+        problems.append("migrations/: %d KB of SQL - the deploy validates every "
+                        "file joined together, applied or not, and refuses more "
+                        "than 64 KB. Seed data does not belong in a migration"
+                        % (total // 1024))
+
     numbers = {}
     for path in sorted(directory.iterdir()):
         if path.is_dir():
@@ -520,7 +547,7 @@ def check_migrations(root: Path, manifest: dict, problems: list) -> None:
         else:
             numbers.setdefault(int(match.group(1)), []).append(path.name)
 
-        body = SQL_COMMENT.sub(" ", read(path))
+        body = sql_code(read(path))
         if DOLLAR_BLOCK.search(body):
             problems.append("migrations/%s: a DO $$ ... $$ block - the DDL "
                             "validator cannot analyse an anonymous PL/pgSQL body "
@@ -532,6 +559,27 @@ def check_migrations(root: Path, manifest: dict, problems: list) -> None:
                     "migrations/%s: %s without manifest.migration.breaking - the "
                     "validator rejects the deploy, and if it did not this would "
                     "drop tenant data" % (path.name, label))
+
+        statements = [s for s in body.split(";") if s.strip()]
+        concurrent = [s for s in statements if CONCURRENTLY.search(s)]
+        if concurrent and len(concurrent) < len(statements):
+            problems.append(
+                "migrations/%s: CREATE INDEX CONCURRENTLY next to other statements - "
+                "CONCURRENTLY cannot run inside a transaction, so the deploy runs "
+                "such a file outside one and refuses a file that mixes it with "
+                "anything else. Give it a migration file of its own" % path.name)
+
+        for match in GENERATED_AS.finditer(body):
+            expression = balanced(body, match.end())
+            for pattern, label in NOT_IMMUTABLE:
+                if pattern.search(expression):
+                    problems.append(
+                        "migrations/%s: a generated column uses %s, which is not "
+                        "IMMUTABLE - Postgres refuses it (\"generation expression "
+                        "is not immutable\"). Spell the text search configuration "
+                        "out, or wrap the function in an IMMUTABLE LANGUAGE sql "
+                        "function - see templates/recipes/postgres/migrations"
+                        % (path.name, label))
 
     for number, names in sorted(numbers.items()):
         if len(names) > 1:
@@ -546,6 +594,154 @@ def check_migrations(root: Path, manifest: dict, problems: list) -> None:
         problems.append("migrations/: the numbers are not zero-padded to the same "
                         "width, so 10_ sorts before 9_ and the migrations run in "
                         "the wrong order")
+
+
+def call_name(call: ast.Call) -> str:
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return func.id if isinstance(func, ast.Name) else ""
+
+
+def strings_reached(expr, functions: dict, depth: int = 3) -> list:
+    """String constants in `expr` and in the module functions it names.
+
+    `init=configure`, `init=lambda c: configure(c, schema)` and
+    `init=make_init(schema)` all end up running the same body, and that body
+    is where the SET is. Docstrings are not SQL, so they are left out.
+    """
+    docstrings, strings, seen, frontier = set(), [], set(), [expr]
+    for fn in functions.values():
+        first = fn.body[0] if fn.body else None
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            docstrings.add(id(first.value))
+    for _ in range(depth):
+        following = []
+        for node in frontier:
+            for sub in ast.walk(node):
+                if (isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                        and id(sub) not in docstrings):
+                    strings.append(sub.value)
+                if isinstance(sub, ast.Name) and sub.id in functions and sub.id not in seen:
+                    seen.add(sub.id)
+                    following.append(functions[sub.id])
+        frontier = following
+    return strings
+
+
+def check_pool_search_path(root: Path, problems: list) -> None:
+    """`SET search_path` in an asyncpg pool's `init=` works exactly once.
+
+    asyncpg runs `RESET ALL` on every connection it takes back, and `init=`
+    runs only when a connection is created - so the second request on a
+    connection runs with the ROLE's default search_path. In the cloud that
+    default is the app's schema and nothing shows. On a local Postgres it is
+    `"$user", public`, and the app fails with `relation ... does not exist`
+    the moment someone runs it by hand. A template shipped with this.
+    """
+    for path in source_files(root, {".py"}):
+        text = read(path)
+        if "create_pool" not in text or not SET_SEARCH_PATH.search(text):
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        functions = {node.name: node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for call in ast.walk(tree):
+            if not (isinstance(call, ast.Call) and call_name(call) == "create_pool"):
+                continue
+            keywords = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+            if "init" not in keywords or "setup" in keywords or "server_settings" in keywords:
+                continue
+            reached = strings_reached(keywords["init"], functions)
+            if any(SET_SEARCH_PATH.search(s) for s in reached):
+                problems.append(
+                    "%s:%d: SET search_path inside create_pool(init=...) - asyncpg "
+                    "runs RESET ALL when a connection goes back to the pool, so the "
+                    "next request on it runs without your schema (relation ... does "
+                    "not exist; the cloud hides it behind the role's default). Pass "
+                    "server_settings={\"search_path\": ...} instead - see "
+                    "templates/recipes/postgres/db.py" % (rel(path, root), call.lineno))
+
+
+def check_database_mode(root: Path, manifest: dict, problems: list) -> None:
+    """Code that reads DATABASE_URL in an app that asked for no database.
+
+    `"data": {"none": true}` is the starter's setting, and the platform then
+    injects no DATABASE_URL at all. An app that grew a database while keeping
+    the starter's manifest deploys green and fails on its first query.
+    """
+    data = manifest.get("data")
+    if not (isinstance(data, dict) and data.get("none")):
+        return
+    for path in source_files(root, {".py", ".js", ".mjs", ".ts", ".go", ".rb"}):
+        if path.name.startswith("test_") or "tests" in path.relative_to(root).parts:
+            continue
+        if READS_DATABASE_URL.search(read(path)):
+            problems.append(
+                "%s: reads DATABASE_URL, but manifest.json declares "
+                "\"data\": {\"none\": true} - the platform injects no database "
+                "then. Remove the `data` block to get the managed schema"
+                % rel(path, root))
+            return
+
+
+def sql_code(text: str) -> str:
+    """The SQL a parser would see: comments gone, literals and bodies emptied.
+
+    The deploy's validator PARSES each statement, so a word inside a comment,
+    a string or a function body is not a statement to it - and a linter that
+    reads the raw text fires on `-- never DROP TABLE here` and on a function
+    body that mentions TRUNCATE, which is how a linter gets switched off.
+    A literal becomes `''` and a dollar-quoted body `$tag$$tag$`, so the
+    shape around them survives.
+    """
+    out, i, n = [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if text.startswith("--", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+            continue
+        if ch == "'":
+            j = i + 1
+            while j < n:
+                if text[j] == "'":
+                    if text.startswith("''", j):
+                        j += 2
+                        continue
+                    break
+                j += 1
+            out.append("''")
+            i = j + 1
+            continue
+        if ch == "$" and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+            match = DOLLAR_QUOTE.match(text, i)
+            if match:
+                tag = match.group(0)
+                end = text.find(tag, match.end())
+                out.append(tag + tag)
+                i = n if end < 0 else end + len(tag)
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def balanced(text: str, start: int) -> str:
+    """The text inside the parenthesis that opens just before `start`."""
+    depth, i = 1, start
+    while i < len(text) and depth:
+        depth += {"(": 1, ")": -1}.get(text[i], 0)
+        i += 1
+    return text[start:i - 1]
 
 
 def load_manifest(root: Path, problems: list):
@@ -578,6 +774,8 @@ def check(root: Path) -> tuple:
     check_env_files(root, problems)
     check_capabilities(root, manifest, problems)
     check_migrations(root, manifest, problems)
+    check_pool_search_path(root, problems)
+    check_database_mode(root, manifest, problems)
     check_manifest_shape(manifest, problems)
     check_secret_literals(root, problems)
     note_missing_tests(root, notes)

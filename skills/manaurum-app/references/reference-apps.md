@@ -15,6 +15,13 @@ alone. Nothing here is a snippet you paste unchanged; they are shapes to copy.
 | Small | `shift-checklist` (22 files) | "What does a complete app look like when I can still read all of it?" |
 | Testing | `libi` (82 files, 11 test files) | "How do I test this?" |
 
+**What none of them is: a reading app.** All three are forms and lists of
+records. Copy their backends freely; copy a layout from them only if your
+screens are the same kind. For a list of texts, one text on its own screen, or
+filters, the shape to copy is `templates/patterns/index.html`, and for Postgres
+the connection and search code to copy is `templates/recipes/postgres/` -
+`design.md` and `v2-platform.md` say why.
+
 `Finance` becomes the ceiling reference once it lands (MAN-1404); it is a real
 business app with a data model, AI tools and reporting. Until then
 `family-space-v2` holds that slot.
@@ -151,6 +158,13 @@ Three decisions, each one a bug someone already hit:
    at runtime. Skipping them made every committed API test unable to pass
    against a real PG — the fixture has to mirror production connection setup,
    or you are testing a different database than you ship.
+
+The `SET search_path` in `_configure` is fine *here*: it runs on one
+connection that is never returned to a pool, so nothing resets it. The same
+line in a pool's `init=` is the bug that lasts one request — asyncpg resets the
+session on every release. libi's runtime pool re-issues the `SET` in `setup=`;
+the recipe in `templates/recipes/postgres/db.py` passes it as
+`server_settings` instead, and its test suite demonstrates both.
 
 For the agent-capability handlers, test them as plain functions over the `db`
 fixture (`libi/tests/test_agent_pg.py`). You do not need to mint a real

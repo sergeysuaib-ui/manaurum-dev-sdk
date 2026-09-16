@@ -58,6 +58,13 @@ BUTTON_ROW = re.compile(r'<button[^>]*class="[^"]*\brow\b')
 PRIMARY = re.compile(r"btn-primary")
 ROW_INTERACTIVE = re.compile(r'class="row(?![^"]*is-interactive)[^"]*"[^>]*(?:data-id|onclick)')
 VIEW_SPLIT = re.compile(r"data-view\s*=")
+# Classes that paint a thing in the accent. `.chip.is-on` is accent too, but
+# toggling it in a loop over the chips is exactly the right pattern - only the
+# selected one ends up coloured - so it is not on this list.
+ACCENT_CLASS = re.compile(r"\b(btn-primary|btn-ghost|badge-accent)\b")
+ACCENT_BUDGET = 4
+LOOP_HEAD = re.compile(r"\bfor\s*\(|\bwhile\s*\(|\.(?:forEach|map|flatMap)\s*\(")
+SCRIPT_BLOCK = re.compile(r"<script[^>]*>.*?</script>", re.S)
 
 # Anchors are not colours. `href="#card"` must not read as a hardcoded hex,
 # especially now that the skill teaches a URL fragment per view.
@@ -105,6 +112,40 @@ def short_hex_colours(text: str) -> list:
         if COLOUR_WORD.search(window):
             out.append(match.group(0))
     return out
+
+
+def closing(text: str, start: int, open_ch: str, close_ch: str) -> int:
+    """Index just past the bracket that closes the one before `start`."""
+    depth, i = 1, start
+    while i < len(text) and depth:
+        if text[i] == open_ch:
+            depth += 1
+        elif text[i] == close_ch:
+            depth -= 1
+        i += 1
+    return i
+
+
+def loop_bodies(js: str) -> list:
+    """The code a loop repeats: `for (...) {...}` or a `.map(...)` callback.
+
+    Brace counting, not a parser - a brace inside a string can fool it. It is
+    good enough for the question asked: does a render loop hand out accent.
+    """
+    bodies = []
+    for head in LOOP_HEAD.finditer(js):
+        after = closing(js, head.end(), "(", ")")
+        if head.group(0).startswith("."):
+            bodies.append(js[head.end():after])
+            continue
+        rest = js[after:].lstrip()
+        start = len(js) - len(rest)
+        if rest.startswith("{"):
+            bodies.append(js[start:closing(js, start + 1, "{", "}")])
+        else:
+            end = js.find(";", start)
+            bodies.append(js[start:end if end >= 0 else len(js)])
+    return bodies
 
 
 def declared_tokens(static_dir: Path) -> set:
@@ -186,6 +227,13 @@ def check(static_dir: Path) -> list:
         if ROW_INTERACTIVE.search(text):
             problems.append("%s: a row with a click target but no is-interactive - no "
                             "hover, no cursor, no focus ring" % name)
+        looped = sorted({m.group(1) for body in loop_bodies(text)
+                         for m in ACCENT_CLASS.finditer(body)})
+        if looped:
+            problems.append("%s: an accent class (%s) set inside a loop - one per item "
+                            "is a column of accent. A repeated control is a .chip "
+                            "(quiet until selected) or .btn-secondary; a repeated "
+                            "status is a neutral .badge" % (name, ", ".join(looped)))
 
     entry = static_dir / "index.html"
     if not entry.exists():
@@ -200,6 +248,18 @@ def check(static_dir: Path) -> list:
     if worst > 1:
         problems.append("index.html: %d primary buttons in one view - one per view, and "
                         "never one per row" % worst)
+
+    # Accent is a pointer. One primary button is not enough if every ghost
+    # button and badge beside it is accent too - that is how a screen with no
+    # broken rule ended up with twenty accent-coloured things on it. Only the
+    # static markup is counted here; preview.py counts the rendered frame.
+    markup_only = SCRIPT_BLOCK.sub("", html) if "</script>" in html else html
+    loudest = max((len(ACCENT_CLASS.findall(chunk))
+                   for chunk in VIEW_SPLIT.split(markup_only)), default=0)
+    if loudest > ACCENT_BUDGET:
+        problems.append("index.html: %d accent-coloured elements (btn-primary, btn-ghost, "
+                        "badge-accent) in one view - four at most; filters are .chip, "
+                        "secondary actions .btn-secondary" % loudest)
 
     if "manaurum:ready" not in html:
         problems.append("index.html: no manaurum:ready - after 10s the shell covers the "
