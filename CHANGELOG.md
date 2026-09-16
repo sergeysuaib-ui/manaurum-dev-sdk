@@ -31,12 +31,21 @@ section, rewritten against the handler:
   retry is safe;
 * how the click reaches the app (`manaurum:init` `payload.deepLink`, or a
   `manaurum:deep-link` message), and that the SDK does not surface it;
-* `capability_not_granted` for a sensitive capability names the way through
+* `capability_not_granted` says how an install ends up without the grant (a
+  redeploy never widens an existing grant; strict grants withhold this
+  sensitive capability even at first install) and names the way through
   today: the platform operator, until tenant admins get a grant screen
-  (MAN-2570, registered in `scripts/open-claims.txt`).
+  (MAN-2570, registered in `scripts/open-claims.txt`);
+* the click section says to attach the `message` listener synchronously at
+  startup, because the shell sends the link once.
 
 Also in the same file: the gateway section no longer says a wildcard `"*"` grant
 allows everything. Wildcard grants were removed in MAN-1585.
+
+`references/sdk-api.md`: the four mentions of SDK 2.2.0 now say 2.3.0, the
+version `manaurum-v2.mjs` carries. Each statement was re-checked against 2.3.0
+(it still reads neither `granted_capabilities` nor `deepLink`, and still has no
+window-framing helpers).
 
 # 2.11.0 — the backend contract gets a program that checks it (MAN-2533)
 

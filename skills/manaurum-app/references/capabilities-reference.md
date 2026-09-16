@@ -561,7 +561,7 @@ to your iframe — `payload` is `{}` when you sent no `link`. It arrives inside
 navigate your iframe; route to `link` yourself. The v2 SDK does not surface either
 message (`sdk-api.md`), so add your own `message` listener — and attach it synchronously
 at startup: the shell sends the link once and then forgets it, so a listener registered
-later (in a React effect, after a fetch) never sees it.
+later (in a React effect, after a fetch) may miss it.
 
 ---
 

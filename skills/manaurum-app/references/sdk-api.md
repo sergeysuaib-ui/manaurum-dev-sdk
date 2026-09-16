@@ -6,7 +6,7 @@ Two runtimes ship today with **different client SDKs on different transports**. 
 
 | | **Platform v2** (default for new apps) | **Legacy v1** (frozen) |
 |---|---|---|
-| Client SDK | `https://manaurum.com/sdk/manaurum-v2.mjs` — ES module, exports `ManaurumV2`, internal `VERSION = '2.2.0'` | `https://manaurum.com/sdk/manaurum.js` — classic script, global `ManaurumSDK` |
+| Client SDK | `https://manaurum.com/sdk/manaurum-v2.mjs` — ES module, exports `ManaurumV2`, internal `VERSION = '2.3.0'` | `https://manaurum.com/sdk/manaurum.js` — classic script, global `ManaurumSDK` |
 | Where the app runs | your own container, served at `https://<app_id>.apps.manaurum.com` | static bundle uploaded to Core, served same-origin |
 | Data + capabilities | HTTP only: browser → your backend → `POST {MANAURUM_CORE_URL}/api/capability/<name>` | postMessage bridge (`manaurum:storage-*`, `db-*`, `file-*`, `ai-*`) |
 | postMessage is used for | the ready handshake, window framing, and the Drive picker — **nothing else** | everything |
@@ -74,7 +74,7 @@ For the shell to accept the reply, all of these must hold (`:394-409`):
 2. `event.source` is the iframe's own `contentWindow`. Post from your top-level document — a message relayed from a nested iframe or a worker is rejected.
 3. `data.type` is a string starting with `manaurum:`.
 
-A `payload` is optional; the shell reads none. (The v2 SDK sends `{ sdk_version: '2.2.0' }`.)
+A `payload` is optional; the shell reads none. (The v2 SDK sends `{ sdk_version: '2.3.0' }`.)
 
 ### The pattern that actually shipped
 
@@ -194,7 +194,7 @@ const orders = await res.json();
 
 Two gaps worth knowing:
 
-- **`granted_capabilities` is not in `app.context`.** The shell sends it; SDK 2.2.0 does not read it. Same for `offline` and `deepLink`. If you need them, add your own `window.addEventListener('message', …)` for `manaurum:init` / `manaurum:deep-link` alongside the SDK.
+- **`granted_capabilities` is not in `app.context`.** The shell sends it; SDK 2.3.0 does not read it. Same for `offline` and `deepLink`. If you need them, add your own `window.addEventListener('message', …)` for `manaurum:init` / `manaurum:deep-link` alongside the SDK.
 - `appId` falls back to parsing `<slug>.apps.manaurum.com` out of `window.location.hostname` when the shell omits it — so a hand-loaded test page on any other host gets `appId: null`.
 
 ### `app.fetch(path, init?)`
@@ -241,7 +241,7 @@ if (!res.cancelled) {
 
 - **No capability client.** There is no `app.capability(...)`. Capabilities are called server-side by your container with `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` against `{MANAURUM_CORE_URL}/api/capability/<name>`. See `references/capabilities-reference.md`.
 - **No storage / db / files / ai bridge.** Every `manaurum:storage-*`, `manaurum:db-*`, `manaurum:file-*` message documented below is v1 and is rejected for v2 frames.
-- **No window-framing helpers.** `set-title` / `resize` / `close` / `toast` are allowed for v2 apps, but SDK 2.2.0 exposes no methods for them — post them yourself with `window.parent.postMessage({ type, payload }, shellOrigin)`.
+- **No window-framing helpers.** `set-title` / `resize` / `close` / `toast` are allowed for v2 apps, but SDK 2.3.0 exposes no methods for them — post them yourself with `window.parent.postMessage({ type, payload }, shellOrigin)`.
 
 ---
 
