@@ -48,7 +48,10 @@
   --fs-title-3: 20px;  --fs-title-2: 24px;
 
   --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
-  --lh-tight: 1.15;  --lh-snug: 1.3;   --lh-normal: 1.5;
+  /* `--lh-normal` is for labels, rows and short copy. Four paragraphs in a
+     row at 1.5 are tiring to read; long-form text takes `--lh-relaxed`, which
+     is what `.prose` below uses. Same names and values as the OS. */
+  --lh-tight: 1.15;  --lh-snug: 1.3;   --lh-normal: 1.5;  --lh-relaxed: 1.7;
   --ls-tight: -0.02em;
 
   /* Spacing. Every gap and pad below comes from this scale — that single
@@ -190,6 +193,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Without this a link is the browser's #0000ee, which follows neither the
+   accent nor the dark appearance. */
+a { color: var(--accent); text-underline-offset: 2px; }
+
 /* The OS window is the frame. `.app` fills it and owns the ONLY outer
    padding in the app — rule 2 at the top of this file. */
 .app {
@@ -199,6 +206,16 @@ body {
   padding: var(--space-6);
   gap: var(--space-4);
   max-width: var(--container-lg, 1024px);
+}
+
+/* A view (see the router in index.html) is a column of cards with the same
+   rhythm as `.app` itself. Without this the cards inside a view touch: `.app`
+   spaces its OWN children, and once views existed its only child was the
+   view. That shipped in the starter from 2.9.0 to 2.11.0. */
+.app > [data-view] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────────
@@ -240,6 +257,7 @@ body {
    fragment per view (see `index.html`). If it needs a boolean, use a checkbox
    with a `.field-label`. The one narrow exception is a list that genuinely
    drives a detail pane, and that is `.list` + `.row`, not a new component.
+   A set of FILTERS is not navigation at all: that is `.chips`, further down.
 
    references/design.md -> Never. `templates/check_ui.py` fails on a
    `tab` / `tabs` / `sidebar` class, so this is checked, not just asked. */
@@ -346,12 +364,84 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* `.row-meta` hugs the right edge, which only works for SHORT values of
+   similar length: a date, a count, an amount. A category name is neither -
+   thirteen categories of different lengths make the right edge jagged and the
+   long ones push the title into an ellipsis. Variable-length metadata goes in
+   `.row-foot`, under the text. The cap below keeps a long value from eating
+   the row when it lands here anyway. */
 .row-meta {
   flex-shrink: 0;
+  max-width: 40%;
+  font-size: var(--fs-footnote);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Rows for TEXT: a list of things people read ─────────────────────────────
+   `.row-title` is built for records - "Ivanov I.", "order #312" - where the
+   name is a label and truncating it costs nothing. In a list of articles,
+   posts or documents the title IS the content, and one typographic step
+   (14/500 against 12) is not enough for an eye scanning a hundred rows: the
+   headline and its summary read as equally important. So a text row gets a
+   bigger, heavier headline that wraps, an excerpt clamped to two lines, and
+   its metadata UNDER the text rather than on the right:
+
+     <li class="row row-text is-interactive" data-id="42" tabindex="0">
+       <div class="row-main">
+         <span class="row-headline">Why clients leave after the first month</span>
+         <span class="row-excerpt">Three reasons, and the one that is fixable…</span>
+         <span class="row-foot"><span>12 Mar</span><span>Sales</span></span>
+       </div>
+     </li>
+*/
+.row.row-text { align-items: flex-start; padding-top: var(--space-4); padding-bottom: var(--space-4); }
+
+.row-headline {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: var(--fs-subhead);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.row-excerpt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: var(--space-1);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-normal);
+  color: var(--text-secondary);
+}
+
+/* Metadata under the text, separated by a middle dot, free to wrap. */
+.row-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-2);
   font-size: var(--fs-footnote);
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+.row-foot > * + *::before {
+  content: "\00B7";
+  margin-right: var(--space-2);
+  color: var(--text-tertiary);
+}
+/* A badge is its own separator - a dot inside the pill reads as part of it. */
+.row-foot > .badge::before { content: none; }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────
    One primary action per view. Everything else is secondary or ghost. */
@@ -403,7 +493,13 @@ a.btn { text-decoration: none; }
 
 /* A horizontal strip of controls above a list: filter, search, a ghost action.
    `gap` + `flex-wrap` is the whole component; without it every app invents its
-   own margins and they never line up. */
+   own margins and they never line up.
+
+   The search box takes the free width whether it is a bare `.input` or - as
+   the forms rule asks - an `.input` inside a `.field` with a label. Until
+   2.12.0 only the bare form worked: `flex: 1` landed on the wrapper's child,
+   the `.field` stayed content-sized, and the input collapsed. In a toolbar the
+   label may be `.sr-only`; it still has to exist. */
 .toolbar {
   display: flex;
   align-items: center;
@@ -411,8 +507,84 @@ a.btn { text-decoration: none; }
   flex-wrap: wrap;
   margin-bottom: var(--space-4);
 }
-.toolbar .input { width: auto; flex: 1; min-width: 160px; }
+.toolbar > .input,
+.toolbar > .field { flex: 1; min-width: 160px; }
+.toolbar > .field { margin-bottom: 0; }
 .toolbar-spacer { flex: 1; }
+
+/* ── Filters: .chips ─────────────────────────────────────────────────────────
+   A set of filters (categories, statuses, date ranges) is in half the apps
+   anyone builds, and before 2.12.0 this file had nothing for it - so filters
+   were built from `.btn-ghost`, which is ACCENT-coloured. Thirteen categories
+   became thirteen blue buttons that shouted over the content and took half
+   the first screen, with no rule broken.
+
+   A chip is quiet until it is chosen: secondary text on a hairline. Only the
+   selected one takes the accent, so the accent points at the one thing that
+   is different. Mark it with `aria-pressed` (or `.is-on`) so the state is
+   announced, not just painted:
+
+     <div class="chips" role="group" aria-label="Category">
+       <button class="chip" type="button" aria-pressed="true">All <span class="chip-n">1679</span></button>
+       <button class="chip" type="button" aria-pressed="false">Sales <span class="chip-n">212</span></button>
+     </div>
+
+   More than about seven options stops being a row of chips and becomes a
+   wall: show the busiest few and put the rest behind a `<select class="input">`
+   or a final "More" chip. On mobile the row scrolls sideways instead of
+   wrapping (see the Mobile block). */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 28px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-hairline-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--fs-footnote);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-snug);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard);
+}
+.chip:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* Solid accent with `--accent-contrast`, not accent text on `--accent-soft`:
+   teal, lavender and amber text on a pale tint is unreadable in light mode,
+   and the selected filter is the one label that must be read. */
+.chip.is-on,
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* A count inside a chip ("Sales 212"). Quieter than the label it belongs to. */
+.chip-n {
+  font-weight: var(--fw-regular);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+.chip.is-on .chip-n,
+.chip[aria-pressed="true"] .chip-n { color: inherit; opacity: 0.75; }
 
 /* Search hit highlighting. The browser default is yellow, and gold/yellow is
    banned across Manaurum surfaces — so it is defined here rather than left to
@@ -426,6 +598,7 @@ mark {
 
 /* Keyboard focus must stay visible. Do not replace this with outline:none. */
 .btn:focus-visible,
+.chip:focus-visible,
 .input:focus-visible,
 .row.is-interactive:focus-visible {
   outline: 2px solid var(--accent);
@@ -578,6 +751,122 @@ textarea.input { min-height: 96px; resize: vertical; }
 .kv dt { color: var(--text-secondary); font-size: var(--fs-footnote); }
 .kv dd { margin: 0; font-family: var(--font-mono); font-size: var(--fs-footnote); overflow-wrap: anywhere; }
 
+/* ── Reading: long text on its own screen ────────────────────────────────────
+   Everything above is built for records: a base size of 13-14px, metadata on
+   the right, titles that truncate. That is right for "entity + fields +
+   actions" and wrong for an app where a person READS - a knowledge base, a
+   feed, an archive of documents, long notes. Those need a column that stops
+   before the lines get too long, a headline scale, and body text set for
+   paragraphs rather than labels.
+
+     <article class="reader">
+       <h1 class="article-title">Why clients leave after the first month</h1>
+       <p class="article-meta"><span>12 March</span><span>Sales</span><span>4 min</span></p>
+       <p class="lead">One paragraph that says what the piece is about.</p>
+       <div class="prose"> …paragraphs, lists, <blockquote class="pull">… </div>
+     </article>
+
+   A reading screen still sits inside `.app`; the column centres itself in
+   whatever width the window has. It usually needs no card around it - the
+   text is the surface. */
+
+.reader {
+  width: 100%;
+  max-width: 68ch;          /* ~65-75 characters per line is the readable band */
+  margin-inline: auto;
+  padding-block: var(--space-2) var(--space-10);
+}
+
+.article-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-title-2);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-tight);
+  text-wrap: balance;
+}
+
+/* Date, source, reading time. Same middle-dot rhythm as `.row-foot`. */
+.article-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin: var(--space-3) 0 0;
+  font-size: var(--fs-footnote);
+  color: var(--text-tertiary);
+}
+.article-meta > * + *::before {
+  content: "\00B7";
+  margin-right: var(--space-2);
+}
+
+.lead {
+  margin: var(--space-5) 0 0;
+  font-size: var(--fs-subhead);
+  line-height: var(--lh-snug);
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+/* Body copy for paragraphs: one size up from the UI, and `--lh-relaxed`. */
+.prose {
+  margin-top: var(--space-6);
+  font-size: var(--fs-callout);
+  line-height: var(--lh-relaxed);
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+}
+.prose > * { margin: 0; }
+.prose > * + * { margin-top: var(--space-4); }
+.prose > h2 + *,
+.prose > h3 + * { margin-top: var(--space-2); }
+.prose h2,
+.prose h3 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.01em;
+}
+.prose h2 { font-size: var(--fs-title-3); }
+.prose h3 { font-size: var(--fs-subhead); }
+.prose > h2,
+.prose > h3 { margin-top: var(--space-8); }
+.prose ul,
+.prose ol { padding-left: var(--space-6); }
+.prose li + li { margin-top: var(--space-1); }
+.prose a { text-decoration: underline; text-decoration-thickness: 1px; }
+.prose img { display: block; max-width: 100%; height: auto; border-radius: var(--radius-card); }
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-panel);
+}
+.prose hr { border: 0; border-top: 1px solid var(--border-hairline); }
+
+/* A pulled quote or a callout inside the text. Deliberately NOT accent: a
+   reading screen has one thing to look at, and it is the text. */
+.pull {
+  margin-block: var(--space-6);
+  padding: var(--space-1) 0 var(--space-1) var(--space-5);
+  border-left: 3px solid var(--border-hairline-strong);
+  font-family: var(--font-display);
+  font-size: var(--fs-subhead);
+  line-height: var(--lh-snug);
+  color: var(--text-primary);
+}
+.pull cite,
+.pull footer {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-text);
+  font-size: var(--fs-footnote);
+  font-style: normal;
+  color: var(--text-tertiary);
+}
+
 /* ── Utilities ──────────────────────────────────────────────────────────── */
 
 .muted { color: var(--text-secondary); }
@@ -605,6 +894,25 @@ body[data-device="mobile"] .card-flush .card-head { padding: var(--space-4) var(
 /* Comfortable tap targets. */
 body[data-device="mobile"] .btn { min-height: 44px; padding: var(--space-3) var(--space-5); }
 body[data-device="mobile"] .form-actions { flex-direction: column; align-items: stretch; }
+/* Filters: one row that scrolls sideways, not four rows that push the list
+   off the first screen. The negative margin lets the row run to the edge. */
+body[data-device="mobile"] .chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin-inline: calc(-1 * var(--space-4));
+  padding-inline: var(--space-4);
+  scrollbar-width: none;
+}
+body[data-device="mobile"] .chips::-webkit-scrollbar { display: none; }
+body[data-device="mobile"] .chip { min-height: 36px; flex-shrink: 0; }
+/* Content: the phone is already a narrow column, so the reader only needs
+   its sizes brought down a step. */
+body[data-device="mobile"] .row-headline { font-size: var(--fs-callout); }
+body[data-device="mobile"] .reader { padding-block: 0 var(--space-8); }
+body[data-device="mobile"] .article-title { font-size: var(--fs-title-3); }
+body[data-device="mobile"] .lead { font-size: var(--fs-callout); }
+body[data-device="mobile"] .prose { font-size: var(--fs-callout); }
+body[data-device="mobile"] .row-meta { max-width: 50%; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

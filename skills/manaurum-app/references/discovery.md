@@ -218,6 +218,7 @@ brief changed, say which line you were following.
 |---|---|
 | §1 who uses it | `auth: "user"` on every route; `visibility.mode`; whether any route is `anonymous` |
 | §2 what they do | the screens; one `runtime.api_routes` entry per collection **and** per item path (`/api/orders` *and* `/api/orders/*`) |
+| §2 the kind in brackets | the layout of each screen: a sorting screen is `.row-title` / `.row-meta` rows, a reading screen is `.row-text` rows and a `.reader`, an entering screen is one card of fields — `design.md` → "What kind of screen is it". Nobody says "reading"; they say "I want to find that old post and read it again". |
 | §3 what is kept | the data model → `migrations/0001_init.sql` (or `os.kv` keys for something small); the `data` block |
 | §4 Assistant | one `agent_capabilities[]` entry per line, each served at `POST /agent/<name>` — never in `api_routes` |
 | §5 never | absent endpoints, and the guardrails inside the ones that exist |

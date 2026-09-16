@@ -35,6 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STARTER = ROOT / "templates" / "v2-starter"
+RECIPE = ROOT / "templates" / "recipes" / "postgres"
 CHECK_APP = ROOT / "templates" / "check_app.py"
 CHECK_UI = ROOT / "templates" / "check_ui.py"
 
@@ -172,6 +173,94 @@ def a_baked_deploy_token(app: Path) -> None:
          "ENV MANAURUM_V2_TOKEN=mna_9f3c1de77a04b26e5c81\nENV PYTHONUNBUFFERED=1")
 
 
+def a_migration(app: Path, name: str, sql: str) -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / name).write_text(sql, encoding="utf-8")
+
+
+def search_path_in_pool_init(app: Path) -> None:
+    # The template several apps were copied from: works in the cloud, where
+    # the role's default search_path hides it, and fails on the second
+    # request everywhere else.
+    (app / "src" / "db.py").write_text(
+        "import os\n\nimport asyncpg\n\n\n"
+        "async def configure_connection(conn, schema):\n"
+        "    await conn.execute(f'SET search_path TO \"{schema}\", public')\n\n\n"
+        "async def init_pool():\n"
+        "    schema = os.environ['MANAURUM_TARGET_SCHEMA']\n"
+        "    return await asyncpg.create_pool(\n"
+        "        dsn=os.environ['DATABASE_URL'], min_size=1, max_size=5,\n"
+        "        init=lambda conn: configure_connection(conn, schema))\n",
+        encoding="utf-8")
+    patch_manifest(app, lambda data: data.pop("data"))
+
+
+def database_url_with_no_database(app: Path) -> None:
+    edit(app / "src" / "main.py", "import os", 'import os\nDSN = os.environ.get("DATABASE_URL")')
+
+
+def concurrently_next_to_other_statements(app: Path) -> None:
+    a_migration(app, "0001_init.sql",
+                "CREATE TABLE note (id text PRIMARY KEY, body text);\n"
+                "CREATE INDEX CONCURRENTLY note_body_idx ON note (body);\n")
+
+
+def array_to_string_in_a_generated_column(app: Path) -> None:
+    a_migration(app, "0001_init.sql",
+                "CREATE TABLE note (id text PRIMARY KEY, tags text[],\n"
+                "  search tsvector GENERATED ALWAYS AS (\n"
+                "    to_tsvector('russian', array_to_string(tags, ' '))) STORED);\n")
+
+
+def to_tsvector_without_a_configuration(app: Path) -> None:
+    a_migration(app, "0001_init.sql",
+                "CREATE TABLE note (id text PRIMARY KEY, title text);\n"
+                "ALTER TABLE note ADD COLUMN search tsvector\n"
+                "  GENERATED ALWAYS AS (to_tsvector(coalesce(title, ''))) STORED;\n")
+
+
+def migrations_over_the_size_cap(app: Path) -> None:
+    rows = ",\n".join("('%05d', '%s')" % (i, "x" * 60) for i in range(1200))
+    a_migration(app, "0001_init.sql", "CREATE TABLE note (id text PRIMARY KEY, body text);\n")
+    a_migration(app, "0002_seed.sql", "INSERT INTO note (id, body) VALUES\n%s;\n" % rows)
+
+
+# The other direction: code that is right and must stay GREEN. Each of these
+# is a way the new rules could have misfired on the recipe they point to.
+
+
+def the_postgres_recipe(app: Path) -> None:
+    """The recipe the findings point at has to pass the linter that points."""
+    for name in ("db.py", "search.py"):
+        shutil.copy(RECIPE / name, app / "src" / name)
+    shutil.copytree(RECIPE / "migrations", app / "migrations")
+    patch_manifest(app, lambda data: data.pop("data"))
+
+
+def setup_does_the_set(app: Path) -> None:
+    # `init=` for codecs and `setup=` for the SET is the shape libi runs.
+    (app / "src" / "db.py").write_text(
+        "import asyncpg\n\n\n"
+        "async def codecs(conn):\n    pass\n\n\n"
+        "async def pin(conn):\n"
+        "    await conn.execute('SET search_path TO app, public')\n\n\n"
+        "async def make(dsn):\n"
+        "    return await asyncpg.create_pool(dsn, init=codecs, setup=pin)\n",
+        encoding="utf-8")
+    patch_manifest(app, lambda data: data.pop("data"))
+
+
+def words_in_comments_strings_and_bodies(app: Path) -> None:
+    a_migration(app, "0001_init.sql",
+                "-- Never DROP TABLE here, never TRUNCATE, and no DO $$ blocks.\n"
+                "/* CREATE INDEX CONCURRENTLY goes in a file of its own. */\n"
+                "CREATE TABLE note (id text PRIMARY KEY, body text DEFAULT 'DROP TABLE x');\n"
+                "CREATE FUNCTION note_len(t text) RETURNS int LANGUAGE sql IMMUTABLE\n"
+                "  AS $body$ SELECT length(t) /* TRUNCATE */ $body$;\n"
+                "COMMENT ON TABLE note IS 'it''s fine; DO $$ is only a word here';\n")
+
+
 APP_MUTATIONS = [
     ("routes: a path the manifest does not declare", undeclared_route,
      "no runtime.api_routes rule covers it"),
@@ -211,6 +300,22 @@ APP_MUTATIONS = [
      "still the starter's placeholder"),
     ("secrets: a deploy token baked into the image", a_baked_deploy_token,
      "live mna_9f3c... token"),
+    ("db: SET search_path in create_pool(init=)", search_path_in_pool_init,
+     "SET search_path inside create_pool(init=...)"),
+    ("db: DATABASE_URL read under data.none", database_url_with_no_database,
+     "reads DATABASE_URL"),
+    ("migrations: CONCURRENTLY beside other statements", concurrently_next_to_other_statements,
+     "Give it a migration file of its own"),
+    ("migrations: array_to_string() in a generated column",
+     array_to_string_in_a_generated_column, "uses array_to_string()"),
+    ("migrations: one-argument to_tsvector() in a generated column",
+     to_tsvector_without_a_configuration, "to_tsvector() without a configuration"),
+    ("migrations: more than 64 KB of SQL", migrations_over_the_size_cap,
+     "refuses more than 64 KB"),
+    ("app-green: the postgres recipe", the_postgres_recipe, None),
+    ("app-green: setup= carries the SET", setup_does_the_set, None),
+    ("app-green: SQL words in comments, strings and bodies",
+     words_in_comments_strings_and_bodies, None),
 ]
 
 
@@ -247,6 +352,29 @@ def the_handshake(app: Path) -> None:
                     encoding="utf-8")
 
 
+def accent_handed_out_in_a_loop(app: Path) -> None:
+    # Thirteen categories, thirteen blue buttons, and not one rule broken.
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<script>for (const topic of topics) {\n"
+         "  const b = document.createElement('button');\n"
+         "  b.className = 'btn btn-ghost';\n  bar.append(b);\n}</script></body>")
+
+
+def too_much_accent_in_one_view(app: Path) -> None:
+    ghosts = "".join('<button class="btn btn-ghost" type="button">%d</button>' % i
+                     for i in range(5))
+    edit(app / "src" / "static" / "index.html", '<div data-view="overview">',
+         '<div data-view="overview"><div class="toolbar">%s</div>' % ghosts)
+
+
+def chips_toggled_in_a_loop(app: Path) -> None:
+    # The right way to do the thing above must stay green.
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<script>group.querySelectorAll('.chip').forEach(function (c) {\n"
+         "  c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');\n"
+         "  c.classList.toggle('is-on', c === chip);\n});</script></body>")
+
+
 UI_MUTATIONS = [
     ("ui: a var() whose token is declared nowhere", token_declared_nowhere,
      "declared nowhere"),
@@ -255,6 +383,11 @@ UI_MUTATIONS = [
     ("ui: confirm()", a_native_modal, "alert/confirm/prompt"),
     ("ui: @media max-width", a_media_query, "@media max-width"),
     ("ui: no manaurum:ready", the_handshake, "no manaurum:ready"),
+    ("ui: an accent class inside a loop", accent_handed_out_in_a_loop,
+     "accent class (btn-ghost) set inside a loop"),
+    ("ui: more than four accent classes in a view", too_much_accent_in_one_view,
+     "accent-coloured elements"),
+    ("ui-green: chips toggled in a loop", chips_toggled_in_a_loop, None),
 ]
 
 
@@ -480,7 +613,13 @@ def main() -> int:
             mutate(app)
             target = app if kind == "app" else app / "src" / "static"
             done = run(linter, target)
-            if done.returncode == 0:
+            if expected is None:
+                if done.returncode != 0:
+                    problems.append("%s: %s went RED on code it should accept. It "
+                                    "said:\n%s" % (name, linter.name, done.stdout.strip()))
+                else:
+                    print("ok  %s" % name)
+            elif done.returncode == 0:
                 problems.append("%s SURVIVED - %s said `clean` on it. That rule is "
                                 "not being checked." % (name, linter.name))
             elif expected not in done.stdout:

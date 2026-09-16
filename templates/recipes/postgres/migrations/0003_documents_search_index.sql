@@ -1,0 +1,12 @@
+-- Alone in its file, and that is the rule, not tidiness.
+--
+-- A plain CREATE INDEX on a table an EARLIER migration created is classed
+-- destructive: it blocks writes for the whole build. CONCURRENTLY is additive,
+-- but Postgres refuses it inside a transaction block - so the deploy runs a
+-- file made only of CONCURRENTLY statements outside one, and refuses a file
+-- that mixes them with anything else.
+--
+-- If the build fails for a tenant, Postgres leaves an INVALID index behind
+-- and nothing rolls it back; a later migration has to drop it, and DROP INDEX
+-- needs `migration.breaking`.
+CREATE INDEX CONCURRENTLY documents_search_idx ON documents USING gin (search);

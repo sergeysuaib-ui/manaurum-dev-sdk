@@ -1,0 +1,5 @@
+# What the recipes need, pinned to the versions the platform's own runtime
+# uses (asyncpg) and the starter's test stack (pytest, pytest-asyncio).
+asyncpg==0.30.0
+pytest==8.3.4
+pytest-asyncio==0.25.2

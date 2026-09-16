@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.11.0.** A plugin install caches one directory per
+> **This page is SDK 2.12.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -53,6 +53,14 @@ not find out you guessed wrong until the app exists and is wrong.
    first screen. Decide it now: bolting it on after the app exists is expensive,
    which is why it gets skipped, and then every check only ever photographs the
    home view.
+6. **Say what kind each screen is, next to its fragment: sorting, reading or
+   entering.** Going through records, taking in text, or putting something in.
+   The three look different at the level of type scale, not palette, and the
+   choice decides the layout before any rule does — a knowledge base built on
+   the skeleton of a list-triage app passed every check on this page and was
+   rejected on sight, because it read like a ledger. Write it in `BRIEF.md` §2;
+   what each kind is built from is in `references/design.md` → "What kind of
+   screen is it".
 
 Two things this is not. It is **not a gate**: if they say "just build me a todo
 list", draft the brief yourself, show it, ask one confirming question, and go.
@@ -92,14 +100,27 @@ worth reading for: **`shift-checklist`** (22 files — a complete app you can re
 whole, `src/api/` split by surface, both auth levels), **`family-space-v2`** (the
 ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
 only tested one — copy its `conftest.py`). Copying the shape of a working app
-beats reconstructing it from this page.
+beats reconstructing it from this page — **for the backend.** Routes, auth,
+the database and the agent handlers do not care what a screen is for. The
+layout does: copy it only from an app whose screens are the same kind as yours
+(Step 0, item 6). None of the reference apps is a reader.
+
+If the app keeps its data in Postgres, start from
+`<plugin>/templates/recipes/postgres/` rather than from another app's `db.py`:
+a pool that survives asyncpg's session reset, full-text search that does not
+answer a question with zero results, and the migrations for both — with tests
+that run against a real Postgres. The `db.py` several apps were copied from
+fails on the second request on any database but the platform's.
 
 **And copy the look, don't invent it.**
 `<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
-Manaurum app — tokens, layout, lists, forms, empty states, skeletons, mobile —
-and `index.html` shows every pattern in use. `references/design.md` explains when
-to reach for each and which mistakes are expensive. An app that works and looks
-unfinished is one a user abandons.
+Manaurum app — tokens, layout, lists, filters, forms, reading, empty states,
+skeletons, mobile. The starter's `index.html` shows a form and a short record
+list; `<plugin>/templates/patterns/index.html` shows the other two kinds of
+screen — a list of texts with filters, one text on its own page, and a list of
+records to sort through. `references/design.md` explains when to reach for each
+and which mistakes are expensive. An app that works and looks unfinished is one
+a user abandons.
 
 `<plugin>` is the **plugin root** — the directory holding `skills/` and
 `templates/` side by side, not the skill's own folder. If a read of
@@ -128,10 +149,15 @@ is a judgement rather than a pattern.
    desktop for as long as nobody looks; the standalone URL hides it, because
    the `prefers-color-scheme` fallback runs there. `prefers-color-scheme` is
    only that fallback — it tracks the *browser*, never Manaurum.
-3. **A badge is a word, not a sentence.** `overdue` — never "hasn't paid in over
-   90 days". A badge that holds a phrase turns a scannable list into a wall.
-4. **One primary button per view**, never one per row. A column of blue buttons
-   says nothing is the answer.
+3. **A badge is a word, not a sentence — and it marks the few.** `overdue` —
+   never "hasn't paid in over 90 days". A badge that holds a phrase turns a
+   scannable list into a wall; a badge that sits on half the rows has stopped
+   marking anything. Badge the exception, or make it a filter.
+4. **One primary button per view, and at most four accent-coloured things on
+   the first screen.** A column of blue buttons says nothing is the answer, and
+   so do thirteen accent filters beside one primary. Filters are `.chip`s,
+   quiet until chosen; repeated actions are `.btn-secondary`; `.btn-ghost` is
+   accent, so it is for one or two actions, never a set.
 5. **Hover if and only if the click does something.** No hover on an inert row —
    it is a promise the app does not keep; and no silent click target either, so
    a row with a handler gets `.row.is-interactive` (cursor, hover, focus ring)
@@ -504,15 +530,34 @@ shoot it with `…/__shell?entry=/index.html%23item/42`. The starter's
 `index.html` ships this router; decide the fragments in Step 0, because
 retrofitting them after the app exists is exactly why this check gets skipped.
 
-**4. Open the pictures and criticise them honestly**, against the seven rules
-above and the `Never` table that opens `references/design.md` — out loud, in
-your reply. The linter has already taken the mechanical half; what is left is
-the half only a person (or you, looking) can see: is the hierarchy right, is the
-empty state saying something useful, would you show this to the person who asked
-for it. Name what is wrong and fix it before the deploy, not after the
-rejection. Also read the terminal: `preview.py` logs every `/api/*` your UI
-called, which is the cheapest way to find a route missing from
-`runtime.api_routes` before it 404s in production.
+**4. Read the bar across the top of each picture.** Besides the handshake and
+the appearance, `preview.py` measures the first screen of the rendered app:
+how many elements are painted in the accent (red above four), whether one badge
+sits on more than half the rows of a list (red), and how far down the first
+list row starts. A red pill there is a finding exactly like a linter's.
+
+**5. Answer the design review in writing, and put the answers in your
+reply.** Copy `<plugin>/templates/design-review.md` beside the app directory,
+not inside it. Looking at a screenshot does not work on its own: an agent
+that photographed its app, looked, and criticised it out loud against the
+list of prohibitions saw nothing wrong — every mistake the owner then named was
+in that picture, and none of them was a prohibition. The questions are not a
+list of prohibitions:
+
+1. What is the most important thing on this screen — and does it *look* the
+   most important?
+2. How many accent-coloured things are on it? (The bar says. Over four, redo.)
+3. Cover the metadata with your hand. Does each list row still make sense?
+4. How much of the first screen do the filters and controls take before the
+   first row of data?
+5. Is this a screen for reading, for entering, or for sorting through a list —
+   and is it laid out as that kind (Step 0, item 6)?
+
+The fifth is the one that catches the expensive mistake: a reader built as a
+list-triage screen passes every rule. Answer per screen, fix what the answers
+name, re-shoot, and only then deploy. Also read the terminal: `preview.py`
+logs every `/api/*` your UI called, which is the cheapest way to find a route
+missing from `runtime.api_routes` before it 404s in production.
 
 ## Step 3.6 — Check the app against its manifest (MANDATORY)
 
@@ -538,6 +583,9 @@ packs. Exit 0 or fix what it names.
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
 | `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
+| `migrations/`: `CREATE INDEX CONCURRENTLY` in a file with anything else, a generated column on a function that is not IMMUTABLE (`array_to_string`, one-argument `to_tsvector`), more than 64 KB of SQL in the directory | a deploy that is refused, or a migration that fails per tenant while the new version goes live |
+| `SET search_path` inside an asyncpg `create_pool(init=...)` | an app that works in the cloud and fails on the second request everywhere else, starting with your own machine |
+| code that reads `DATABASE_URL` while the manifest says `"data": {"none": true}` | a green deploy and a crash on the first query — that mode injects no database |
 | an invented key in `runtime` (`"prot": 8000`) | the `runtime` sub-object is not strict, so it validates, deploys green and is silently ignored — a debugging session rather than a 422 |
 | an `/agent/*` path listed in `api_routes` | nothing. It configures nothing while looking exactly like it did. |
 | a relative `frontend.icon` (`icons/app.svg`) | that literal string painted into the launcher tile |
@@ -690,6 +738,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't bake your developer `mna_*` token into the image, and don't pass one at deploy.** You don't need to: the platform injects `MANAURUM_RUNTIME_TOKEN`. Your own token is a laptop credential for `POST /api/dev/v2/deploy`; an image containing it hands every future reader your deploy rights. (`os.secrets.get` is not an alternative here — it is itself a capability call that needs the runtime token first.)
 - **Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
 - **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql`, which the pipeline runs once per (app, tenant).
+- **Don't `SET search_path` in a pool's `init=`.** asyncpg resets the session every time a connection goes back to the pool, so the setting lasts one request. Pass it as `server_settings` — `templates/recipes/postgres/db.py`, and `references/v2-platform.md` → "Connecting from the container" for why.
 - **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.

@@ -25,6 +25,13 @@ WHAT IS CHECKED, and why each one is here rather than left to a human:
   a screenshot of a broken state into a screenshot of an empty one.
 * an unlisted `/api/*` still answers, because that is what lets you find a
   route your manifest never declared.
+* preview's first-screen meter, in a real headless Chrome: the patterns
+  page reads green (accent within budget, no badge on most rows), and a
+  copy of it with thirteen accent filters and a badge on every row reads
+  red on both. A meter nobody has seen go red is a meter nobody has
+  tested, and the first version of this one counted 0 on a teal screen
+  with two teal elements. Needs Chrome or Edge; skipped with a note when
+  neither is installed, and a failure when `CI` is set.
 * version_check prints NOTHING when the copy is current, and exactly one
   line of JSON when a newer version sits beside it. Printing on the happy
   path would put a paragraph into every session's context forever.
@@ -34,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -46,6 +54,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STARTER_STATIC = ROOT / "templates" / "v2-starter" / "src" / "static"
+PATTERNS = ROOT / "templates" / "patterns" / "index.html"
+BROWSERS = (
+    os.environ.get("CHROME", ""),
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+)
 # Something in preview's own framed page, so we can tell OUR server from
 # whatever else happens to be listening. A fixed port plus "it answered 200"
 # was enough to run the whole suite against a stranger's HTTP server and
@@ -200,6 +216,112 @@ def smoke_preview(problems: list) -> None:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+def find_browser():
+    for candidate in BROWSERS:
+        if not candidate:
+            continue
+        found = shutil.which(candidate) or (candidate if Path(candidate).is_file() else None)
+        if found:
+            return found
+    return None
+
+
+def dump_dom(browser: str, url: str, profile: Path) -> str:
+    """The framed page's DOM after preview's timers have run."""
+    args = [browser, "--headless=new", "--disable-gpu", "--user-data-dir=%s" % profile,
+            "--virtual-time-budget=4000", "--window-size=1240,1000", "--dump-dom", url]
+    if os.name != "nt":
+        args.insert(1, "--no-sandbox")
+    try:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return ""
+    return done.stdout
+
+
+def body_attr(dom: str, name: str):
+    match = re.search(r"<body[^>]*\b%s=\"([^\"]*)\"" % re.escape(name), dom)
+    return match.group(1) if match else None
+
+
+def loud_copy(html: str) -> str:
+    """The patterns page as it was first built: filters from .btn-ghost and a
+    status badge on every row."""
+    topics = ("Sales Pricing Hiring Suppliers Customers Ops Legal Tax Stock "
+              "Delivery Returns Marketing Misc").split()
+    ghosts = "".join('<button class="btn btn-ghost" type="button">%s</button>' % t
+                     for t in topics)
+    html = re.sub(r'<div class="chips" role="group" aria-label="Topic"[^>]*>.*?</div>',
+                  '<div class="toolbar">%s</div>' % ghosts, html, count=1, flags=re.S)
+    return html.replace('<span class="row-foot">',
+                        '<span class="row-foot"><span class="badge badge-accent">strong</span>')
+
+
+def smoke_meter(problems: list) -> None:
+    browser = find_browser()
+    if not browser:
+        message = ("no Chrome or Edge found (set CHROME=...) - preview's first-screen "
+                   "meter was not exercised")
+        if os.environ.get("CI"):
+            problems.append("scripts/smoke_tools.py: " + message)
+        else:
+            print("- " + message)
+        return
+
+    workdir = Path(tempfile.mkdtemp(prefix="smoke-meter-"))
+    site = workdir / "site"
+    css = site / "v2-starter" / "src" / "static"
+    css.mkdir(parents=True)
+    shutil.copy(STARTER_STATIC / "app.css", css / "app.css")
+    (site / "patterns").mkdir()
+    html = PATTERNS.read_text(encoding="utf-8")
+    (site / "patterns" / "index.html").write_text(html, encoding="utf-8")
+    (site / "loud").mkdir()
+    (site / "loud" / "index.html").write_text(loud_copy(html), encoding="utf-8")
+
+    port = free_port()
+    base = "http://127.0.0.1:%d" % port
+    process = subprocess.Popen(
+        [sys.executable, str(ROOT / "templates" / "preview.py"),
+         "--app", str(site), "--port", str(port)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        if wait_for_server(process, base) != "ok":
+            problems.append("templates/preview.py: did not come up for the meter check")
+            return
+        cases = (
+            # teal, because a colour that is not the default is the case that
+            # counted 0 while a transition was still running
+            ("patterns", "/__shell?entry=/patterns/index.html%23library&accent=teal", False),
+            ("patterns", "/__shell?entry=/patterns/index.html%23orders&accent=teal", False),
+            ("loud copy", "/__shell?entry=/loud/index.html%23library&accent=green", True),
+        )
+        for index, (label, path, loud) in enumerate(cases):
+            dom = dump_dom(browser, base + path, workdir / ("profile%d" % index))
+            count = body_attr(dom, "data-accent-count")
+            flood = body_attr(dom, "data-badge-flood")
+            if count is None:
+                problems.append("templates/preview.py: the meter never reported on the %s "
+                                "page (%s) - no data-accent-count on the shell's body"
+                                % (label, path))
+                continue
+            if loud and not (int(count) > 4 and flood):
+                problems.append("templates/preview.py: the %s should read red on accent and "
+                                "badges, it read accent=%s badge-flood=%s"
+                                % (label, count, flood))
+            if not loud and not (1 <= int(count) <= 4 and flood is None):
+                problems.append("templates/preview.py: the %s page (%s) should read green "
+                                "with at least one accent element, it read accent=%s "
+                                "badge-flood=%s" % (label, path, count, flood))
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 class HookTimedOut:
     """A hook that hangs is a five-second stall on every session start."""
 
@@ -298,6 +420,7 @@ def main() -> int:
     problems = []
     smoke_json(problems)
     smoke_preview(problems)
+    smoke_meter(problems)
     smoke_version_check(problems)
     for problem in problems:
         print("x %s" % problem)
