@@ -35,7 +35,7 @@ section, rewritten against the handler:
   redeploy never widens an existing grant; strict grants withhold this
   sensitive capability even at first install) and names the way through
   today: the platform operator, until tenant admins get a grant screen
-  (MAN-2570, registered in `scripts/open-claims.txt`);
+  (MAN-1112, registered in `scripts/open-claims.txt`);
 * the click section says to attach the `message` listener synchronously at
   startup, because the shell sends the link once.
 
