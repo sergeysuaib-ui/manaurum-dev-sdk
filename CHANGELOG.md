@@ -26,7 +26,9 @@ section, rewritten against the handler:
 * the error table uses the real codes (`user_not_in_tenant`,
   `integration_not_configured`; the old `user_not_found_in_tenant` and
   `missing_provider_credentials` never existed) and adds the new ones:
-  `412 in_app_unavailable`, `501 sms_unavailable`, `502 provider_rejected` /
+  `412 in_app_unavailable`, `429 notification_rate_limited` (in-app: 10 per
+  hour and 50 per day per app and recipient), `501 sms_unavailable`,
+  `502 provider_rejected` /
   `provider_unreachable`, `504 provider_outcome_unknown`, each with whether a
   retry is safe;
 * how the click reaches the app (`manaurum:init` `payload.deepLink`, or a

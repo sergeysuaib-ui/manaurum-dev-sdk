@@ -548,6 +548,7 @@ is `{"detail": {"error": …, …}}`, or `{"detail": "<code>"}` for the two stri
 | 412 | `in_app_unavailable`, `reason: app_not_live` | The platform found no live install of your app in this tenant (not deployed, disabled, or uninstalled), so it cannot deliver **any** in-app notification. | no — fix the install |
 | 412 | `in_app_unavailable`, `reason: app_slug_conflict` | Your `app_id` is also a built-in's or a catalogue app's, so the desktop could not tell your notifications from that app's. | no — redeploy under another `app_id` |
 | 412 | `integration_not_configured` | `email` / `sms` without the tenant's Resend / Twilio keys. | after the admin connects them |
+| 429 | `notification_rate_limited` (+ `window`: `hour`/`day`, `limit`) | In-app only: your app has already sent this recipient 10 notifications in the last hour or 50 in the last day. Muted or refused sends do not count. | later — batch or summarise instead |
 | 501 | `sms_unavailable` | The platform stores no phone numbers, so no SMS can be delivered. | no |
 | 502 | `provider_rejected` (+ `provider_status`) | The provider refused; nothing was sent. | no |
 | 502 | `provider_unreachable` | The provider could not be reached; nothing was sent. | yes, later |
