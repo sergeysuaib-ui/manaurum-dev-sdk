@@ -1,3 +1,54 @@
+# 2.11.1 — `os.notifications.send_to_user` as the platform actually answers it (MAN-2516)
+
+### Why
+
+The reference taught a request the gateway rejects and a response that hid the
+one state that mattered. A hosted app built from it (`zb-vip-crm`, "tell me when
+a new lead arrives") sent `deep_link: {app_id, path}` and got `422`; after
+switching to `link` it got `200 {"delivered": false}` for every lead, counted the
+200 as sent, and marked every lead "notified". Nobody was notified: in-app
+notifications were dead for every hosted app on the platform, and the page never
+mentioned that a 200 can mean "not delivered".
+
+The platform side is fixed in the monorepo (MAN-2516): in-app notifications from
+hosted apps are delivered, a platform-side non-delivery is a non-200, and a
+`delivered: false` always says why.
+
+### What changed
+
+`references/capabilities-reference.md`, the `os.notifications.send_to_user`
+section, rewritten against the handler:
+
+* the input field is **`link`** (a string handed back to your own app on click),
+  not `deep_link`; `title` is optional; `data` is accepted and not stored;
+* the output section says to read `delivered`, and lists every `reason` a
+  `delivered: false` carries — all of them about the recipient;
+* the error table uses the real codes (`user_not_in_tenant`,
+  `integration_not_configured`; the old `user_not_found_in_tenant` and
+  `missing_provider_credentials` never existed) and adds the new ones:
+  `412 in_app_unavailable`, `429 notification_rate_limited` (in-app: 10 per
+  hour and 50 per day per app and recipient), `501 sms_unavailable`,
+  `502 provider_rejected` /
+  `provider_unreachable`, `504 provider_outcome_unknown`, each with whether a
+  retry is safe;
+* how the click reaches the app (`manaurum:init` `payload.deepLink`, or a
+  `manaurum:deep-link` message), and that the SDK does not surface it;
+* `capability_not_granted` says how an install ends up without the grant (a
+  redeploy never widens an existing grant; strict grants withhold this
+  sensitive capability even at first install) and names the way through
+  today: the platform operator, until tenant admins get a grant screen
+  (MAN-1112, registered in `scripts/open-claims.txt`);
+* the click section says to attach the `message` listener synchronously at
+  startup, because the shell sends the link once.
+
+Also in the same file: the gateway section no longer says a wildcard `"*"` grant
+allows everything. Wildcard grants were removed in MAN-1585.
+
+`references/sdk-api.md`: the four mentions of SDK 2.2.0 now say 2.3.0, the
+version `manaurum-v2.mjs` carries. Each statement was re-checked against 2.3.0
+(it still reads neither `granted_capabilities` nor `deepLink`, and still has no
+window-framing helpers).
+
 # 2.11.0 — the backend contract gets a program that checks it (MAN-2533)
 
 ### Why

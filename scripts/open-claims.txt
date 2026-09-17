@@ -18,3 +18,4 @@
 MAN-1385  Backlog      2026-09-09  `pip install manaurum-cli` still 404s on PyPI, so the released wheel predates the new scaffold.
 MAN-1401  In Progress  2026-09-09  How a v2 hosted app consumes the shared design system is still open; design.md and reference-apps.md both say so.
 MAN-1404  In Progress  2026-09-09  Finance is not yet a v2 hosted app, so reference-apps.md cannot use it as the ceiling reference.
+MAN-1112  Todo         2026-09-17  Tenant admins have no screen to grant a withheld sensitive capability; capabilities-reference.md sends developers to the platform operator.

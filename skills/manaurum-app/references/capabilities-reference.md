@@ -48,8 +48,8 @@ These fire in the gateway, before any handler code, so they apply to **every** c
 | 403 | `capability_denied_in_dev_mode` | A `runtime.mode: dev` app calling a capability outside the dev allow-list. Publish the app. |
 
 Grant enforcement is **unconditional** — it is not "when wired". It runs ahead of quota,
-dispatch and audit, and only dev-mode apps and active BYO hosts short-circuit it. A
-wildcard `"*"` grant allows everything.
+dispatch and audit, and only dev-mode apps and active BYO hosts short-circuit it. There
+is no wildcard grant (MAN-1585): every capability has to be listed.
 
 The gateway **accepts** `X-Manaurum-User-Context` on `/api/capability/<name>` and
 **requires** it for `auth_mode: "user"` capabilities. On `auth_mode: "app"` capabilities
@@ -488,33 +488,81 @@ Two providers: `anthropic-vision` (claude-3-5-sonnet), `openai-vision` (gpt-4o).
 
 ## `os.notifications.send_to_user` — deliver a notification
 
-Three channels: `in_app` (Manaurum desktop notification center), `email` (Resend BYOK), `sms` (Twilio BYOK).
+Three channels: `in_app` (the Notification Center on the user's desktop, free),
+`email` (Resend, BYOK), `sms` (Twilio, BYOK — see `501 sms_unavailable` below).
 
 **Input:**
 
 ```json
 {
-  "to_user_id": "<uuid>",
+  "to_user_id": "<user id>",
   "channel":    "in_app",
   "title":      "Invoice ready",
   "body":       "Your invoice #123 is ready to review.",
-  "deep_link":  { "app_id": "v2-smoke", "path": "/invoices/123" }
+  "link":       "/invoices/123"
 }
 ```
 
-| Field | Required |
+| Field | Required | Notes |
+|---|---|---|
+| `to_user_id` | yes | A member of your tenant. |
+| `channel` | yes | `in_app` / `email` / `sms` |
+| `body` | yes | 1–4096 chars; in-app keeps the first 2000. |
+| `title` | no | ≤ 200 chars. In-app uses the start of `body` when omitted. |
+| `link` | no | In-app only, ≤ 1024 chars. Opaque to the platform; handed back to **your** app when the user clicks the notification (below). |
+| `data` | no | Any object. Accepted and not stored. |
+
+There is **no `user_id` and no `deep_link` field**. The input schema forbids unknown
+fields, so either one is `422 input_schema_violation`. (Up to 2.11.0 this page
+documented `deep_link: {app_id, path}`; that request never worked. A notification can
+only ever open the app that sent it.)
+
+**Output — read `delivered`, not the HTTP status:**
+
+```json
+{ "delivered": true,  "channel": "in_app", "message_id": "<id>" }
+{ "delivered": false, "channel": "in_app", "reason": "muted_by_recipient" }
+```
+
+A `200` with `delivered: false` always carries a `reason`, and every reason describes
+the **recipient** — something your app cannot change, so do not retry:
+
+| `reason` | Meaning |
 |---|---|
-| `to_user_id` | yes |
-| `channel` | yes (`in_app` / `email` / `sms`) |
-| `title` | yes |
-| `body` | yes |
-| `deep_link` | optional (in-app only) |
+| `muted_by_recipient` | The user switched your app off in Settings → Notifications. |
+| `app_not_installed_for_recipient` | Your app is not installed in that user's workspace. |
+| `recipient_has_no_email` | `channel: email`, and the user has no address on file. |
+| `recipient_has_no_phone` | `channel: sms`, and the user has no number on file. |
 
-**Output:** `{ "delivered": true, "channel": "in_app" }`
+A `200 {"delivered": false}` with **no** `reason` comes from a platform older than
+MAN-2516, which answered that way for every in-app send from a hosted app: nothing was
+delivered.
 
-**Errors:**
-- `404 user_not_found_in_tenant` — `to_user_id` not a member of any workspace in your tenant.
-- `412 missing_provider_credentials` — for email/sms when Resend/Twilio keys aren't set.
+**Errors** — anything the platform or the provider could not do is non-200. The body
+is `{"detail": {"error": …, …}}`, or `{"detail": "<code>"}` for the two string codes.
+
+| HTTP | `detail` / `detail.error` | Meaning | Retry? |
+|---|---|---|---|
+| 403 | `capability_not_granted` | The install is not granted this capability (gateway gate, above). A redeploy never widens an existing install's grant, so a capability you added in a later version is missing; with strict grants switched on, this **sensitive** capability is withheld even at first install. A grant screen is not yet available to tenant admins (MAN-1112); ask the platform operator. | no |
+| 404 | `user_not_in_tenant` | `to_user_id` is not a member of your tenant. | no |
+| 412 | `in_app_unavailable`, `reason: app_not_live` | The platform found no live install of your app in this tenant (not deployed, disabled, or uninstalled), so it cannot deliver **any** in-app notification. | no — fix the install |
+| 412 | `in_app_unavailable`, `reason: app_slug_conflict` | Your `app_id` is also a built-in's or a catalogue app's, so the desktop could not tell your notifications from that app's. | no — redeploy under another `app_id` |
+| 412 | `integration_not_configured` | `email` / `sms` without the tenant's Resend / Twilio keys. | after the admin connects them |
+| 429 | `notification_rate_limited` (+ `window`: `hour`/`day`, `limit`) | In-app only: your app has already sent this recipient 10 notifications in the last hour or 50 in the last day. Muted or refused sends do not count. | later — batch or summarise instead |
+| 501 | `sms_unavailable` | The platform stores no phone numbers, so no SMS can be delivered. | no |
+| 502 | `provider_rejected` (+ `provider_status`) | The provider refused; nothing was sent. | no |
+| 502 | `provider_unreachable` | The provider could not be reached; nothing was sent. | yes, later |
+| 504 | `provider_outcome_unknown` | The provider call failed after it was sent. The message **may** have been delivered. | only if a duplicate is acceptable |
+
+**When the user clicks.** The Notification Center opens your app's window (switching
+tenant first if needed) and passes `{ "action": "open", "payload": { "link": "…" } }`
+to your iframe — `payload` is `{}` when you sent no `link`. It arrives inside
+`manaurum:init` as `payload.deepLink` when the click opened your window, and as a
+`manaurum:deep-link` message when the window was already open. The platform does not
+navigate your iframe; route to `link` yourself. The v2 SDK does not surface either
+message (`sdk-api.md`), so add your own `message` listener — and attach it synchronously
+at startup: the shell sends the link once and then forgets it, so a listener registered
+later (in a React effect, after a fetch) may miss it.
 
 ---
 
