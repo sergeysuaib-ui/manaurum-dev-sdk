@@ -591,15 +591,20 @@ unavailable to dev-mode apps because that path bypasses install grants.
       "user_id": "<user id>",
       "display_name": "Ada Lovelace",
       "email": "ada@example.com",
-      "avatar_url": "https://example.com/ada.png"
+      "avatar_url": "/api/profile/uploads/ada.png"
     }
   ]
 }
 ```
 
-`avatar_url` is omitted when the profile has no non-blank avatar. Only active
-users are returned. Duplicate memberships collapse to one user, and rows are
-ordered deterministically by normalized email and then `user_id`.
+`avatar_url` is omitted when the profile has no non-blank avatar. The value is
+usually a path relative to the Manaurum Core origin (for example
+`/api/profile/uploads/...`), not the hosted app's origin. Resolve a relative
+value against `MANAURUM_CORE_URL` before using it in server-rendered output; a
+browser `<img src="/api/profile/uploads/...">` inside the app iframe would
+otherwise request the app container and return 404. Only active users are
+returned. Duplicate memberships collapse to one user, and rows are ordered
+deterministically by normalized email and then `user_id`.
 `display_name` prefers the profile's full name, then a non-default nickname,
 then the email local-part.
 
