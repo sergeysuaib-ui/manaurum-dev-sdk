@@ -1,3 +1,11 @@
+# 2.11.2 — tenant directory capability (MAN-2519)
+
+Added `os.directory.list_users` to the app skill and the exhaustive capability
+reference. The new section records the exact `{}` input, response fields,
+active-member and ordering rules, tenant binding, display-name fallback, and
+the sensitive install-grant and dev-mode behavior. Step 3 now reminds builders
+that declaring a sensitive capability is not the same as receiving its grant.
+
 # 2.11.1 — `os.notifications.send_to_user` as the platform actually answers it (MAN-2516)
 
 ### Why

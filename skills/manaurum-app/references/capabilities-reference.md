@@ -566,6 +566,50 @@ later (in a React effect, after a fetch) may miss it.
 
 ---
 
+## `os.directory.list_users` — list active tenant members
+
+Use this app-scoped capability to populate assignee and notification-recipient
+pickers. The gateway takes the tenant from the verified runtime context; the
+request cannot name or switch tenants.
+
+This is a **sensitive** capability. Declare it in the manifest, and handle
+`403 capability_not_granted`: strict install grants may withhold it. It is also
+unavailable to dev-mode apps because that path bypasses install grants.
+
+**Input:** exactly an empty object. Unknown fields are rejected.
+
+```json
+{}
+```
+
+**Output:**
+
+```json
+{
+  "users": [
+    {
+      "user_id": "<user id>",
+      "display_name": "Ada Lovelace",
+      "email": "ada@example.com",
+      "avatar_url": "https://example.com/ada.png"
+    }
+  ]
+}
+```
+
+`avatar_url` is omitted when the profile has no non-blank avatar. Only active
+users are returned. Duplicate memberships collapse to one user, and rows are
+ordered deterministically by normalized email and then `user_id`.
+`display_name` prefers the profile's full name, then a non-default nickname,
+then the email local-part.
+
+**Errors:**
+
+- `403 capability_not_granted` — the install did not grant this sensitive read.
+- `403 capability_denied_in_dev_mode` — a dev-mode app attempted the call.
+
+---
+
 ## `os.events.emit` — publish an inter-app event
 
 Writes to `events_outbox` in the caller's transaction. The dispatcher picks it up and delivers to subscribers (other apps that registered for this event type) at-least-once with backoff: 1m / 5m / 15m / 1h / 4h / DLQ-24h.
