@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.11.1.** A plugin install caches one directory per
+> **This page is SDK 2.11.2.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -361,6 +361,11 @@ Headers:
 
 Body shape: a JSON object matching the capability's input schema (no wrapper). Read `references/capabilities-reference.md` for the canonical input/output for every capability.
 
+Declare every capability the app calls in `requires_capabilities` (or in
+`optional_capabilities` when the feature degrades cleanly). Sensitive reads such
+as `os.directory.list_users` may be withheld by the tenant's install grants, so
+handle `403 capability_not_granted` instead of assuming declaration is consent.
+
 **Working with the user's Drive (Files app):** `os.files.*` is your app's PRIVATE scratch — the user never sees it. To put a document into the USER's file system, read a user-picked file, or work in a folder the user granted you, use the `os.drive.*` capabilities plus the browser-side `app.pickFromDrive()` picker — all consent-gated and requiring the forwarded `X-Manaurum-User-Context` header. Gateway contract in `references/capabilities-reference.md` § os.drive; the browser-side picker is in `references/sdk-api.md` § "Platform v2 — frontend SDK (`manaurum-v2.mjs`)".
 
 ```javascript
@@ -395,6 +400,7 @@ Capabilities available today:
 | `os.ai.transcribe` | Speech-to-text (BYOK — needs the tenant's **OpenAI** key). ≤ 25 MB decoded audio. Pair with manifest `"permissions": ["microphone"]` to record in the shell iframe. |
 | `os.ocr.extract` | OCR via vision LLM (BYOK). |
 | `os.notifications.send_to_user` | In-app / Resend / Twilio. |
+| `os.directory.list_users` | Active members of the calling tenant for assignee and recipient pickers. Sensitive; may be withheld at install. |
 | `os.events.emit` | Inter-app events (transactional outbox). |
 | `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. Binary payloads via `body_base64` / `response_format: "base64"` (~5 MB each way). |
 | `os.compliance.audit_query` | Read your own capability call audit log. |
