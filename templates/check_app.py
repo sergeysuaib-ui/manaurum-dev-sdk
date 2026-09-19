@@ -533,8 +533,15 @@ def real_validator():
         return None
     try:
         validate_migration(MIXED_PROBE, breaking_allowed=False)
-    except MigrationValidationError:
-        knows_mixing = True
+    except MigrationValidationError as exc:
+        # Require the verdict to be THIS rule. Treating any refusal as "knows
+        # it" would let a copy that refuses the probe for an unrelated reason
+        # suppress the note while the rule is in fact unchecked - which is the
+        # silent-coverage failure this whole probe exists to remove.
+        knows_mixing = any(
+            err.get("classification") == "mixed_transaction"
+            for err in getattr(exc, "errors", [])
+        )
     except Exception:  # noqa: BLE001 - wrong signature, broken install
         return None
     else:

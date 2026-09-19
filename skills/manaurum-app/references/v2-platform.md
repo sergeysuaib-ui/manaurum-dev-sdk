@@ -493,7 +493,7 @@ CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
 
 Several `CONCURRENTLY` statements may share a file, since the whole file then runs outside a transaction. The platform decides this from the parse tree, so the word in a comment, in a string literal or inside a quoted identifier is not a request.
 
-**If you already shipped a file that mixes.** A migration is run once per (app, tenant) and never re-run, so a file your tenants have already applied is skipped by name and checksum — the deploy will not refuse it, and you must **not** edit it: changing an applied file is refused for every tenant that ran it, which is worse than the original problem. `manaurum app validate-migration` still flags it, because it judges the files in front of it rather than what any tenant has applied. Treat that as a warning about **new installs** — a tenant installing the app for the first time does run that file, and will fail on it. The fix is a new pair of files that arrive at the same schema, not a rewrite of the old one.
+**If you already shipped a file that mixes.** A migration is run once per (app, tenant) and never re-run, so a file your tenants have already applied is skipped by name and checksum — the deploy will not refuse it, and you must **not** edit it: changing an applied file is refused for every tenant that ran it, which is worse than the original problem. `manaurum app validate-migration` still flags it, because it judges the files in front of it rather than what any tenant has applied. Treat that as a warning about **new installs** — a tenant installing the app for the first time reaches that file, is refused at it, and blocks the whole deploy for every tenant. There is no clean fix for that tenant from the app side: the offending file is still the first one it must apply. Adding new files ahead of it does not help. If you need the app installable again, that is an operator conversation, not a migration you can write.
 
 Validate locally before you deploy:
 
@@ -505,7 +505,7 @@ manaurum app validate-migration migrations/ --breaking            # mirrors migr
 
 It runs the exact same validator the deploy pipeline runs, file by file in the same order, so green here means green there.
 
-`check_app.py` uses that validator too, when a copy that knows this rule is importable. Without one it does **not** guess: its pattern list cannot decide the two context-sensitive rules or the `CONCURRENTLY` one — no text test can — so it leaves them unchecked and prints a note saying exactly which rules went unchecked. A `clean` from `check_app.py` alone is not the same statement as a green from the command above.
+`check_app.py` uses that validator too, when a copy that knows this rule is importable. With no usable copy it does **not** guess — no text test can decide these rules — so it leaves them unchecked; with a copy too old to know the `CONCURRENTLY` rule, it checks everything else against the real validator and leaves that one. Either way it prints a note naming exactly what went unchecked. A `clean` from `check_app.py` alone is not the same statement as a green from the command above.
 
 ### Runtime is read/write, not DDL
 
