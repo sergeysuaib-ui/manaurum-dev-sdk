@@ -493,6 +493,8 @@ CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
 
 Several `CONCURRENTLY` statements may share a file, since the whole file then runs outside a transaction. The platform decides this from the parse tree, so the word in a comment, in a string literal or inside a quoted identifier is not a request.
 
+**If you already shipped a file that mixes.** A migration is run once per (app, tenant) and never re-run, so a file your tenants have already applied is skipped by name and checksum — the deploy will not refuse it, and you must **not** edit it: changing an applied file is refused for every tenant that ran it, which is worse than the original problem. `manaurum app validate-migration` still flags it, because it judges the files in front of it rather than what any tenant has applied. Treat that as a warning about **new installs** — a tenant installing the app for the first time does run that file, and will fail on it. The fix is a new pair of files that arrive at the same schema, not a rewrite of the old one.
+
 Validate locally before you deploy:
 
 ```bash
