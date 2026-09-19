@@ -27,6 +27,7 @@ built with it is unchecked in that direction.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -211,15 +212,21 @@ APP_MUTATIONS = [
     ("capabilities: declared but not called", declared_capability_nobody_calls,
      "over-broad grant request"),
     # Two acceptable wordings per rule: `check_app.py` defers to the deploy's
-    # own AST validator when `manaurum-cli` is importable and falls back to
-    # its built-in pattern list when it is not (MAN-2624), and the two phrase
-    # the same verdict differently. Either is a pass; silence is not.
+    # own AST validator when a usable `manaurum-cli` is importable and falls
+    # back to its built-in pattern list when it is not (MAN-2624), and the two
+    # phrase the same verdict differently. Either is a pass; silence is not.
     ("migrations: destructive DDL, no migration.breaking", destructive_migration,
      ("DROP without manifest.migration.breaking", "destructive - DROP")),
     ("migrations: an anonymous DO $$ block", anonymous_do_block,
      "DO $$"),
+    # The fourth element: this rule cannot be decided from the text - the word
+    # appears in comments, string literals and quoted identifiers, and every
+    # text test gets at least one of those wrong in both directions (the
+    # executor learned that in MAN-2510). `check_app.py` therefore asks the
+    # real validator or reports the rule unchecked, so the mutation runs
+    # against a stub validator rather than against a guess.
     ("migrations: CONCURRENTLY sharing a file", concurrently_sharing_a_file,
-     ("must contain nothing else", "nothing else")),
+     "must contain nothing else", True),
     ("migrations: a file that is not .sql", migration_that_is_not_sql,
      "not a .sql file"),
     ("migrations: numbers of different widths", migrations_out_of_order,
@@ -414,9 +421,55 @@ REPO_MUTATIONS = [
 ]
 
 
-def run(linter: Path, target: Path):
+def run(linter: Path, target: Path, env=None):
     return subprocess.run([sys.executable, str(linter), str(target)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
+
+
+# A stand-in for `manaurum_cli.migrations`, written into the mutation's own
+# temp directory. MAN-2624: `check_app.py` defers its migration rule to the
+# deploy's real AST validator when one is importable, and CI installs no
+# Python packages - so without a double, the branch this repo added is the
+# one branch nothing ever runs.
+#
+# It is a DOUBLE, not a second opinion: it exists to prove check_app.py calls
+# the validator once per file, renders its `errors` rows, and does not skip
+# the other rules. The real verdicts live in the monorepo, behind pglast.
+# Nothing here should ever be treated as the rule.
+STUB_VALIDATOR = '''"""Test double for manaurum_cli.migrations - NOT the real rules."""
+
+
+class MigrationValidationError(Exception):
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__("; ".join(
+            "%s: %s" % (e["classification"], e["reason"]) for e in errors))
+
+
+def validate_migration(sql, *, breaking_allowed=False):
+    statements = [s for s in sql.split(";") if s.strip()]
+    concurrent = [s for s in statements if "CONCURRENTLY" in s.upper()]
+    if concurrent and len(concurrent) != len(statements):
+        raise MigrationValidationError([{
+            "statement": concurrent[0].strip(),
+            "classification": "mixed_transaction",
+            "reason": ("a migration file that uses CONCURRENTLY must contain "
+                       "nothing else - CONCURRENTLY cannot run inside a "
+                       "transaction, and the rest of the file needs one."),
+        }])
+    return None
+'''
+
+
+def with_stub_validator(workdir: Path):
+    """An environment in which `check_app.py` finds a usable validator."""
+    package = workdir / "stub" / "manaurum_cli"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "migrations.py").write_text(STUB_VALIDATOR, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(workdir / "stub")
+    return env
 
 
 def said(output: str, expected) -> bool:
@@ -504,9 +557,13 @@ def main() -> int:
         ran += 1
         run_repo_mutation(name, mutate, expected, problems)
 
-    cases = ([(CHECK_APP, "app", *case) for case in APP_MUTATIONS]
-             + [(CHECK_UI, "ui", *case) for case in UI_MUTATIONS])
-    for linter, kind, name, mutate, expected in cases:
+    cases = ([(CHECK_APP, "app", case) for case in APP_MUTATIONS]
+             + [(CHECK_UI, "ui", case) for case in UI_MUTATIONS])
+    for linter, kind, case in cases:
+        # A mutation may carry a fourth element: needs_validator, for a rule
+        # `check_app.py` can only decide by asking the deploy's own validator.
+        name, mutate, expected = case[0], case[1], case[2]
+        needs_validator = case[3] if len(case) > 3 else False
         if wanted and not any(word in name.lower() for word in wanted):
             continue
         ran += 1
@@ -518,7 +575,8 @@ def main() -> int:
                                                           ".pytest_cache"))
             mutate(app)
             target = app if kind == "app" else app / "src" / "static"
-            done = run(linter, target)
+            env = with_stub_validator(workdir) if needs_validator else None
+            done = run(linter, target, env=env)
             if done.returncode == 0:
                 problems.append("%s SURVIVED - %s said `clean` on it. That rule is "
                                 "not being checked." % (name, linter.name))

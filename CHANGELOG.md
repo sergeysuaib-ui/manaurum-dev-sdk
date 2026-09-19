@@ -37,19 +37,33 @@ pointing at an event stream the operator has no job on.
 
 `templates/check_app.py`:
 
-* the migration rule defers to the deploy's own AST validator when
-  `manaurum-cli` is importable, and reports exactly what the deploy will say.
+* the migration rule defers to the deploy's own AST validator when a copy that
+  knows this rule is importable, and reports exactly what the deploy will say.
   Stdlib-only still holds - the import failing is an ordinary outcome;
-* when it is not importable the built-in pattern list runs as before, plus the
-  `CONCURRENTLY`-shares-a-file check, and a note says the run was the subset
-  and how to get the full one. Silence no longer means two different things.
+* the capability is PROBED, not read off a version string. The rule landed in
+  the CLI without a version bump, and the wheel authors can actually install
+  predates it, so "is it installed" was the wrong question: a stale copy would
+  have silently replaced this check with nothing;
+* it does NOT guess when no usable validator is there. A text test cannot
+  decide this rule - `'a -- b'` inside a string literal eats the rest of the
+  line, `DETACH PARTITION "m_2024--old" CONCURRENTLY` reads as a comment, and
+  the word inside a string or a nested block comment reads as a request. Core
+  settled this in MAN-2510: "regex-based detection is explicitly rejected: the
+  AST is the contract." So the run prints a note naming exactly which rules
+  went unchecked, and `clean` stops meaning two different things;
+* a validator that refuses without a per-statement breakdown is reported
+  rather than swallowed.
 
 `scripts/linter_mutations.py`:
 
 * a mutation for the new rule - the shape an author lands on by following the
-  validator's advice literally;
+  validator's advice literally. It runs against a stub validator on
+  `PYTHONPATH`, which makes it deterministic AND gives the validator branch
+  its first test: CI installs no Python packages, so without a double that
+  branch is the one thing nothing ever runs. The stub is a test double, not a
+  second opinion - the real verdicts live in the monorepo, behind pglast;
 * a mutation may name more than one acceptable wording, because one rule can
-  now be reported by either engine. Still a substring match: a mutation cannot
+  be reported by either engine. Still a substring match: a mutation cannot
   pass on the linter saying something unrelated.
 
 # 2.11.1 — `os.notifications.send_to_user` as the platform actually answers it (MAN-2516)

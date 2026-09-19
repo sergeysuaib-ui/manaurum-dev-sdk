@@ -446,8 +446,8 @@ Every statement is parsed with `pglast` and classified. Getting the tiers wrong 
 
 Two additives are context-sensitive — **each file** is analysed as a whole, and one file is all the validator ever sees at once. That matters more than it sounds: `0001_init.sql` creating the table does not make a plain `CREATE INDEX` in `0002_add_index.sql` additive, because by the time `0002` runs the table exists and has rows. Judge each file the way the tenant's database will meet it — on its own, in order.
 
-- plain `CREATE INDEX` **on a table created earlier in the same script** → additive. On a pre-existing table → **destructive** ("locks the table; use CONCURRENTLY").
-- `ALTER COLUMN … SET NOT NULL` **on a column added earlier in the same script** → additive. On an existing column → **destructive**. The rule is *fresh column*, not "has a default".
+- plain `CREATE INDEX` **on a table created earlier in the same file** → additive. On a pre-existing table → **destructive** ("locks the table; use CONCURRENTLY").
+- `ALTER COLUMN … SET NOT NULL` **on a column added earlier in the same file** → additive. On an existing column → **destructive**. The rule is *fresh column*, not "has a default".
 
 **neutral (passes):** `INSERT` · `UPDATE` · `DELETE` · `SELECT`.
 
@@ -483,7 +483,7 @@ migrations/
   0003_index_body.sql    CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
 ```
 
-Not this — it validates as two separate files and is refused as one:
+Not this — the same two statements in ONE file, which is refused:
 
 ```sql
 -- 0002_add_body.sql  ✗
@@ -491,7 +491,7 @@ ALTER TABLE note ADD COLUMN body text;
 CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
 ```
 
-Several `CONCURRENTLY` statements may share a file, since the whole file then runs outside a transaction. The word in a comment or a string literal is not a request — the rule is read from the parse tree, not the text.
+Several `CONCURRENTLY` statements may share a file, since the whole file then runs outside a transaction. The platform decides this from the parse tree, so the word in a comment, in a string literal or inside a quoted identifier is not a request.
 
 Validate locally before you deploy:
 
@@ -503,7 +503,7 @@ manaurum app validate-migration migrations/ --breaking            # mirrors migr
 
 It runs the exact same validator the deploy pipeline runs, file by file in the same order, so green here means green there.
 
-`check_app.py` uses that validator too when `manaurum-cli` is importable; without it, that one rule falls back to a pattern list that catches less, and says so in its output.
+`check_app.py` uses that validator too, when a copy that knows this rule is importable. Without one it does **not** guess: its pattern list cannot decide the two context-sensitive rules or the `CONCURRENTLY` one — no text test can — so it leaves them unchecked and prints a note saying exactly which rules went unchecked. A `clean` from `check_app.py` alone is not the same statement as a green from the command above.
 
 ### Runtime is read/write, not DDL
 
