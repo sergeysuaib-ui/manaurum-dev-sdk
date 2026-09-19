@@ -135,6 +135,23 @@ def migration_that_is_not_sql(app: Path) -> None:
     (directory / "0002_seed.py").write_text("# seeds\n", encoding="utf-8")
 
 
+def concurrently_sharing_a_file(app: Path) -> None:
+    # MAN-2624. The shape an author lands on by following the validator's own
+    # advice: it refuses a plain CREATE INDEX and says "use CONCURRENTLY", so
+    # they add the word to the file they already have. The deploy then refuses
+    # THAT, because a CONCURRENTLY file has to run outside a transaction and
+    # everything else in it needs one. Until this mutation existed the rule
+    # had no local coverage in either checker.
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / "0001_init.sql").write_text(
+        "CREATE TABLE note (id text primary key);\n", encoding="utf-8")
+    (directory / "0002_add_index.sql").write_text(
+        "ALTER TABLE note ADD COLUMN body text;\n"
+        "CREATE INDEX CONCURRENTLY note_body_idx ON note (body);\n",
+        encoding="utf-8")
+
+
 def migrations_out_of_order(app: Path) -> None:
     directory = app / "migrations"
     directory.mkdir(exist_ok=True)
@@ -193,10 +210,16 @@ APP_MUTATIONS = [
      "capability_not_granted"),
     ("capabilities: declared but not called", declared_capability_nobody_calls,
      "over-broad grant request"),
+    # Two acceptable wordings per rule: `check_app.py` defers to the deploy's
+    # own AST validator when `manaurum-cli` is importable and falls back to
+    # its built-in pattern list when it is not (MAN-2624), and the two phrase
+    # the same verdict differently. Either is a pass; silence is not.
     ("migrations: destructive DDL, no migration.breaking", destructive_migration,
-     "DROP without manifest.migration.breaking"),
+     ("DROP without manifest.migration.breaking", "destructive - DROP")),
     ("migrations: an anonymous DO $$ block", anonymous_do_block,
      "DO $$"),
+    ("migrations: CONCURRENTLY sharing a file", concurrently_sharing_a_file,
+     ("must contain nothing else", "nothing else")),
     ("migrations: a file that is not .sql", migration_that_is_not_sql,
      "not a .sql file"),
     ("migrations: numbers of different widths", migrations_out_of_order,
@@ -396,6 +419,22 @@ def run(linter: Path, target: Path):
                           capture_output=True, text=True)
 
 
+def said(output: str, expected) -> bool:
+    """Did the linter name the thing?
+
+    ``expected`` is one substring, or several of which ANY will do. The
+    plural form exists because one rule can be reported by two different
+    engines - `check_app.py` uses the deploy's AST validator when it is
+    importable and its own pattern list when it is not - and the point of
+    the assertion is that the rule FIRED, not that a particular sentence
+    was printed. It is still a substring match, so a mutation cannot pass
+    on a linter saying something unrelated.
+    """
+    if isinstance(expected, str):
+        expected = (expected,)
+    return any(item in output for item in expected)
+
+
 IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git",
                                 ".venv", "venv", "*.pyc")
 
@@ -433,7 +472,7 @@ def run_repo_mutation(name, mutate, expected, problems: list) -> None:
         elif done.returncode == 0:
             problems.append("%s SURVIVED - check_repo.py said `clean` on it. That "
                             "rule is not being checked." % name)
-        elif expected not in done.stdout:
+        elif not said(done.stdout, expected):
             problems.append("%s: check_repo.py went red but did not say %r. It "
                             "said:\n%s" % (name, expected, done.stdout.strip()))
         else:
@@ -483,7 +522,7 @@ def main() -> int:
             if done.returncode == 0:
                 problems.append("%s SURVIVED - %s said `clean` on it. That rule is "
                                 "not being checked." % (name, linter.name))
-            elif expected not in done.stdout:
+            elif not said(done.stdout, expected):
                 problems.append("%s: %s went red but did not say %r. It said:\n%s"
                                 % (name, linter.name, expected, done.stdout.strip()))
             else:

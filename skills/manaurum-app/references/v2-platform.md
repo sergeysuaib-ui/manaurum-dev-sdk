@@ -444,7 +444,7 @@ Every statement is parsed with `pglast` and classified. Getting the tiers wrong 
 
 **additive (passes):** `CREATE TABLE` · `CREATE TABLE AS` · `CREATE INDEX CONCURRENTLY` · `CREATE VIEW` · `CREATE SEQUENCE` · `CREATE SCHEMA` · `CREATE TYPE AS ENUM` · `ALTER TYPE ADD VALUE` · `CREATE TYPE` (composite) · `CREATE DOMAIN` · `CREATE TRIGGER` · `CREATE POLICY` · `COMMENT ON` · `GRANT` (object privilege) · `ALTER TABLE ADD COLUMN` · `ALTER TABLE ENABLE ROW LEVEL SECURITY` · `ALTER TABLE FORCE ROW LEVEL SECURITY` · `CREATE FUNCTION` **only** with `LANGUAGE sql` or `LANGUAGE plpgsql`.
 
-Two additives are context-sensitive — the script is analysed as a whole:
+Two additives are context-sensitive — **each file** is analysed as a whole, and one file is all the validator ever sees at once. That matters more than it sounds: `0001_init.sql` creating the table does not make a plain `CREATE INDEX` in `0002_add_index.sql` additive, because by the time `0002` runs the table exists and has rows. Judge each file the way the tenant's database will meet it — on its own, in order.
 
 - plain `CREATE INDEX` **on a table created earlier in the same script** → additive. On a pre-existing table → **destructive** ("locks the table; use CONCURRENTLY").
 - `ALTER COLUMN … SET NOT NULL` **on a column added earlier in the same script** → additive. On an existing column → **destructive**. The rule is *fresh column*, not "has a default".
@@ -466,6 +466,33 @@ Consequences worth planning around:
 
 For genuinely destructive work, set `migration.breaking: true` with a written `reason` — and remember it buys you the `destructive` tier only, never the `forbidden` one.
 
+### A file that uses `CONCURRENTLY` may contain nothing else
+
+This is the rule you meet immediately after the one above, because the remedy for "plain `CREATE INDEX` locks the table; use `CONCURRENTLY`" walks straight into it.
+
+`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block — Postgres refuses it outright (`25001`). Everything else in a migration needs that transaction, because the promise is that a failure rolls your file back. Both cannot be true of one file, so the platform resolves it the only way that keeps the promise: **a file whose statements are all `CONCURRENTLY` runs outside a transaction; a file that mixes is refused.**
+
+`migration.breaking: true` does not open this gate. It answers "yes, this shrinks the schema"; it is not a way to ask Postgres for something it will not do.
+
+So the second migration is **two** files, not one:
+
+```
+migrations/
+  0001_init.sql          CREATE TABLE …
+  0002_add_body.sql      ALTER TABLE note ADD COLUMN body text;
+  0003_index_body.sql    CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
+```
+
+Not this — it validates as two separate files and is refused as one:
+
+```sql
+-- 0002_add_body.sql  ✗
+ALTER TABLE note ADD COLUMN body text;
+CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
+```
+
+Several `CONCURRENTLY` statements may share a file, since the whole file then runs outside a transaction. The word in a comment or a string literal is not a request — the rule is read from the parse tree, not the text.
+
 Validate locally before you deploy:
 
 ```bash
@@ -474,7 +501,9 @@ manaurum app validate-migration migrations/0002_add_line_items.sql
 manaurum app validate-migration migrations/ --breaking            # mirrors migration.breaking: true
 ```
 
-It runs the exact same validator the deploy pipeline runs, so green here means green there.
+It runs the exact same validator the deploy pipeline runs, file by file in the same order, so green here means green there.
+
+`check_app.py` uses that validator too when `manaurum-cli` is importable; without it, that one rule falls back to a pattern list that catches less, and says so in its output.
 
 ### Runtime is read/write, not DDL
 
