@@ -27,6 +27,7 @@ built with it is unchecked in that direction.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -135,6 +136,23 @@ def migration_that_is_not_sql(app: Path) -> None:
     (directory / "0002_seed.py").write_text("# seeds\n", encoding="utf-8")
 
 
+def concurrently_sharing_a_file(app: Path) -> None:
+    # MAN-2624. The shape an author lands on by following the validator's own
+    # advice: it refuses a plain CREATE INDEX and says "use CONCURRENTLY", so
+    # they add the word to the file they already have. The deploy then refuses
+    # THAT, because a CONCURRENTLY file has to run outside a transaction and
+    # everything else in it needs one. Until this mutation existed the rule
+    # had no local coverage in either checker.
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / "0001_init.sql").write_text(
+        "CREATE TABLE note (id text primary key);\n", encoding="utf-8")
+    (directory / "0002_add_index.sql").write_text(
+        "ALTER TABLE note ADD COLUMN body text;\n"
+        "CREATE INDEX CONCURRENTLY note_body_idx ON note (body);\n",
+        encoding="utf-8")
+
+
 def migrations_out_of_order(app: Path) -> None:
     directory = app / "migrations"
     directory.mkdir(exist_ok=True)
@@ -193,10 +211,22 @@ APP_MUTATIONS = [
      "capability_not_granted"),
     ("capabilities: declared but not called", declared_capability_nobody_calls,
      "over-broad grant request"),
+    # Two acceptable wordings per rule: `check_app.py` defers to the deploy's
+    # own AST validator when a usable `manaurum-cli` is importable and falls
+    # back to its built-in pattern list when it is not (MAN-2624), and the two
+    # phrase the same verdict differently. Either is a pass; silence is not.
     ("migrations: destructive DDL, no migration.breaking", destructive_migration,
-     "DROP without manifest.migration.breaking"),
+     ("DROP without manifest.migration.breaking", "destructive - DROP")),
     ("migrations: an anonymous DO $$ block", anonymous_do_block,
      "DO $$"),
+    # The fourth element: this rule cannot be decided from the text - the word
+    # appears in comments, string literals and quoted identifiers, and every
+    # text test gets at least one of those wrong in both directions (the
+    # executor learned that in MAN-2510). `check_app.py` therefore asks the
+    # real validator or reports the rule unchecked, so the mutation runs
+    # against a stub validator rather than against a guess.
+    ("migrations: CONCURRENTLY sharing a file", concurrently_sharing_a_file,
+     "must contain nothing else", True),
     ("migrations: a file that is not .sql", migration_that_is_not_sql,
      "not a .sql file"),
     ("migrations: numbers of different widths", migrations_out_of_order,
@@ -391,9 +421,71 @@ REPO_MUTATIONS = [
 ]
 
 
-def run(linter: Path, target: Path):
+def run(linter: Path, target: Path, env=None):
     return subprocess.run([sys.executable, str(linter), str(target)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
+
+
+# A stand-in for `manaurum_cli.migrations`, written into the mutation's own
+# temp directory. MAN-2624: `check_app.py` defers its migration rule to the
+# deploy's real AST validator when one is importable, and CI installs no
+# Python packages - so without a double, the branch this repo added is the
+# one branch nothing ever runs.
+#
+# It is a DOUBLE, not a second opinion: it exists to prove check_app.py calls
+# the validator once per file, renders its `errors` rows, and does not skip
+# the other rules. The real verdicts live in the monorepo, behind pglast.
+# Nothing here should ever be treated as the rule.
+STUB_VALIDATOR = '''"""Test double for manaurum_cli.migrations - NOT the real rules."""
+
+
+class MigrationValidationError(Exception):
+    def __init__(self, errors):
+        self.errors = errors
+        super().__init__("; ".join(
+            "%s: %s" % (e["classification"], e["reason"]) for e in errors))
+
+
+def validate_migration(sql, *, breaking_allowed=False):
+    statements = [s for s in sql.split(";") if s.strip()]
+    concurrent = [s for s in statements if "CONCURRENTLY" in s.upper()]
+    if concurrent and len(concurrent) != len(statements):
+        raise MigrationValidationError([{
+            "statement": concurrent[0].strip(),
+            "classification": "mixed_transaction",
+            "reason": ("a migration file that uses CONCURRENTLY must contain "
+                       "nothing else - CONCURRENTLY cannot run inside a "
+                       "transaction, and the rest of the file needs one."),
+        }])
+    return None
+'''
+
+
+def with_stub_validator(workdir: Path):
+    """An environment in which `check_app.py` finds a usable validator."""
+    package = workdir / "stub" / "manaurum_cli"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "migrations.py").write_text(STUB_VALIDATOR, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(workdir / "stub")
+    return env
+
+
+def said(output: str, expected) -> bool:
+    """Did the linter name the thing?
+
+    ``expected`` is one substring, or several of which ANY will do. The
+    plural form exists because one rule can be reported by two different
+    engines - `check_app.py` uses the deploy's AST validator when it is
+    importable and its own pattern list when it is not - and the point of
+    the assertion is that the rule FIRED, not that a particular sentence
+    was printed. It is still a substring match, so a mutation cannot pass
+    on a linter saying something unrelated.
+    """
+    if isinstance(expected, str):
+        expected = (expected,)
+    return any(item in output for item in expected)
 
 
 IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git",
@@ -433,7 +525,7 @@ def run_repo_mutation(name, mutate, expected, problems: list) -> None:
         elif done.returncode == 0:
             problems.append("%s SURVIVED - check_repo.py said `clean` on it. That "
                             "rule is not being checked." % name)
-        elif expected not in done.stdout:
+        elif not said(done.stdout, expected):
             problems.append("%s: check_repo.py went red but did not say %r. It "
                             "said:\n%s" % (name, expected, done.stdout.strip()))
         else:
@@ -465,9 +557,13 @@ def main() -> int:
         ran += 1
         run_repo_mutation(name, mutate, expected, problems)
 
-    cases = ([(CHECK_APP, "app", *case) for case in APP_MUTATIONS]
-             + [(CHECK_UI, "ui", *case) for case in UI_MUTATIONS])
-    for linter, kind, name, mutate, expected in cases:
+    cases = ([(CHECK_APP, "app", case) for case in APP_MUTATIONS]
+             + [(CHECK_UI, "ui", case) for case in UI_MUTATIONS])
+    for linter, kind, case in cases:
+        # A mutation may carry a fourth element: needs_validator, for a rule
+        # `check_app.py` can only decide by asking the deploy's own validator.
+        name, mutate, expected = case[0], case[1], case[2]
+        needs_validator = case[3] if len(case) > 3 else False
         if wanted and not any(word in name.lower() for word in wanted):
             continue
         ran += 1
@@ -479,11 +575,12 @@ def main() -> int:
                                                           ".pytest_cache"))
             mutate(app)
             target = app if kind == "app" else app / "src" / "static"
-            done = run(linter, target)
+            env = with_stub_validator(workdir) if needs_validator else None
+            done = run(linter, target, env=env)
             if done.returncode == 0:
                 problems.append("%s SURVIVED - %s said `clean` on it. That rule is "
                                 "not being checked." % (name, linter.name))
-            elif expected not in done.stdout:
+            elif not said(done.stdout, expected):
                 problems.append("%s: %s went red but did not say %r. It said:\n%s"
                                 % (name, linter.name, expected, done.stdout.strip()))
             else:

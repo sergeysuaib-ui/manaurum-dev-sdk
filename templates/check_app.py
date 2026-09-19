@@ -22,8 +22,14 @@ otherwise fails LATER and in a way that does not look like its cause:
                             image layer, retained per version in object
                             storage. There is no way to un-leak it.
 
-Standard library only. Run it on the directory that holds `manifest.json` -
-the same directory the deploy packs:
+Standard library only, with one optional upgrade: if a usable `manaurum-cli`
+is importable, the migration rule defers to the deploy's own AST validator
+instead of its built-in pattern list. Nothing needs installing for the
+script to run - and whatever a run could NOT check, it says so in a note,
+so `clean` means one thing rather than two.
+
+Run it on the directory that holds `manifest.json` - the same directory the
+deploy packs:
 
     python check_app.py my-app
 
@@ -488,18 +494,98 @@ def check_capabilities(root: Path, manifest: dict, problems: list) -> None:
             "where a tenant admin reads it" % name)
 
 
-def check_migrations(root: Path, manifest: dict, problems: list) -> None:
-    """Rule 7 - `*.sql` only, ordered, and nothing destructive undeclared.
+# A file the deploy refuses and a validator that predates the rule accepts:
+# ADD COLUMN is additive, CREATE INDEX CONCURRENTLY is additive, and only a
+# validator that knows about transactionality rejects the two together.
+MIXED_PROBE = ("ALTER TABLE probe ADD COLUMN c text;\n"
+               "CREATE INDEX CONCURRENTLY probe_c_idx ON probe (c);")
+
+
+def real_validator():
+    """The deploy's own AST validator, when the author has a usable CLI.
+
+    MAN-2624. This script cannot decide the migration rules itself. Two of
+    them depend on what came earlier in the same file, and one - a file
+    using CONCURRENTLY may contain nothing else - cannot be decided from
+    the text at all. Core says so in as many words: "regex-based detection
+    is explicitly rejected: the AST is the contract". A text test gets
+    `'a -- b'` inside a string literal wrong (it eats the rest of the
+    line), `DETACH PARTITION "m_2024--old" CONCURRENTLY` wrong, and the
+    word inside a string or a nested block comment wrong - in both
+    directions. So this script does not guess: it either asks the real
+    validator or says the rule went unchecked.
+
+    Returns `(validate, error_class, knows_the_transactionality_rule)`, or
+    None when there is no usable copy. The capability is PROBED, not read
+    off a version: the rule landed in the CLI without a version bump, and
+    the wheel authors can actually install predates it. A copy that cannot
+    answer the probe at all is not trusted for anything.
+
+    The stdlib-only promise is intact - nothing here is required, and the
+    import failing is an ordinary outcome, not an error.
+    """
+    try:
+        from manaurum_cli.migrations import (  # noqa: PLC0415
+            MigrationValidationError,
+            validate_migration,
+        )
+    except Exception:  # noqa: BLE001 - not installed is the common case
+        return None
+    try:
+        validate_migration(MIXED_PROBE, breaking_allowed=False)
+    except MigrationValidationError as exc:
+        # Require the verdict to be THIS rule. Treating any refusal as "knows
+        # it" would let a copy that refuses the probe for an unrelated reason
+        # suppress the note while the rule is in fact unchecked - which is the
+        # silent-coverage failure this whole probe exists to remove.
+        knows_mixing = any(
+            err.get("classification") == "mixed_transaction"
+            for err in getattr(exc, "errors", [])
+        )
+    except Exception:  # noqa: BLE001 - wrong signature, broken install
+        return None
+    else:
+        knows_mixing = False
+    return validate_migration, MigrationValidationError, knows_mixing
+
+
+UNCHECKED_RULES = (
+    "migrations/: the built-in pattern list ran, not the deploy's AST "
+    "validator, so the rules that need a parse tree went UNCHECKED here - "
+    "a plain CREATE INDEX or SET NOT NULL against something an earlier "
+    "file created, and a file mixing CONCURRENTLY with other statements. "
+    "Run `manaurum app validate-migration migrations/` for those")
+
+UNCHECKED_MIXING = (
+    "migrations/: this copy of the deploy's validator predates the rule "
+    "that a file using CONCURRENTLY may contain nothing else, so that one "
+    "went unchecked. Everything else was checked against the real "
+    "validator. Update manaurum-cli to close the gap")
+
+
+def check_migrations(root: Path, manifest: dict, problems: list,
+                     notes: list) -> None:
+    """Rule 7 - `*.sql` only, ordered, and nothing the deploy will refuse.
 
     Migrations run once per (app, tenant) in filename order, and the DDL is
-    AST-validated at deploy: a destructive statement without
-    `migration.breaking` is a 422, and an anonymous `DO $$` block is refused
-    outright because the validator cannot read the body.
+    AST-validated at deploy, PER FILE. Two things follow that the packaging
+    rules cannot tell you on their own: a destructive statement without
+    `migration.breaking` is a 422, and a file that uses `CONCURRENTLY` may
+    contain nothing else, because `CREATE INDEX CONCURRENTLY` cannot run
+    inside a transaction block and the rest of the file needs one.
+
+    Which engine decided that is never left implicit: whatever this run
+    could not check, it says so in a note. `clean` has to mean one thing.
     """
     directory = root / "migrations"
     if not directory.is_dir():
         return
     breaking = bool(manifest.get("migration", {}).get("breaking"))
+    validator = real_validator()
+    if validator is None:
+        notes.append(UNCHECKED_RULES)
+    elif not validator[2]:
+        notes.append(UNCHECKED_MIXING)
 
     numbers = {}
     for path in sorted(directory.iterdir()):
@@ -519,6 +605,30 @@ def check_migrations(root: Path, manifest: dict, problems: list) -> None:
                             "(0001_init.sql)" % path.name)
         else:
             numbers.setdefault(int(match.group(1)), []).append(path.name)
+
+        if validator is not None:
+            # The authority. One file at a time, exactly as the deploy reads
+            # them - handing it several concatenated would answer a different
+            # question for the two context-sensitive rules.
+            validate_migration, MigrationValidationError, _ = validator
+            try:
+                validate_migration(read(path), breaking_allowed=breaking)
+            except MigrationValidationError as exc:
+                before = len(problems)
+                for err in getattr(exc, "errors", []):
+                    problems.append("migrations/%s: %s - %s" % (
+                        path.name, err.get("classification", "rejected"),
+                        err.get("reason", "")))
+                if len(problems) == before:
+                    # Refused without a per-statement breakdown. Never let a
+                    # rejection turn into silence in the one function whose
+                    # job is that `clean` means one thing.
+                    problems.append("migrations/%s: the deploy's validator "
+                                    "refused this - %s" % (path.name, exc))
+            except Exception as exc:  # noqa: BLE001 - unparseable SQL
+                problems.append("migrations/%s: the deploy's validator could "
+                                "not parse this - %s" % (path.name, exc))
+            continue
 
         body = SQL_COMMENT.sub(" ", read(path))
         if DOLLAR_BLOCK.search(body):
@@ -577,7 +687,7 @@ def check(root: Path) -> tuple:
     check_port(root, manifest, problems, notes)
     check_env_files(root, problems)
     check_capabilities(root, manifest, problems)
-    check_migrations(root, manifest, problems)
+    check_migrations(root, manifest, problems, notes)
     check_manifest_shape(manifest, problems)
     check_secret_literals(root, problems)
     note_missing_tests(root, notes)

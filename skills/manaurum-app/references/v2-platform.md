@@ -444,10 +444,10 @@ Every statement is parsed with `pglast` and classified. Getting the tiers wrong 
 
 **additive (passes):** `CREATE TABLE` · `CREATE TABLE AS` · `CREATE INDEX CONCURRENTLY` · `CREATE VIEW` · `CREATE SEQUENCE` · `CREATE SCHEMA` · `CREATE TYPE AS ENUM` · `ALTER TYPE ADD VALUE` · `CREATE TYPE` (composite) · `CREATE DOMAIN` · `CREATE TRIGGER` · `CREATE POLICY` · `COMMENT ON` · `GRANT` (object privilege) · `ALTER TABLE ADD COLUMN` · `ALTER TABLE ENABLE ROW LEVEL SECURITY` · `ALTER TABLE FORCE ROW LEVEL SECURITY` · `CREATE FUNCTION` **only** with `LANGUAGE sql` or `LANGUAGE plpgsql`.
 
-Two additives are context-sensitive — the script is analysed as a whole:
+Two additives are context-sensitive — **each file** is analysed as a whole, and one file is all the validator ever sees at once. That matters more than it sounds: `0001_init.sql` creating the table does not make a plain `CREATE INDEX` in `0002_add_index.sql` additive, because by the time `0002` runs the table exists and has rows. Judge each file the way the tenant's database will meet it — on its own, in order.
 
-- plain `CREATE INDEX` **on a table created earlier in the same script** → additive. On a pre-existing table → **destructive** ("locks the table; use CONCURRENTLY").
-- `ALTER COLUMN … SET NOT NULL` **on a column added earlier in the same script** → additive. On an existing column → **destructive**. The rule is *fresh column*, not "has a default".
+- plain `CREATE INDEX` **on a table created earlier in the same file** → additive. On a pre-existing table → **destructive** ("locks the table; use CONCURRENTLY").
+- `ALTER COLUMN … SET NOT NULL` **on a column added earlier in the same file** → additive. On an existing column → **destructive**. The rule is *fresh column*, not "has a default".
 
 **neutral (passes):** `INSERT` · `UPDATE` · `DELETE` · `SELECT`.
 
@@ -466,6 +466,35 @@ Consequences worth planning around:
 
 For genuinely destructive work, set `migration.breaking: true` with a written `reason` — and remember it buys you the `destructive` tier only, never the `forbidden` one.
 
+### A file that uses `CONCURRENTLY` may contain nothing else
+
+This is the rule you meet immediately after the one above, because the remedy for "plain `CREATE INDEX` locks the table; use `CONCURRENTLY`" walks straight into it.
+
+`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block — Postgres refuses it outright (`25001`). Everything else in a migration needs that transaction, because the promise is that a failure rolls your file back. Both cannot be true of one file, so the platform resolves it the only way that keeps the promise: **a file whose statements are all `CONCURRENTLY` runs outside a transaction; a file that mixes is refused.**
+
+`migration.breaking: true` does not open this gate. It answers "yes, this shrinks the schema"; it is not a way to ask Postgres for something it will not do.
+
+So the second migration is **two** files, not one:
+
+```
+migrations/
+  0001_init.sql          CREATE TABLE …
+  0002_add_body.sql      ALTER TABLE note ADD COLUMN body text;
+  0003_index_body.sql    CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
+```
+
+Not this — the same two statements in ONE file, which is refused:
+
+```sql
+-- 0002_add_body.sql  ✗
+ALTER TABLE note ADD COLUMN body text;
+CREATE INDEX CONCURRENTLY note_body_idx ON note (body);
+```
+
+Several `CONCURRENTLY` statements may share a file, since the whole file then runs outside a transaction. The platform decides this from the parse tree, so the word in a comment, in a string literal or inside a quoted identifier is not a request.
+
+**If you already shipped a file that mixes.** A migration is run once per (app, tenant) and never re-run, so a file your tenants have already applied is skipped by name and checksum — the deploy will not refuse it, and you must **not** edit it: changing an applied file is refused for every tenant that ran it, which is worse than the original problem. `manaurum app validate-migration` still flags it, because it judges the files in front of it rather than what any tenant has applied. Treat that as a warning about **new installs** — a tenant installing the app for the first time reaches that file, is refused at it, and blocks the whole deploy for every tenant. There is no clean fix for that tenant from the app side: the offending file is still the first one it must apply. Adding new files ahead of it does not help. If you need the app installable again, that is an operator conversation, not a migration you can write.
+
 Validate locally before you deploy:
 
 ```bash
@@ -474,7 +503,9 @@ manaurum app validate-migration migrations/0002_add_line_items.sql
 manaurum app validate-migration migrations/ --breaking            # mirrors migration.breaking: true
 ```
 
-It runs the exact same validator the deploy pipeline runs, so green here means green there.
+It runs the exact same validator the deploy pipeline runs, file by file in the same order, so green here means green there.
+
+`check_app.py` uses that validator too, when a copy that knows this rule is importable. With no usable copy it does **not** guess — no text test can decide these rules — so it leaves them unchecked; with a copy too old to know the `CONCURRENTLY` rule, it checks everything else against the real validator and leaves that one. Either way it prints a note naming exactly what went unchecked. A `clean` from `check_app.py` alone is not the same statement as a green from the command above.
 
 ### Runtime is read/write, not DDL
 

@@ -1,3 +1,71 @@
+# 2.12.0 - the migration chapter stops hiding a rule (MAN-2624)
+
+### Why
+
+An app author adding an index to a table that already exists met three checks
+before production and all three missed the same rule.
+
+The validator refuses a plain `CREATE INDEX` on a pre-existing table and says
+"use CONCURRENTLY". Do exactly that - add the word to the file you already
+have - and the deploy refuses the file, because `CREATE INDEX CONCURRENTLY`
+cannot run inside a transaction block and the rest of the file needs one. That
+second rule lived only in the deploy executor: not in the validator, not in the
+CLI's vendored copy of it, not on this page. So `manaurum app
+validate-migration` said green under a sentence promising "green here means
+green there", and the refusal arrived in production - after the image was
+pushed, which on immutable tags costs a version number (dindex-kb 0.6.0,
+2026-09-19).
+
+The platform side is fixed in the monorepo (MAN-2622 / MAN-2623 / MAN-2624):
+the rule is in both validators now, the pre-push gate reads files one at a
+time the way the runner does, and a blocked deploy says why instead of
+pointing at an event stream the operator has no job on.
+
+### What changed
+
+`references/v2-platform.md` section 7:
+
+* a new subsection, **"A file that uses `CONCURRENTLY` may contain nothing
+  else"** - what Postgres refuses and why the platform resolves it this way,
+  that `migration.breaking: true` does not override it, the worked three-file
+  shape, and the do-not-write counter-example;
+* the context-sensitive tier note now says each **file** is analysed whole and
+  one file is all the validator sees at once - `0001_init.sql` creating the
+  table does not make a plain `CREATE INDEX` in `0002` additive;
+* the local-validation promise says "file by file in the same order", which is
+  what makes it true.
+
+`templates/check_app.py`:
+
+* the migration rule defers to the deploy's own AST validator when a copy that
+  knows this rule is importable, and reports exactly what the deploy will say.
+  Stdlib-only still holds - the import failing is an ordinary outcome;
+* the capability is PROBED, not read off a version string. The rule landed in
+  the CLI without a version bump, and the wheel authors can actually install
+  predates it, so "is it installed" was the wrong question: a stale copy would
+  have silently replaced this check with nothing;
+* it does NOT guess when no usable validator is there. A text test cannot
+  decide this rule - `'a -- b'` inside a string literal eats the rest of the
+  line, `DETACH PARTITION "m_2024--old" CONCURRENTLY` reads as a comment, and
+  the word inside a string or a nested block comment reads as a request. Core
+  settled this in MAN-2510: "regex-based detection is explicitly rejected: the
+  AST is the contract." So the run prints a note naming exactly which rules
+  went unchecked, and `clean` stops meaning two different things;
+* a validator that refuses without a per-statement breakdown is reported
+  rather than swallowed.
+
+`scripts/linter_mutations.py`:
+
+* a mutation for the new rule - the shape an author lands on by following the
+  validator's advice literally. It runs against a stub validator on
+  `PYTHONPATH`, which makes it deterministic AND gives the validator branch
+  its first test: CI installs no Python packages, so without a double that
+  branch is the one thing nothing ever runs. The stub is a test double, not a
+  second opinion - the real verdicts live in the monorepo, behind pglast;
+* a mutation may name more than one acceptable wording, because one rule can
+  be reported by either engine. Still a substring match: a mutation cannot
+  pass on the linter saying something unrelated.
+
 # 2.11.1 — `os.notifications.send_to_user` as the platform actually answers it (MAN-2516)
 
 ### Why
