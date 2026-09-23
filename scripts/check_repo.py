@@ -58,6 +58,7 @@ PLUGIN_VERSION = re.compile(r'"version"\s*:\s*"(\d+\.\d+\.\d+)"')
 README_VERSION = re.compile(r"\*\*Version\s+(\d+\.\d+\.\d+)")
 CHANGELOG_VERSION = re.compile(r"(?m)^#\s+(\d+\.\d+\.\d+)")
 SKILL_VERSION = re.compile(r"This page is SDK\s+(\d+\.\d+\.\d+)")
+STARTER_CSS_VERSION = re.compile(r"manaurum-starter app\.css\s+(\d+\.\d+\.\d+)")
 
 # A repository path, as the docs write one: inside backticks, optionally
 # prefixed with the `<plugin>/` placeholder the skill uses.
@@ -249,17 +250,23 @@ def normalise(title: str) -> str:
 
 
 def check_versions(problems: list) -> None:
-    """One version, four files.
+    """One version, five files.
 
     2.8.0 shipped with `**Version 2.7.3**` in the README. Nobody reading the
     README could tell which of the two numbers was the lie, and the plugin
     cache is keyed on the real one.
+
+    The starter's `app.css` carries it too, because that file is COPIED into
+    apps and lives on in them: its version line is the only way to tell, from
+    a deployed app's source, which template it was copied from (MAN-2849).
     """
     sources = [
         (".claude-plugin/plugin.json", PLUGIN_VERSION, '"version"'),
         ("README.md", README_VERSION, "**Version X.Y.Z**"),
         ("CHANGELOG.md", CHANGELOG_VERSION, "the newest `# X.Y.Z` heading"),
         ("skills/manaurum-app/SKILL.md", SKILL_VERSION, "This page is SDK X.Y.Z"),
+        ("templates/v2-starter/src/static/app.css", STARTER_CSS_VERSION,
+         "manaurum-starter app.css X.Y.Z"),
     ]
     found = {}
     for name, pattern, what in sources:

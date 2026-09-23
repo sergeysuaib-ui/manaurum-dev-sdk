@@ -71,6 +71,19 @@ LINE_COMMENT = re.compile(r"(?m)(?<![:\\])//[^\n]*$")
 
 CHECKED_SUFFIXES = (".html", ".htm", ".js", ".mjs")
 
+# Geometry of the page root. A leaf CSS rule is `selector { declarations }`
+# with no brace inside; an @media wrapper is simply skipped over, which is
+# what we want - a cap set under a media query is still a cap.
+CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+CSS_DECL = re.compile(r"([a-z-]+)\s*:\s*([^;]+)")
+BODY_OPEN = re.compile(r"<body\b[^>]*>", re.I)
+FIRST_TAG = re.compile(r"<([a-zA-Z][a-zA-Z0-9-]*)\b([^>]*)>")
+NOT_LAYOUT = frozenset(("script", "noscript", "template", "style", "link", "meta"))
+ATTR_CLASS = re.compile(r"""\bclass\s*=\s*["']([^"']*)["']""")
+ATTR_ID = re.compile(r"""\bid\s*=\s*["']([^"']*)["']""")
+BODY_SELECTOR = re.compile(r"body(?:[.\[:#][^\s>+~]*)?")
+NO_CAP = frozenset(("none", "100%", "100vw", "initial", "unset", "inherit", "revert"))
+
 
 def strip_comments(text: str) -> str:
     """Comments are not code.
@@ -116,6 +129,120 @@ def declared_tokens(static_dir: Path) -> set:
         for block in style_blocks(page.read_text(encoding="utf-8", errors="replace")):
             names |= set(VAR_DECL.findall(block))
     return names
+
+
+def root_hooks(html: str) -> set:
+    """The `.class` / `#id` handles of the element that holds the whole page.
+
+    That is the first layout element inside `<body>` - `.app` in the starter.
+    Only its geometry is judged: a `max-width` deeper in the page (a paragraph
+    in an empty state, a toast) is centred or not by its parent's layout, and
+    a linter that second-guesses every one of them is a linter people switch
+    off. A cap on a wrapper one level further down is not seen - that is the
+    price of staying quiet, and the wide screenshot in Step 3.5 is what covers it.
+    """
+    opened = BODY_OPEN.search(html)
+    if not opened:
+        return set()
+    for tag in FIRST_TAG.finditer(html, opened.end()):
+        if tag.group(1).lower() in NOT_LAYOUT:
+            continue
+        attrs = tag.group(2)
+        hooks = set()
+        for cls in (ATTR_CLASS.search(attrs) or [None, ""])[1].split():
+            hooks.add("." + cls)
+        ident = ATTR_ID.search(attrs)
+        if ident and ident.group(1).strip():
+            hooks.add("#" + ident.group(1).strip())
+        return hooks
+    return set()
+
+
+def css_rules(static_dir: Path) -> list:
+    """(file, selector, {property: value}) for every leaf rule the app ships."""
+    out = []
+    sheets = [(p, BLOCK_COMMENT.sub("", p.read_text(encoding="utf-8", errors="replace")))
+              for p in sorted(static_dir.rglob("*.css"))]
+    for page in sorted(static_dir.rglob("*.htm*")):
+        text = page.read_text(encoding="utf-8", errors="replace")
+        sheets += [(page, BLOCK_COMMENT.sub("", re.sub(r"</?style[^>]*>", "", block)))
+                   for block in style_blocks(text)]
+    for path, css in sheets:
+        name = str(path.relative_to(static_dir)).replace("\\", "/")
+        for selector, body in CSS_RULE.findall(css):
+            decls = {prop.lower(): value.replace("!important", "").strip()
+                     for prop, value in CSS_DECL.findall(body)}
+            out.append((name, selector.strip(), decls))
+    return out
+
+
+def targets(selector: str, hooks) -> bool:
+    """Does any comma-separated part of the selector END on one of the hooks?
+
+    `body[data-device="mobile"] .app` targets `.app`; `.app .card` does not.
+    """
+    for part in selector.split(","):
+        compounds = re.split(r"[\s>+~]+", part.strip())
+        last = compounds[-1] if compounds else ""
+        for hook in hooks:
+            if re.search(re.escape(hook) + r"(?![\w-])", last):
+                return True
+    return False
+
+
+def centres_itself(decls: dict) -> bool:
+    """margin auto on both sides, in any of the ways CSS lets you say it."""
+    margin = decls.get("margin", "").split()
+    if margin and (margin[0] == "auto" if len(margin) == 1
+                   else margin[1] == "auto" and (len(margin) < 4 or margin[3] == "auto")):
+        return True
+    inline = decls.get("margin-inline", "").split()
+    if inline and all(v == "auto" for v in inline):
+        return True
+    # The fixed-position trick: left 50% and pulled back by half its width.
+    return (decls.get("left") == "50%"
+            and re.search(r"translate(?:x)?\(\s*-50%", decls.get("transform", ""), re.I)
+            is not None)
+
+
+def uncentred_cap(static_dir: Path, html: str) -> list:
+    """A capped page root that nothing centres (MAN-2849).
+
+    Below the cap, a centred and an uncentred root are pixel-identical, so
+    every screenshot at or under 1024px passes it; above the cap the app is
+    glued to the left edge with dead space on the right. The starter shipped
+    exactly that, and four apps copied it verbatim.
+    """
+    hooks = root_hooks(html)
+    if not hooks:
+        return []
+    rules = css_rules(static_dir)
+    mine = [(name, decls) for name, sel, decls in rules if targets(sel, hooks)]
+    caps = [(name, decls["max-width"]) for name, decls in mine
+            if decls.get("max-width", "none").lower() not in NO_CAP]
+    if not caps:
+        return []
+    union = {}
+    for _, decls in mine:
+        union.update(decls)
+    if centres_itself(union) or (union.get("margin-left") == "auto"
+                                 and union.get("margin-right") == "auto"):
+        return []
+    # Or the parent does it: <body> as a flex/grid container that centres.
+    body = {}
+    for _, sel, decls in rules:
+        if any(BODY_SELECTOR.fullmatch(part.strip()) for part in sel.split(",")):
+            body.update(decls)
+    if (body.get("display", "") in ("flex", "inline-flex", "grid")
+            and any("center" in body.get(prop, "") for prop in
+                    ("justify-content", "align-items", "place-items",
+                     "justify-items", "place-content"))):
+        return []
+    name, value = caps[0]
+    hook = sorted(hooks)[0]
+    return ["%s: %s caps its width (max-width: %s) and nothing centres it - in any "
+            "window wider than that the app sits on the left edge with dead space "
+            "on the right. Add `margin-inline: auto`" % (name, hook, value)]
 
 
 def check(static_dir: Path) -> list:
@@ -213,6 +340,7 @@ def check(static_dir: Path) -> list:
     if "payload" not in html:
         problems.append("index.html: nothing reads `payload` - appearance and accent "
                         "arrive in e.data.payload, not on the message root")
+    problems += uncentred_cap(static_dir, html)
     return problems
 
 

@@ -1,3 +1,60 @@
+# 2.13.0 - a capped page is a centred page, and something checks it (MAN-2849)
+
+### Why
+
+The starter's `.app` set `max-width: var(--container-lg, 1024px)` and nothing
+centred it. Every app built from the starter sat on the left edge of any
+window wider than 1024px, and four of them - `zapiski`, `zb-announcer`,
+`dindex-kb`, `zb-meetings` - carry the line verbatim, because the file is
+copied as-is. An owner found it within a minute: dragging the window wider is
+the first thing anyone does.
+
+It passed the whole prescribed check. `check_ui.py` had no geometry rule.
+`design.md` stated half the rule ("cap the width") in prose. And the Step 3.5
+screenshot did show it - at the default 1240px the starter leaves 0px on the
+left and 216px on the right - but a one-sided gap in a single picture reads as
+"fine" to whoever is looking. The lesson is MAN-2455's again: what a person has
+to notice in a screenshot is prose; what the preview measures is a check.
+
+### What changed
+
+* **`templates/v2-starter/src/static/app.css`** - `.app` gets `width: 100%;
+  margin-inline: auto`. The toolbar search field stops growing (`flex: 0 1
+  320px`, full width on mobile), so it no longer flings its siblings to the
+  far edge; `.toolbar-spacer` is the one thing that grows. And a provenance
+  line, `manaurum-starter app.css 2.13.0`, which `check_repo.py` keeps equal to
+  the plugin version: it is how a deployed app's source says which template it
+  was copied from.
+* **`templates/check_ui.py`** - fails a page root (the first layout element in
+  `<body>`) that caps its width and is not centred by `margin`/`margin-inline`
+  `auto`, by the `left: 50%` + `translateX(-50%)` trick, or by a centring
+  `<body>`. Only the root is judged: a `max-width` deeper in the page (the
+  starter's own `.empty-body`, a fixed toast) is its parent's business.
+* **`scripts/linter_mutations.py`** - two red mutations (the MAN-2849 line
+  verbatim; the same defect in a `<style>` block) and three that must stay
+  **green**: a fixed toast with `max-width: 80%`, a defective rule patched by an
+  appended block, and a root centred by `<body>`. The harness now supports
+  must-stay-green cases for `check_ui.py`, not only for `check_repo.py`.
+* **`templates/preview.py`** - a third badge: `layout centred`,
+  `layout OFF-CENTRE - 0px left, 216px right`, or `layout fills Npx` when the
+  frame is not wider than the cap and so proves nothing about centring.
+* **Step 3.5** - a wide shot (`--window-size=1920,1000`), and "a red badge is a
+  failure however good the picture looks".
+* **`design.md`** - "cap the width **and centre it**", and a row in the `Never`
+  table.
+* **A correction:** Step 3.5, the seven rules and `What NOT to do` all said
+  `check_ui.py` covers every rule but rule 3. It never checked the first half of
+  rule 5, a hover on something inert. The text now says so.
+
+### Not in this release
+
+The deployed apps are not fixed by this, and cannot be from here: `app.css` is
+vendored by copy and the platform has no channel into a live app's stylesheet.
+That is MAN-1401's real subject. The backend's advisory lint does not get the
+new rule either, because it is a hand-kept copy of `check_ui.py` that has
+already drifted (MAN-2765); adding a rule to both by hand is the defect class
+this release is about.
+
 # 2.12.0 - the migration chapter stops hiding a rule (MAN-2624)
 
 ### Why

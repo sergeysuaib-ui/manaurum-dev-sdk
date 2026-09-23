@@ -277,7 +277,59 @@ def the_handshake(app: Path) -> None:
                     encoding="utf-8")
 
 
+CENTRED = "  max-width: var(--container-lg, 1024px);\n  margin-inline: auto;\n"
+CAPPED = "  max-width: var(--container-lg, 1024px);\n"
+
+
+def a_cap_nothing_centres(app: Path) -> None:
+    # MAN-2849, verbatim: the starter's `.app` as four apps copied it.
+    edit(app / "src" / "static" / "app.css", CENTRED, CAPPED)
+
+
+def a_cap_in_a_style_block(app: Path) -> None:
+    # The same defect where an app keeps its layout inline, not in app.css.
+    edit(app / "src" / "static" / "app.css", CENTRED, "")
+    edit(app / "src" / "static" / "index.html", "</head>",
+         "<style>.app { max-width: 960px; margin: 0; }</style></head>")
+
+
+def a_fixed_toast_with_a_cap(app: Path) -> None:
+    # MUST STAY GREEN. zapiski's toast: `max-width: 80%`, centred by
+    # `left: 50%` + `translateX(-50%)`, not by margin. It is not the page
+    # root, and a rule that flags it is the naive rule MAN-2849 warned about.
+    path = app / "src" / "static" / "app.css"
+    path.write_text(path.read_text(encoding="utf-8") + (
+        "\n.toast { position: fixed; left: 50%; bottom: var(--space-6);\n"
+        "  transform: translateX(-50%); max-width: 80%; }\n"), encoding="utf-8")
+
+
+def the_zapiski_workaround(app: Path) -> None:
+    # MUST STAY GREEN. The defective rule left in place and a fix block
+    # appended further down - which is what an app patched by hand looks like.
+    a_cap_nothing_centres(app)
+    path = app / "src" / "static" / "app.css"
+    path.write_text(path.read_text(encoding="utf-8") + (
+        "\n/* SDK template fix */\n.app { width: 100%; margin-inline: auto; }\n"),
+        encoding="utf-8")
+
+
+def a_body_that_centres(app: Path) -> None:
+    # MUST STAY GREEN. The parent centres the root instead of the root itself.
+    a_cap_nothing_centres(app)
+    path = app / "src" / "static" / "app.css"
+    path.write_text(path.read_text(encoding="utf-8") + (
+        "\nbody { display: flex; flex-direction: column; align-items: center; }\n"),
+        encoding="utf-8")
+
+
 UI_MUTATIONS = [
+    ("ui: a width cap nothing centres", a_cap_nothing_centres,
+     "caps its width"),
+    ("ui: a width cap in a <style> block", a_cap_in_a_style_block,
+     "caps its width (max-width: 960px)"),
+    ("ui: a fixed toast with a cap stays green", a_fixed_toast_with_a_cap, None),
+    ("ui: a cap fixed by an appended block stays green", the_zapiski_workaround, None),
+    ("ui: a cap centred by body stays green", a_body_that_centres, None),
     ("ui: a var() whose token is declared nowhere", token_declared_nowhere,
      "declared nowhere"),
     ("ui: a hex in the markup", hex_in_the_markup, "in markup"),
@@ -577,7 +629,16 @@ def main() -> int:
             target = app if kind == "app" else app / "src" / "static"
             env = with_stub_validator(workdir) if needs_validator else None
             done = run(linter, target, env=env)
-            if done.returncode == 0:
+            if expected is None:
+                # A legitimate pattern the rule must NOT flag - the other half
+                # of trusting a linter.
+                if done.returncode != 0:
+                    problems.append("%s: %s went RED on a pattern it should accept. "
+                                    "It said:\n%s" % (name, linter.name,
+                                                      done.stdout.strip()))
+                else:
+                    print("ok  %s" % name)
+            elif done.returncode == 0:
                 problems.append("%s SURVIVED - %s said `clean` on it. That rule is "
                                 "not being checked." % (name, linter.name))
             elif not said(done.stdout, expected):
