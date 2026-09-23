@@ -25,7 +25,10 @@ The bar across the top is the check, not decoration. It says whether the app
 answered `manaurum:ready`, and whether it actually APPLIED the appearance the
 shell sent — an app that reads `e.data.appearance` instead of
 `e.data.payload.appearance` answers the handshake perfectly and still renders
-light inside a dark desktop.
+light inside a dark desktop. The third badge measures the page root: an app
+whose root has a `max-width` and no `margin-inline: auto` looks right in any
+frame narrower than the cap and sits on the left edge in any frame wider, so
+the badge says `layout OFF-CENTRE` with both gaps in pixels.
 
 `?width=` / `?height=` size the app's frame inside a large browser window.
 Both headless browsers floor their OWN viewport at ~500px, so this is the only
@@ -136,6 +139,7 @@ SHELL_PAGE = """<!doctype html>
     <span __SIZE_HIDDEN__>size <b>__SIZE_LABEL__</b></span>
     <span id="handshake" class="pill pill-wait">waiting for manaurum:ready...</span>
     <span id="themecheck" class="pill pill-wait">checking appearance...</span>
+    <span id="layoutcheck" class="pill pill-wait">checking layout...</span>
   </div>
   <div class="frame __SIZED__">
     <!-- The shell's own sandbox, verbatim: no allow-modals, so alert() /
@@ -179,13 +183,46 @@ SHELL_PAGE = """<!doctype html>
     }
   }
 
+  // Is the page root centred in the frame? A root with a max-width and no
+  // margin-inline:auto is pixel-identical to a centred one up to the cap, and
+  // glued to the left edge past it (MAN-2849) - and a 200px gap on one side
+  // reads as "fine" to anyone looking at a single screenshot. So measure it.
+  var layout = document.getElementById('layoutcheck');
+  function checkLayout() {
+    var doc = null;
+    try { doc = app.contentDocument; } catch (err) { doc = null; }
+    if (!doc || !doc.body) return;
+    var root = doc.body.firstElementChild;
+    while (root && /^(SCRIPT|NOSCRIPT|TEMPLATE|STYLE|LINK|META)$/.test(root.tagName)) {
+      root = root.nextElementSibling;
+    }
+    if (!root) return;
+    var box = root.getBoundingClientRect();
+    var frame = doc.documentElement.clientWidth;
+    var left = Math.round(box.left), right = Math.round(frame - box.right);
+    if (box.width >= frame - 1) {
+      layout.className = 'pill pill-wait';
+      layout.textContent = 'layout fills ' + frame + 'px - widen the window past ' +
+                           'your max-width to test centring';
+    } else if (Math.abs(left - right) <= 2) {
+      layout.className = 'pill pill-ok';
+      layout.textContent = 'layout centred';
+    } else {
+      layout.className = 'pill pill-bad';
+      layout.textContent = 'layout OFF-CENTRE - ' + left + 'px left, ' + right +
+                           'px right (a max-width needs margin-inline: auto)';
+    }
+  }
+
   app.addEventListener('load', function () {
     app.contentWindow.postMessage({ type: 'manaurum:init', payload: INIT }, location.origin);
     setTimeout(checkTheme, 400);
+    setTimeout(checkLayout, 400);
     // The real shell waits 10s and then covers the app with "App is not
     // responding". Three seconds is enough to put the failure in a screenshot.
     setTimeout(function () {
       checkTheme();
+      checkLayout();
       if (ready) return;
       badge.className = 'pill pill-bad';
       badge.textContent = 'NO manaurum:ready - the shell would cover this app';

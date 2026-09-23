@@ -1,5 +1,8 @@
 /* ============================================================================
    my-app — stylesheet
+   manaurum-starter app.css 2.13.0 — keep this line when you copy the file.
+   It is how the platform tells which template an app's stylesheet came from,
+   and so which apps still carry a defect fixed in a later one.
    ----------------------------------------------------------------------------
    A v2 app is an ISOLATED IFRAME that serves its own CSS. Nothing from the
    Manaurum shell cascades in: no reset, no fonts, no tokens, no component
@@ -191,14 +194,21 @@ body {
 }
 
 /* The OS window is the frame. `.app` fills it and owns the ONLY outer
-   padding in the app — rule 2 at the top of this file. */
+   padding in the app — rule 2 at the top of this file.
+
+   A cap and its centring are ONE rule. Up to the cap a centred and an
+   uncentred `.app` are pixel-identical; past it, a cap with no
+   `margin-inline: auto` glues the app to the left edge of a wide window.
+   This shipped in four apps (MAN-2849), and `check_ui.py` now fails on it. */
 .app {
   display: flex;
   flex-direction: column;
   min-height: 100%;
   padding: var(--space-6);
   gap: var(--space-4);
+  width: 100%;
   max-width: var(--container-lg, 1024px);
+  margin-inline: auto;
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────────
@@ -411,7 +421,11 @@ a.btn { text-decoration: none; }
   flex-wrap: wrap;
   margin-bottom: var(--space-4);
 }
-.toolbar .input { width: auto; flex: 1; min-width: 160px; }
+/* The search field has a preferred width and does NOT grow: with `flex: 1`
+   it swallows the whole row and flings every sibling (filter chips, a ghost
+   action) to the far edge (MAN-2849). Push things apart deliberately, with a
+   `.toolbar-spacer` - the one element here that grows. */
+.toolbar .input { width: auto; flex: 0 1 320px; min-width: 160px; }
 .toolbar-spacer { flex: 1; }
 
 /* Search hit highlighting. The browser default is yellow, and gold/yellow is
@@ -605,6 +619,7 @@ body[data-device="mobile"] .card-flush .card-head { padding: var(--space-4) var(
 /* Comfortable tap targets. */
 body[data-device="mobile"] .btn { min-height: 44px; padding: var(--space-3) var(--space-5); }
 body[data-device="mobile"] .form-actions { flex-direction: column; align-items: stretch; }
+body[data-device="mobile"] .toolbar .input { flex: 1 1 100%; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

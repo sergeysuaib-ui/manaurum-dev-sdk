@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.12.0.** A plugin install caches one directory per
+> **This page is SDK 2.13.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -115,7 +115,9 @@ technical check passed, and then most of them again in a second app a week
 later. Copying `app.css` enforces none of them, because they are decisions you
 make in the markup. Check them before the first file, and again in Step 3.5,
 where `check_ui.py` checks them for you — every rule here except rule 3, which
-is a judgement rather than a pattern.
+is a judgement rather than a pattern, and the first half of rule 5: it fails a
+click target with no hover, but not a hover on something inert. Those two are
+yours to look for.
 
 1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
    and sits in a desktop that already has navigation. Sections are cards; two
@@ -422,10 +424,12 @@ python <plugin>/templates/check_ui.py my-app/src/static
 ```
 
 `check_ui.py` covers every rule above except rule 3 — a sentence in a badge is
-the one only a person can see — including the three a screenshot cannot show
+the one only a person can see — and a hover on something inert (rule 5's first
+half), including the three a screenshot cannot show
 either: a hex hidden inside a `var()` fallback whose token does not exist, a
 click target with no `is-interactive`, and appearance read off `e.data`
-instead of `e.data.payload`. Exit 0 or fix what it names. Do this
+instead of `e.data.payload`. It also fails a page root that caps its width and
+never centres it, which no screenshot at or under the cap can show. Exit 0 or fix what it names. Do this
 *before* the screenshots: it is cheaper, and half of what it finds would
 otherwise reach the owner rather than you.
 
@@ -433,8 +437,9 @@ otherwise reach the owner rather than you.
 script (no install, no dependencies): it serves your static files, answers every
 `/api/*` call from a fixtures file, and adds a `/__shell` page that frames your
 app the way the desktop does — the shell's exact sandbox, a real `manaurum:init`
-with the appearance and accent you ask for, and two badges: one for
-`manaurum:ready`, one that says whether the appearance was actually *applied*.
+with the appearance and accent you ask for, and three badges: one for
+`manaurum:ready`, one that says whether the appearance was actually *applied*,
+and one that measures whether your page is *centred* in the frame.
 Keep it **beside** the app directory, never inside it: everything inside is
 packed into the deploy.
 
@@ -480,6 +485,24 @@ moment, so take the theme evidence from one of the other screenshots.
 Add `&accent=lavender` (or any of the eight) to check you are not hardcoding
 blue.
 
+**Photograph the wide window too — the first thing an owner does is drag the
+window wider.** Up to your `max-width` a centred and a left-glued page are
+pixel-identical, so no narrow shot can tell them apart; past it, a cap with no
+`margin-inline: auto` leaves the app on the left edge and dead space on the
+right. That shipped in four apps (MAN-2849) — and it was *in* the 1240 shot
+above, 216px of empty right margin that nobody read as a defect. So do not read
+it; the third badge measures it:
+
+```bash
+… --window-size=1920,1000 --screenshot=wide.png \
+  "http://127.0.0.1:8765/__shell?appearance=light"
+```
+
+`layout centred` is the pass. `layout OFF-CENTRE - 0px left, 216px right` is
+the fail, with both gaps in pixels. `layout fills …px` means the shot is not
+wider than your cap and proves nothing about centring — which is what the
+narrow shot below will always say.
+
 **And photograph the narrow window, because that is the one the contract is
 written for.** Add `&width=900` (or 760, or whatever your smallest supported
 window is): it sizes *your app's frame* inside a large browser window, so the
@@ -506,7 +529,8 @@ retrofitting them after the app exists is exactly why this check gets skipped.
 
 **4. Open the pictures and criticise them honestly**, against the seven rules
 above and the `Never` table that opens `references/design.md` — out loud, in
-your reply. The linter has already taken the mechanical half; what is left is
+your reply. Read the three badges first: a red one is a failure however good the
+picture looks. The linter has already taken the mechanical half; what is left is
 the half only a person (or you, looking) can see: is the hierarchy right, is the
 empty state saying something useful, would you show this to the person who asked
 for it. Name what is wrong and fix it before the deploy, not after the
@@ -693,7 +717,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
-- **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on all of them but rule 3, so this is not a matter of remembering.
+- **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on all of them but the sentence in a badge and the hover on something inert, so for five of the seven this is not a matter of remembering.
 - **Don't deploy without running `templates/check_app.py` (Step 3.6).** An `/api/*` route the manifest does not declare, a port that disagrees with the `CMD`, an `/agent/*` handler with no user-context check, a `.env` inside the app directory, a capability you call but never declared — all of them deploy green, and each one first shows up as something that does not look like its cause. It takes a second and it is the cheapest step on this page.
 
 ## What will bite you

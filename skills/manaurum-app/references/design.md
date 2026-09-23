@@ -17,6 +17,7 @@ passed. If you read nothing else on this page, read the table.
 | A hover state on something inert | Hover is a promise that clicking does something. Keep the focus ring; keyboard users navigate too. |
 | Hex values in the markup, or inline `style=` | You end up changing 40 rules instead of one token, and an inline colour cannot follow an appearance change. |
 | `alert()` / `confirm()` / `prompt()` | The shell's iframe has no `allow-modals`. They return silently, so a `confirm()`-gated delete button does nothing — and they work on the standalone URL, so testing there proves nothing. |
+| A `max-width` on your root without `margin-inline: auto` | Up to the cap it is pixel-identical to a centred page, so a 900px screenshot passes it. In a window wider than the cap — the first thing an owner does is maximise — the app sits on the left edge with the right third empty. Shipped in four apps from one line in the starter. |
 | `overflow: hidden` + a fixed height on your root | The window cannot scroll an iframe app. Clip the root and the bottom of every long view is unreachable, with no scrollbar anywhere. |
 | Gold or yellow as a palette, `hue-rotate`, a hot-linked webfont | The first two are banned across Manaurum surfaces; a font that arrives late reflows your app and one that never arrives changes its metrics. |
 
@@ -192,8 +193,12 @@ Most apps do not need a novel layout. This shape covers almost all of them:
 - **Take spacing from the scale** (`--space-*`) and use few values: a small gap
   inside a group, a medium one between groups, a large one before a new section.
   Consistent spacing is most of what makes a layout look designed.
-- **Cap the width.** `max-width: 1024px`. Text lines that run the full width of
-  a maximised window are unreadable.
+- **Cap the width and centre it — one rule, not two.** `max-width: 1024px;
+  margin-inline: auto` on the page root. Text lines that run the full width of
+  a maximised window are unreadable; a cap with no centring is worse, because
+  it glues the app to the left edge and every screenshot at or under the cap
+  hides it. `check_ui.py` fails on it and `preview.py`'s layout badge measures
+  it.
 - **In light mode the page recedes and cards come forward** (white on grey); in
   dark it inverts (cards lighter than the page). Getting that backwards is why
   most dark themes look flat.
