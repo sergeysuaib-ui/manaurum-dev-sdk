@@ -61,13 +61,25 @@ The payload as actually posted today (`sendInit`):
 - `granted_capabilities` is sent **only to v2 apps** — the install's admin-approved grant list. `permissions` carries the manifest's `permissions[]` array (browser features such as `microphone`).
 - `offline` appears only when the manifest declares an `offline` block; `deepLink` only when the window was opened from a notification.
 
+**Platform fields** (in `manaurum:init`; `manaurum:device-change` repeats all but `shell`):
+
+| Field | Desktop | Mobile |
+|-------|---------|--------|
+| `platform` | `"desktop"` | `"mobile"` |
+| `device` | `"desktop"` | `"mobile"` (older name, prefer `platform`) |
+| `safeAreaInsets` | All zeros | Device notch/home indicator insets |
+| `navigationMode` | `"window"` | App's declared `navigationPattern` |
+| `shell.hasTabBar` | `false` | `false` (tab bar hidden when app is open) |
+| `shell.hasBackButton` | `false` | `true` |
+| `shell.tabBarHeight` | `0` | `0` (tab bar hidden when app is open) |
+
 ### What your app must reply
 
 ```js
 window.parent.postMessage({ type: 'manaurum:ready' }, '*');
 ```
 
-**Within 10 seconds of the window opening** — `READY_TIMEOUT_MS = 10_000` (`IframeAppHost.tsx:24`), timer at `:682-696`. Miss it and the shell paints an overlay across your UI: *"App is not responding — No `manaurum:ready` received within 10s"* (`:814-836`). Your app is still running underneath; the user just cannot see or use it.
+**Within 10 seconds of the window opening** — `READY_TIMEOUT_MS = 10_000` (`IframeAppHost.tsx`). Miss it and the shell paints an overlay across your UI: *"App is not responding — No `manaurum:ready` received within 10s"* (`:814-836`). Your app is still running underneath; the user just cannot see or use it.
 
 For the shell to accept the reply, all of these must hold (`:394-409`):
 
@@ -119,7 +131,7 @@ A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from t
 
 ### Which messages a v2 app may send
 
-Window framing only. `V2_ALLOWED_MESSAGES` (`IframeAppHost.tsx:71-85`):
+Window framing only. `V2_ALLOWED_MESSAGES` (`frontend/src/components/window/iframeHostPolicy.ts`):
 
 | Type | Effect |
 |---|---|
@@ -130,10 +142,11 @@ Window framing only. `V2_ALLOWED_MESSAGES` (`IframeAppHost.tsx:71-85`):
 | `manaurum:toast` | `{ type: 'success' \| 'error' \| 'info', message }` |
 | `manaurum:active-record` | `{ entity_type, record_id, record_title? }` — tell the OS which record the user is looking at (camelCase also tolerated) |
 | `manaurum:drive-pick` | open the shell's Drive picker — see `app.pickFromDrive()` below |
+| `manaurum:diagnostic` | `{ code?, message }` — the SDK's own self-diagnosis (the layout guard); lands in the shell's diagnostic log |
 
 None of these are permission-gated for v2 — they are framing, not data access.
 
-**Rejected outright** — every type starting with `manaurum:storage-`, `manaurum:file-`, `manaurum:db-`, `manaurum:share-`, `manaurum:shared-`, `manaurum:notification`, `manaurum:reminder`, `manaurum:task-suggestion` (`:93-102`). Those are the retired v1 bridge. From a v2 iframe the shell refuses them and, when the message carried a `_reqId`, replies on the matching `*-response` channel with:
+**Rejected outright** — every type starting with `manaurum:storage-`, `manaurum:file-`, `manaurum:db-`, `manaurum:share-`, `manaurum:shared-`, `manaurum:notification`, `manaurum:reminder`, `manaurum:task-suggestion`, `manaurum:ai-` (`V2_REJECTED_MESSAGE_PREFIXES`, same file). Those are the retired v1 bridge. From a v2 iframe the shell refuses them and, when the message carried a `_reqId`, replies on the matching `*-response` channel with:
 
 ```json
 { "ok": false, "error": "v2 apps call capabilities via app.fetch() to their own backend, not via postMessage. (manaurum:storage-get)" }
@@ -141,7 +154,9 @@ None of these are permission-gated for v2 — they are framing, not data access.
 
 `manaurum:notification` / `reminder` / `task-suggestion` have no response channel, so they are dropped with nothing sent back — the call just never resolves. Do the equivalent work over HTTP: your container calls the capability gateway.
 
-Any other `manaurum:*` type from a v2 frame (for example `manaurum:ai-complete`) is ignored: the shell logs it and sends nothing back. Use `os.ai.*` through the gateway instead.
+`manaurum:ai-*` is answered on `manaurum:ai-response`. Use `os.ai.*` through the gateway instead.
+
+Any other `manaurum:*` type (not framing, not a v1 verb) is ignored: the shell logs it and sends nothing back.
 
 ---
 
@@ -241,5 +256,5 @@ if (!res.cancelled) {
 ### What this SDK deliberately does not do
 
 - **No capability client.** There is no `app.capability(...)`. Capabilities are called server-side by your container with `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` against `{MANAURUM_CORE_URL}/api/capability/<name>`. See `references/capabilities-reference.md`.
-- **No storage / db / files / ai bridge.** Every `manaurum:storage-*`, `manaurum:db-*`, `manaurum:file-*` message belongs to the retired v1 bridge and is rejected for v2 frames.
+- **No storage / db / files / ai bridge.** Every `manaurum:storage-*`, `manaurum:db-*`, `manaurum:file-*`, `manaurum:ai-*` message belongs to the retired v1 bridge and is rejected for v2 frames.
 - **No window-framing helpers.** `set-title` / `resize` / `close` / `toast` are allowed for v2 apps, but SDK 2.3.0 exposes no methods for them — post them yourself with `window.parent.postMessage({ type, payload }, shellOrigin)`.

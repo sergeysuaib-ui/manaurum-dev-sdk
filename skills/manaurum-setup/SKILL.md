@@ -329,7 +329,7 @@ Full capability list + input schemas: `references/capabilities-reference.md`.
 MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
 ```
 
-Get the token via Manaurum desktop → **Dev Hub → "v2 Tokens (Beta)" → Generate**. Shown ONCE — save immediately. Bound to the tenant of whoever issued it (today: typically `seregaos` while v2 is being rolled out).
+Get the token via Manaurum desktop → **Dev Hub → Credentials → Create token**. Shown ONCE — save immediately. Bound to the tenant of whoever issued it.
 
 ### `.gitignore`
 

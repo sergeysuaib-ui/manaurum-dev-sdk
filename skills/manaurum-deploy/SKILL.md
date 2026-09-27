@@ -9,7 +9,7 @@ description: Deploy a ManAurum OS app on Platform v2 (containerized — `manauru
 >
 > Every app deploys with an **`mna_*`** credential through `manaurum app deploy` or `POST /api/dev/v2/deploy`. The platform builds a Docker image from a tarball, pushes it to a private registry, runs it as a Swarm service and exposes it at `https://<slug>.apps.manaurum.com`.
 >
-> If the user has no `mna_*`, ask them to mint one from Dev Hub → "v2 Tokens (Beta)" → Generate. An **`mnu_*`** token is **not** a deploy token: it is a tenant token for MCP clients and Drive upload (Settings → Team → Keys & tokens), and the deploy endpoint rejects it.
+> If the user has no `mna_*`, ask them to mint one from Dev Hub → Credentials → Create token. An **`mnu_*`** token is **not** a deploy token: it is a tenant token for MCP clients and Drive upload (Settings → Team → Keys & tokens), and the deploy endpoint rejects it.
 
 ---
 
@@ -17,7 +17,7 @@ description: Deploy a ManAurum OS app on Platform v2 (containerized — `manauru
 
 ### Prereqs
 
-- An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → "v2 Tokens (Beta)" → Generate. Shown ONCE, save immediately.
+- An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → Credentials → Create token. Shown ONCE, save immediately.
 - A project directory containing `manifest.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
 
 ### Pre-flight: two linters, then a small window with a lot of data
@@ -373,7 +373,7 @@ if [ -f .env.manaurum ]; then
 fi
 
 if [ -z "${MANAURUM_V2_TOKEN:-}" ]; then
-  echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://app.manaurum.com (Dev Hub → v2 Tokens)."
+  echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://app.manaurum.com (Dev Hub → Credentials)."
   echo "Save as MANAURUM_V2_TOKEN=mna_<...> in .env.manaurum"
   exit 1
 fi

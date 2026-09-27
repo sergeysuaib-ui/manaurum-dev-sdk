@@ -4,8 +4,8 @@
 
 On 2026-09-28 the platform retired the v1 path for third-party apps (decision
 D-144). The iframe-bundle deploy, `POST /api/dev/apps/deploy`, has answered 404
-since 2026-08-05, and the public v1 SDK files under `manaurum.com/sdk/` now
-redirect to `manaurum.com/developers#v1-retired`. These skills still taught that
+since 2026-08-05, and the public v1 SDK files under `manaurum.com/sdk/` other
+than `manaurum.js` redirect to `manaurum.com/developers#v1-retired`. These skills still taught that
 path in a "Legacy v1" section at the bottom of each one, and still called it
 supported. An agent following them would build an app nothing can deploy.
 Removing a documented path is a breaking change, hence the major version.
@@ -22,8 +22,12 @@ Removing a documented path is a breaking change, hence the major version.
   and Drive upload, minted with explicit scopes and unable to deploy. Deploys
   use an `mna_*` credential through `manaurum app deploy` or
   `POST /api/dev/v2/deploy`, and nothing else.
-* **No link to a removed public file remains.** `sdk-api.md` names the old
-  `manaurum.js` once, to say it is retired and must not be loaded.
+* **No link to a removed public file remains.** `manaurum.js` is still served
+  for apps that have not moved yet; `sdk-api.md` names it once, to say it is
+  retired and must not be loaded.
+* **`mna_*` credentials** are minted at Dev Hub → Credentials (the old
+  "v2 Tokens (Beta)" tab name is gone), and the shell's answer to a v2 frame's
+  `manaurum:ai-*` (rejected with an error reply) is documented.
 * **Frontmatter, `plugin.json` and the README** describe a v2-only plugin.
   `scripts/smoke_tools.py` stops parsing the deleted v1 manifest.
 

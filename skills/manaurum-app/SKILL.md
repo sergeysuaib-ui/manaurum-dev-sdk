@@ -580,7 +580,7 @@ manifest.
 
 ## Step 4 — Deploy
 
-You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → "v2 Tokens (Beta)" → Generate**. Shown once, save to `.env.manaurum`:
+You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → Credentials → Create token**. Shown once, save to `.env.manaurum`:
 
 ```
 MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
