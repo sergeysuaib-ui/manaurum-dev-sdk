@@ -515,6 +515,37 @@ The role's `search_path` is locked to your schema, so write plain unqualified SQ
 
 **Your container serves exactly one tenant.** The platform runs a separate Swarm service per (app, tenant) — the service DNS name is derived from both — and injects a fixed `MANAURUM_TENANT_ID` that never changes for the life of that container. So process-local state (in-memory caches, module globals, connection pools) is already single-tenant: you do **not** need to key caches by tenant, and doing so adds complexity that buys nothing. What you must still not assume is that `sub` is stable-shaped — treat it as opaque TEXT (see the user-context section).
 
+### Your database can come up after your container
+
+Postgres and your app are separate Swarm services, restarted in no particular order. After a host stall Swarm recreates many of them at once, and your app can start first. On 2026-09-25 the apps were up 50 seconds before Postgres accepted connections.
+
+**Never remember a failed connection.** Open the pool on first use. If opening it fails, raise and leave nothing behind, so the next request tries again. Do not warm the pool up in `lifespan`.
+
+```python
+_pool: asyncpg.Pool | None = None
+_pool_lock = asyncio.Lock()
+
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        async with _pool_lock:          # concurrent first requests share one pool
+            if _pool is None:
+                _pool = await asyncpg.create_pool(
+                    os.environ["DATABASE_URL"],
+                    min_size=1, max_size=8,
+                    timeout=10,         # connect: under the gateway's 30 s
+                    command_timeout=25,
+                )
+    return _pool
+```
+
+Two shapes look careful and are not:
+
+- **Connect once in `lifespan` and swallow the failure** (`except Exception: _pool = None`). Every query helper then answers "no database" with an empty result. The app serves 200s with no data and `/healthz` stays green. Postgres logs nothing, because the app stopped asking. It stays that way until someone restarts it. Five hosted apps sat like this for 43 hours.
+- **Connect once in `lifespan` and let the process crash.** Swarm restarts it every few seconds, so it does come back. Until then, though, the UI, `/healthz` and every route are down too, not only the ones that need data. The operator sees a crash loop rather than its cause.
+
+The same goes for anything else you fetch once at boot from Core, such as a secret from `os.secrets.get`. Core can be down while you start too. Fetch it when you first need it, and fetch it again if you do not have it yet.
+
 ### `migrate_command` does nothing
 
 `migrate_command` is in the manifest schema, but Core has **no call site for it** — nothing executes it. An app whose schema depends on it deploys green and its tables simply never exist. Use `migrations/*.sql`.
