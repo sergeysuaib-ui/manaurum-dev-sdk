@@ -283,7 +283,7 @@ def smoke_json(problems: list) -> None:
     """
     for name in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json",
                  "hooks/hooks.json", "templates/preview-fixtures.json",
-                 "templates/v2-starter/manifest.json", "templates/legacy-v1/manifest.json"):
+                 "templates/v2-starter/manifest.json"):
         path = ROOT / name
         if not path.exists():
             problems.append("%s: missing" % name)

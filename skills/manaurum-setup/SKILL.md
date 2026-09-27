@@ -1,17 +1,17 @@
 ---
 name: manaurum-setup
-description: Scaffold a new ManAurum OS app project. As of 2026-05, the default flow is Platform v2 (containerized hosted apps); v1 (iframe bundles) is supported for legacy apps. Use when the user wants to start building a new ManAurum/SeregaOS app, scaffold a project from scratch, or initialize a fresh app directory.
+description: Scaffold a new ManAurum OS app project. Every app is a Platform v2 app (containerized, hosted). Use when the user wants to start building a new ManAurum/SeregaOS app, scaffold a project from scratch, or initialize a fresh app directory.
 ---
 
 # Set Up a ManAurum App Project
 
-> ## ⚡ v2 is the new default (2026-05)
+> ## ⚡ Every app is a Platform v2 app
 >
-> This skill scaffolds **v2 (containerized hosted)** projects by default. For legacy v1 (iframe bundle) projects, jump to the "Legacy v1 setup" section at the bottom.
+> This skill scaffolds **v2 (containerized hosted)** projects: a container you deploy with an `mna_*` credential. That is the only path for an app built outside the monorepo.
 
 ---
 
-## v2 setup (default)
+## v2 setup
 
 ### Step 0 — Know what you are scaffolding
 
@@ -404,64 +404,6 @@ the only test that covers the shell contract.
    job id, not a result; poll until `succeeded` or `failed`.
 3. Hit `https://<slug>.apps.manaurum.com` **and** open the app as a desktop window.
 4. Iterate: bump `manifest.json.version`, redeploy. Same URL, new version.
-
----
-
-## Legacy v1 setup (iframe — for existing apps only)
-
-> Don't use this for new apps. v1 is for maintaining existing iframe-based apps.
-
-```
-my-v1-app/
-├── manifest.json       ← v1 schema (manifest_version: "1")
-├── index.html          ← MUST be at the bundle root
-├── style.css / app.js  ← optional
-└── .env.manaurum       ← MANAURUM_TENANT_TOKEN=mnu_…
-```
-
-### Starter v1 `manifest.json`
-
-```json
-{
-  "manifest_version": "1",
-  "manaurum_sdk_version": "1",
-  "slug": "my-app",
-  "name": "My App",
-  "version": "1.0.0",
-  "entry_point": "index.html",
-  "permissions": []
-}
-```
-
-### Starter v1 `index.html`
-
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>My App</title>
-  <script src="https://manaurum.com/sdk/manaurum.js"></script>
-</head>
-<body>
-  <h1 id="title">Loading…</h1>
-  <script>
-    var app = ManaurumSDK.init();
-    app.onReady(function (ctx) {
-      document.getElementById('title').textContent = 'Hello, ' + ctx.user.nickname + '!';
-    });
-  </script>
-</body>
-</html>
-```
-
-### v1 deploy
-
-`/manaurum-deploy` → "Legacy v1 deploy" section. Token is `mnu_*` (not `mna_*`), endpoint is `/api/dev/apps/deploy`, body is a manifest+zip.
-
-For the full v1 surface (SDK API, App Store submission), see `references/sdk-api.md`, `references/manifest-spec.md`, `references/publishing.md`. Those three describe v1 only — with one carve-out: the `manaurum:init` / `manaurum:ready` handshake documented in `sdk-api.md` applies to **v2 apps too**. Everything else in the postMessage protocol (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) is v1-only and is rejected for a v2 app.
-
-`references/design.md` is **not** v1-only — it was rewritten for v2 and applies to both.
 
 ---
 

@@ -1,22 +1,19 @@
 ---
 name: manaurum-deploy
-description: Deploy a ManAurum OS app. As of 2026-05, the default flow is Platform v2 (containerized — `POST /api/dev/v2/deploy` with an `mna_*` token). Legacy v1 (iframe bundle — `POST /api/dev/apps/deploy` with an `mnu_*` token) is supported for existing apps. Use whenever the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers token issuance, build context preparation, deploy contract, rejection codes, rollback, and the post-deploy install/open flow.
+description: Deploy a ManAurum OS app on Platform v2 (containerized — `manaurum app deploy` or `POST /api/dev/v2/deploy` with an `mna_*` token). Use whenever the user wants to deploy, publish, host, upload, or release their ManAurum/SeregaOS app. Covers token issuance, build context preparation, deploy contract, rejection codes, rollback, and the post-deploy install/open flow.
 ---
 
 # Deploy ManAurum App
 
-> ## ⚡ v2 is the default (2026-05)
+> ## ⚡ One deploy path: Platform v2
 >
-> Two paths exist. Pick by **token format the user has**:
+> Every app deploys with an **`mna_*`** credential through `manaurum app deploy` or `POST /api/dev/v2/deploy`. The platform builds a Docker image from a tarball, pushes it to a private registry, runs it as a Swarm service and exposes it at `https://<slug>.apps.manaurum.com`.
 >
-> - **`mna_*`** → v2 hosted runtime. `POST /api/dev/v2/deploy`. Builds a Docker image from a tarball, pushes to a private registry, runs as a Swarm service, exposes at `https://<slug>.apps.manaurum.com`. **Default for all new work.**
-> - **`mnu_*`** → v1 iframe runtime. `POST /api/dev/apps/deploy`. Uploads a zip bundle, served in an iframe at `/t/<tenant>/apps/<slug>`. **Legacy — only for existing v1 apps.**
->
-> If unsure or the user has neither, ask them to mint an `mna_*` from Dev Hub → "v2 Tokens (Beta)" → Generate. **The two surfaces are not interchangeable** — a `mnu_*` token will be rejected by the v2 endpoint and vice versa.
+> If the user has no `mna_*`, ask them to mint one from Dev Hub → "v2 Tokens (Beta)" → Generate. An **`mnu_*`** token is **not** a deploy token: it is a tenant token for MCP clients and Drive upload (Settings → Team → Keys & tokens), and the deploy endpoint rejects it.
 
 ---
 
-## v2 deploy (default)
+## v2 deploy
 
 ### Prereqs
 
@@ -53,8 +50,8 @@ own the scrolling. A root with `overflow: hidden` and a fixed `height`, with no
 scroller under it, ships with the bottom of every long view cut off. It looks
 perfect in a full-screen tab with three rows.
 
-The console is the observable, not your eyes: since `manaurum.js` 1.12.0 /
-`manaurum-v2.mjs` 2.3.0 the SDK measures this at run time and logs
+The console is the observable, not your eyes: since `manaurum-v2.mjs` 2.3.0
+the SDK measures this at run time and logs
 
 ```
 content is clipped and nothing scrolls: <div.your-root> is 600px tall and hides 1106px below it.
@@ -355,93 +352,7 @@ The v2 manifest's `visibility.mode` controls which tenants can install the app:
 - `public` — any tenant can install it via App Store v2.
 - `allow_list` with a `tenants` array — explicit list of tenant UUIDs.
 
-For `public` / `allow_list`, the install itself is initiated by a **tenant admin** in the consuming tenant via `POST /api/app-store/v2/install`. The deploy is a separate operation done once by the developer.
-
-This is fundamentally different from v1, where each tenant requires its own deploy. v2 has a global app registry; v1 had per-tenant catalogs.
-
----
-
-## v1 deploy (legacy — iframe apps only)
-
-> **Don't use this for new apps.** v1 is for maintaining existing iframe-based builtins.
-
-### v1 prereqs
-
-- An `mnu_*` token (NOT `mna_*`). Mint via:
-  ```bash
-  curl -sS -X POST https://manaurum.com/api/developer/tenant-tokens \
-    -H "Authorization: Bearer $SESSION_JWT" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "ci-deploy"}'
-  ```
-  Or via Dev Hub → "API Tokens" tab in the UI. Default scopes `["app.deploy", "app.read"]`.
-- A `manifest.json` (v1 schema — `manifest_version: "1"`) + a zip bundle with `index.html` at the root.
-
-### v1 quickstart
-
-```bash
-cd my-app
-zip -r bundle.zip . -x "*.DS_Store" "node_modules/*" ".git/*" ".env*"
-
-# Via a file, not `--arg`: the bundle is far larger than the argv limit.
-# A per-run directory, never a fixed name: /tmp is shared between sessions.
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
-base64 < bundle.zip | tr -d '\n' > "$WORK/bundle.b64"
-jq -n --rawfile b "$WORK/bundle.b64" --slurpfile m manifest.json '{manifest: $m[0], bundle: $b}' \
-  | curl -sS -X POST https://manaurum.com/api/dev/apps/deploy \
-      -H "Authorization: Bearer $MANAURUM_TENANT_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d @- | jq .
-rm -rf "$WORK"
-```
-
-Success body:
-```json
-{
-  "application_id": "...",
-  "version_id":     "...",
-  "version_number": "1.0.0",
-  "url": "/t/<tenant_slug>/apps/<app_slug>"
-}
-```
-
-After deploy, a workspace owner inside the same tenant must install the app via the AppStore desktop app. Members can then open `/t/<tenant_slug>/apps/<app_slug>` and the iframe loads.
-
-### v1 hard limits
-
-- Max bundle: 50 MB.
-- Allowed extensions: `.html .htm .js .mjs .jsx .ts .tsx .css .svg .png .jpg .jpeg .gif .webp .ico .avif .woff .woff2 .ttf .otf .eot .txt .md .map .webmanifest`.
-- The bundle scanner rejects credential patterns (`sk_live_`, `AKIA`, `ghp_`, …), undeclared 3rd-party SDKs, disallowed URLs.
-
-### v1 rejection codes
-
-| HTTP | `rejection` | Fix |
-|---|---|---|
-| 401 | `rejected_token_invalid` | Issue a fresh `mnu_*`. |
-| 403 | `rejected_insufficient_scope` | Token needs `app.deploy`. |
-| 400 | `rejected_manifest_invalid` | Read `findings[]`; fix manifest. |
-| 400 | `rejected_version_conflict` | Bump semver. |
-| 413 | `rejected_bundle_too_large` | > 50 MB — trim. |
-| 422 | `rejected_bundle_credential_detected` | Remove the credential. |
-| 422 | `rejected_bundle_sdk_undeclared` | Declare in `manifest.integrations[]`. |
-
-### v1 multi-tenant
-
-A `mnu_*` token is bound to ONE tenant. Deploying the same app to a second tenant requires a separate `mnu_*` from THAT tenant.
-
-### v1 token housekeeping
-
-```bash
-# list (no raw_token returned)
-curl -sS https://manaurum.com/api/developer/tenant-tokens \
-  -H "Authorization: Bearer $SESSION_JWT"
-
-# revoke
-curl -sS -X DELETE "https://manaurum.com/api/developer/tenant-tokens/<token_id>" \
-  -H "Authorization: Bearer $SESSION_JWT"
-```
-
-Cap: 5 active tokens per (user, tenant). Revoke an old one if you hit `409 max_active_tokens_reached`.
+For `public` / `allow_list`, the install itself is initiated by a **tenant admin** in the consuming tenant via `POST /api/app-store/v2/install`. The deploy is a separate operation done once by the developer: v2 has a global app registry, so one deploy serves every tenant that installs the app.
 
 ---
 

@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.14.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.0.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -140,7 +140,7 @@ Build a ManAurum app that tracks my team's on-call rota and reminds people the d
 ```
 
 Deep references live in `skills/manaurum-app/references/`: the capability catalogue, the
-manifest spec, the v2 platform model, the client SDK, publishing, and design. Start with
+v2 platform model (manifest included), the client SDK, publishing, and design. Start with
 `reference-apps.md` — three production apps at different sizes, with the load-bearing
 parts inlined. Reading one real app beats reading four pages about apps.
 
@@ -189,8 +189,6 @@ parts inlined. Reading one real app beats reading four pages about apps.
   sizes the app's frame so the narrow window the design contract is written for can be
   photographed honestly. Keep it *beside* the app directory — everything inside is
   packed into the deploy.
-* `templates/legacy-v1/` — the old iframe-bundle artifacts. Kept only for apps that
-  already ship on v1; do not start anything new from them.
 
 ---
 
@@ -226,8 +224,9 @@ discover it at 2 a.m.:
 * [Design tokens](https://manaurum.com/api/library/tokens.css) and the public
   [component library](https://manaurum.com/library)
 
-Legacy v1 (iframe apps, `manaurum.js`, `mnu_*` tokens) is still supported for apps already
-on it; each skill keeps a "Legacy v1" section at the bottom.
+Platform v2 is the only path for an app built outside the monorepo; the old iframe-bundle
+path is retired and these skills do not teach it. An `mnu_*` token is a tenant token for
+MCP clients and Drive upload; it cannot deploy an app.
 
 ## License
 
