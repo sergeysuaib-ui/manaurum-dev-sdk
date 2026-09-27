@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.13.0.** A plugin install caches one directory per
+> **This page is SDK 2.14.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -714,6 +714,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't bake your developer `mna_*` token into the image, and don't pass one at deploy.** You don't need to: the platform injects `MANAURUM_RUNTIME_TOKEN`. Your own token is a laptop credential for `POST /api/dev/v2/deploy`; an image containing it hands every future reader your deploy rights. (`os.secrets.get` is not an alternative here — it is itself a capability call that needs the runtime token first.)
 - **Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
 - **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql`, which the pipeline runs once per (app, tenant).
+- **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failed attempt raise, so the next request tries again. Never catch the failure into a "no database" mode: that app serves empty 200s behind a green `/healthz` until someone restarts it. The same goes for a secret or anything else you fetch from Core at startup. The pattern is ten lines, in `references/v2-platform.md` → "Your database can come up after your container".
 - **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
 - **Don't use the v1 `mnu_*` token format.** v2 uses `mna_*` exclusively. The two are different surfaces.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.

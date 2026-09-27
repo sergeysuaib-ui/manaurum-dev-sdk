@@ -1,3 +1,32 @@
+# 2.14.0 - a database that comes up late is retried, not remembered (MAN-3008)
+
+### Why
+
+On 2026-09-25 the provider's hypervisor starved the prod VM of CPU for ten
+minutes, and Swarm recreated about half the containers at once. The v2 apps
+were up at 18:07:08; the main Postgres accepted connections only at 18:07:58.
+Five hosted apps open their pool once in `lifespan` and catch the failure into
+a "no database" mode. They served empty 200s behind a green `/healthz` for 43
+hours, and Postgres logged nothing, because the apps had stopped asking. A user
+found it.
+
+These skills never said how to hold a connection. `DATABASE_URL` was described
+as a credential, and what an app does when the database is not there yet was
+left to each author. The apps that got it right (a pool opened on first use)
+did so by accident of whichever app they were copied from.
+
+### What changed
+
+* **`skills/manaurum-app/references/v2-platform.md`** - a new section, "Your
+  database can come up after your container": the rule (never remember a
+  failed connection), the ten-line lazy pool with a lock and a connect timeout
+  under the gateway's 30 s, and the two shapes that look careful and are not.
+  One swallows the failure; the other crashes, and takes the UI and `/healthz`
+  down with it until the database is back. The same rule covers a secret or
+  anything else fetched from Core at boot.
+* **`skills/manaurum-app/SKILL.md`** - one line in "What NOT to do", pointing
+  at that section.
+
 # 2.13.0 - a capped page is a centred page, and something checks it (MAN-2849)
 
 ### Why
