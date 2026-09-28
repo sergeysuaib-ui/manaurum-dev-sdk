@@ -323,7 +323,7 @@ The format is `mna_<keyid>_<secret>` where keyid is 12 hex chars and secret is 3
 
 ### Issuance — UI
 
-Manaurum desktop → **Dev Hub → "v2 Tokens (Beta)" tab → Generate**. The UI is gated on the per-tenant `platform.v2.enabled` flag — only tenants opted into v2 see the tab. Today: `seregaos`. Future: every tenant after rollout.
+Manaurum desktop → **Dev Hub → Credentials → Create token**. Every tenant has it.
 
 The form lets you pick:
 - **Apps scope**: comma-separated slugs, or blank for `*` (all apps owned by the developer in this tenant).
