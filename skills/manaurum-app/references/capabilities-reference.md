@@ -1,8 +1,12 @@
 # Capabilities — input/output reference
 
-The exhaustive reference for every Platform v2 capability. All **26** capabilities
-registered in `backend/app/services/capabilities/` are documented below. Every entry
-documents:
+The reference for Platform v2 capabilities. **32** capabilities are registered in
+`backend/app/services/capabilities/` on the monorepo's `main` (counted 2026-09-22), and
+**27** of them are documented below. The other five are not documented yet —
+`os.ai.image_submit`, `os.ai.image_poll`, `os.drive.delete`, `os.locations.get`,
+`os.locations.list` — so read their `CapabilityDefinition` in the registry before you
+call one. (Until 2.13.0 this line said "all 26 are documented"; it was wrong twice.)
+Every entry documents:
 
 - The capability name + version.
 - Required input fields (JSON Schema-derived).
@@ -18,7 +22,7 @@ POST ${MANAURUM_CORE_URL}/api/capability/<name>
 Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}
 X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}
 X-Manaurum-App-Id:    ${MANAURUM_APP_ID}
-X-Manaurum-User-Context: <the JWT your route received>   # auth_mode: user only
+X-Manaurum-User-Context: <the JWT your route received>   # every call made for a person
 Content-Type: application/json
 ```
 
@@ -53,8 +57,13 @@ is no wildcard grant (MAN-1585): every capability has to be listed.
 
 The gateway **accepts** `X-Manaurum-User-Context` on `/api/capability/<name>` and
 **requires** it for `auth_mode: "user"` capabilities. On `auth_mode: "app"` capabilities
-it is optional and only enriches `acting_user_id` in the audit log. (If you read anywhere
-that the gateway *rejects* a user context on this path, that statement is wrong.)
+the gateway does not demand it, but it is not decoration either: it names the acting
+user in the audit log, and for `os.ai.complete` and `os.ai.providers` it selects the
+workspace whose AI settings apply and charges the spend to that person. **Forward it on
+every call you make on behalf of a person.** (If you read anywhere that the gateway
+*rejects* a user context on this path, that statement is wrong — the starter's own
+`capability.py` said so until 2.13.0, and `scripts/check_repo.py` now fails the build if
+a template says it again.)
 
 Universal error codes for the rest (credential, headers, schema, quota): see
 `v2-platform.md` § 3.
@@ -333,52 +342,197 @@ sending.
 
 ---
 
-## `os.ai.complete` — LLM completion (BYOK)
+## Text AI — who pays, and what makes a call leave that path
 
-The tenant's API key is used (configured in Settings → Workspace → Интеграции). Five providers supported: `openai`, `anthropic`, `gemini`, `deepseek`, `groq`.
+Read this before `os.ai.complete`. It is the platform's premise, not a detail of one
+capability, and until 2.13.0 this page taught the exception instead of the rule.
 
-**Input:**
+**Leave `provider` and `model` out, and the workspace's AI answers.** The platform
+resolves the backend the workspace chose for your app in Settings — a backend dedicated
+to this app, else the workspace default — and when the workspace chose nothing, the
+managed ManAurum model, **paid for by the platform**. Nobody pastes a key, and an app
+written this way works on the day it is installed.
+
+**Name either one, and you have left that path.** A `provider` or a `model` in the
+payload means "use the tenant's own API key from Settings → Интеграции". Without that key
+the call is a `412`: `integration_not_configured` when you named a provider,
+`no_ai_provider_configured` when you named only a model. Pin only when the person asked
+for that specific provider, and then render the `412` as the instruction it is.
+`templates/check_app.py` fails an `os.ai.complete` payload that names either field
+without a `manaurum:byok` marker on the line.
+
+Two consequences nobody guesses:
+
+- **A `model` without a `provider` is still a pin.** The model id goes to the first
+  provider the tenant holds a key for, in the order anthropic → openai → gemini →
+  deepseek → groq (a key whose last Settings test failed goes last). `"model": "gpt-4o"`
+  on a tenant with only an Anthropic key is sent to Anthropic, and fails there.
+- **A failure never changes who pays.** The workspace's backend failing is a `502`, not a
+  quiet retry on the tenant's key; a pinned provider failing is a `502`, not a retry on
+  the platform's.
+
+Before you build a settings screen, ask `os.ai.providers` (below). It answers "what would
+an unpinned call use right now, and if nothing, why" without spending anything. A
+working call, the error-to-message table and the deliberate BYOK variant are in
+`templates/recipes/ai-complete/`.
+
+---
+
+## `os.ai.complete` — text completion
+
+**Input** — this is the call to write:
 
 ```json
 {
-  "provider": "openai",
-  "model":    "gpt-4o-mini",
   "messages": [
-    { "role": "system",  "content": "You are a helpful assistant." },
-    { "role": "user",    "content": "Hello." }
+    { "role": "system", "content": "Summarise the note in one sentence." },
+    { "role": "user",   "content": "…the note…" }
   ],
-  "temperature": 0.2,
-  "max_tokens": 1024
+  "max_tokens": 400
 }
 ```
 
-| Field | Required |
-|---|---|
-| `provider` | yes |
-| `model` | yes |
-| `messages` | yes (array of `{role, content}`) |
-| `temperature`, `max_tokens`, `top_p`, etc. | optional, passed through to provider |
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `messages` | array | yes | `{role, content}` objects, at least one. `role` is `system`, `user` or `assistant`; `content` is a string. |
+| `max_tokens` | integer | **pass it** | 1–200000. Optional in the schema, not in practice — see "Size `max_tokens` to the answer" below. |
+| `temperature` | number | optional | 0–2. |
+| `log_prompt` | boolean | optional | Default `true`. `false` keeps the prompt and the answer out of the platform's call log (a length + digest placeholder is stored instead); tokens, cost and attribution are recorded either way. Pass `false` for a person's private text. |
+| `provider` | string | **no — leave it out** | `openai`, `anthropic`, `gemini`, `deepseek` or `groq`. Setting it switches this call to the tenant's own key and fails with `412 integration_not_configured` when there isn't one. |
+| `model` | string | **no — leave it out** | The same switch, even without `provider`. Fails with `412 no_ai_provider_configured` when the tenant holds no provider key at all. |
+
+The schema is `additionalProperties: false`: `top_p`, `stop`, `stream` or any other
+field not in this table is `422 input_schema_violation`. There is no streaming.
 
 **Output:**
 
 ```json
 {
-  "content": "Hi! How can I help?",
-  "model":   "gpt-4o-mini",
-  "usage":   { "input_tokens": 22, "output_tokens": 8 }
+  "content":     "…",
+  "tokens_used": { "input": 212, "output": 38, "total": 250 },
+  "cost_usd":    0.00041,
+  "cost_known":  true,
+  "provider":    "manaurum",
+  "model":       "…"
 }
 ```
 
-**Errors:**
-- `412 missing_provider_credentials` — tenant hasn't set a key for this provider in Интеграции.
-- `400 unsupported_provider` — provider not in the allowed list.
-- `502 upstream_5xx` — provider returned 5xx; passed through.
+`provider: "manaurum"` means the platform-funded path answered. `cost_usd` is `null`
+with `cost_known: false` when the platform cannot price the call: unknown is not zero.
+(Until 2.13.0 this page showed a `usage` object; the platform has never returned one.)
+
+**Which workspace, and why the user context matters here.** Text AI settings belong to
+a workspace, so every call has to land in exactly one. In order:
+
+1. the workspace signed into the forwarded `X-Manaurum-User-Context` — the normal case,
+   and the reason to forward it on every call made for a person;
+2. otherwise `X-Manaurum-Workspace-Id`, for a call with no person behind it (a scheduled
+   job). It must name a workspace your app is installed in, and when both are present
+   they must agree;
+3. otherwise the one non-ephemeral workspace your app is installed in.
+
+With neither header, rule 3 works until a **second** workspace installs your app, and
+then every call is `412 workspace_context_required`. That is how an app that worked
+for a week breaks with no deploy. The forwarded context also attributes the spend: a
+call with one draws on that person's allowance and the tenant's, a call without one on
+the tenant's alone.
+
+**Size `max_tokens` to the answer.** On the platform-funded path every call reserves its
+worst-case cost against the spending allowance before it runs, and gives back the
+difference once the provider reports usage. The input is reserved at one token per
+UTF-8 **byte** of the JSON-encoded `messages` — roughly four times the real count for
+English, and more for Cyrillic, where every letter is two bytes. The output is reserved
+at `max_tokens`, or at the model's whole output ceiling when you leave it out. The
+allowances default to $5 per person per day and $20 per month, and $50 per tenant per
+day and $200 per month (UTC windows; an operator can change them). A call whose
+reservation does not fit is refused with `429 ai_spend_cap` even when its real cost
+would have fitted — so an app that sends long documents with no `max_tokens` meets the
+cap long before its usage justifies it.
+
+**Errors — most of these are setup states, not failures.** Each one in the first group
+means a person has to do something, so render the last column as a sentence in your UI
+and never turn it into a 500. The second group is your bug; fix the call.
+
+| HTTP | `detail.error` | When | Tell the person |
+|---|---|---|---|
+| 403 | `capability_not_granted` | `os.ai.complete` is not granted on this install — your manifest never asked for it, or it was added after the install and a redeploy does not widen grants. | AI is not enabled for this app yet; a workspace admin has to allow it. |
+| 403 | `ai_disabled` | Text AI was switched off for this app in Settings. | AI is switched off for this app in Settings. |
+| 412 | `ai_backend_unavailable` | The workspace's chosen backend cannot answer — its credentials need attention, a dedicated backend was deleted, or no platform model is available. `message` says which. | Show `message`, and point at Settings. |
+| 403 | `workspace_context_unavailable` | No non-ephemeral workspace has your app installed with this person as a member — the Sandbox, for one. | AI is not available in this workspace. |
+| 429 | `ai_spend_cap` | The platform-funded allowance is used up. `subject` is `user` or `tenant`; `window` is `day` or `month`. | Today's (or this month's) AI allowance is used up — for you, or for the whole workspace. Not "try again". |
+| 412 | `integration_not_configured` | A **pinned** `provider` with no key for it in Интеграции. | This feature uses your own `<provider>` key; add it in Settings → Интеграции. |
+| 412 | `no_ai_provider_configured` | A **pinned** `model` with no `provider`, and the tenant holds no provider key at all. | The same, without a provider name. |
+| 502 | `ai_upstream_error` | The backend failed. `attempts[]` holds `{provider, model, status, reason, detail}`; `reason` is `upstream_error`, `invalid_credential` (the provider refused the key — fix it in Settings) or `reasoning_only` (the model spent all of `max_tokens` thinking — raise it; a plain retry buys the same thinking again). | The AI service did not answer; try again shortly. |
+| 502 | `"<provider>_upstream_error:<status>"` or `"upstream_error:<provider>"` | A **pinned** `provider` failed. Both are plain strings in `detail`, not objects. | The same. |
+| 412 | `workspace_context_required` | No user context, no `X-Manaurum-Workspace-Id`, and the app is installed in more than one workspace. A blank `X-Manaurum-Workspace-Id` is `400` with the same code. | Nothing — forward the user context. |
+| 403 | `workspace_context_mismatch` | `X-Manaurum-Workspace-Id` names a different workspace from the one signed into the user context. | Nothing — send one or the other. |
+| 403 | `app_installation_required` | Your app has no live install in this tenant: a `runtime.mode: dev` app, or one disabled or taken down. | Nothing — publish or reinstall. |
+| 422 | `input_schema_violation` | A field outside the table above, or a `provider` outside the five. | Nothing — fix the payload. |
 
 ---
 
-## `os.ai.embed` — embedding (BYOK)
+## `os.ai.providers` — what an unpinned call would use
 
-Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding-004).
+The setup screen's source of truth. It runs the same resolution `os.ai.complete` would,
+with the same grant and AI-off checks, and reports the verdict instead of spending
+anything.
+
+**Input:** `{}` — it takes nothing, and an invented field is `422`.
+
+**Output:**
+
+```json
+{
+  "completion": {
+    "available":          true,
+    "selection_source":   "managed_default",
+    "display_name":       "ManAurum AI",
+    "unavailable_reason": null
+  },
+  "platform_fallback": true,
+  "providers": [
+    { "provider": "anthropic", "last_test_ok": true, "serves": ["complete"] }
+  ],
+  "image_generation_enabled": false
+}
+```
+
+- `completion` describes the unpinned `os.ai.complete`. `selection_source` is
+  `app_default` (a backend chosen for this app), `workspace_default`, `workspace_legacy`
+  (an older workspace AI setting) or `managed_default` (the workspace chose nothing, and
+  the platform's model answers). When `available` is `false`, `unavailable_reason` is
+  `capability_not_granted` (`os.ai.complete` itself is not granted), `ai_disabled` or
+  `ai_backend_unavailable` — the same codes the call would return, so the error table
+  above gives you the sentence.
+- `platform_fallback: true` means the backend that would answer is platform-funded —
+  the default, or a platform model the workspace picked on purpose.
+- `providers` lists the tenant's **own** keys (for the five completion providers only)
+  and what each can do here: `serves` is drawn from `complete`, `embed`, `transcribe` and
+  `image`. These are what a *pinned* call can use; they say nothing about the unpinned
+  path. `last_test_ok` is the verdict of the last Settings test of that key.
+- `image_generation_enabled` is the tenant's image flag on its own, kept apart from
+  `serves` because "no OpenAI key" and "flag off" have different remedies.
+
+What to show:
+
+| `completion` | Show |
+|---|---|
+| `available`, and `platform_fallback: true` | "Uses ManAurum AI, included." |
+| `available`, and `platform_fallback: false` | "Uses `display_name` — your workspace's AI." |
+| not `available` | The sentence for `unavailable_reason` from the error table above. |
+
+It is advisory: it reserves nothing, so the call right after can still meet
+`429 ai_spend_cap`. And it is gated like the call it describes — declare and be granted
+`os.ai.providers` itself, and forward the user context, because the same workspace
+resolution runs first and returns the same `403` / `412` workspace errors.
+
+---
+
+## `os.ai.embed` — embedding (BYOK only)
+
+No platform-funded path yet: `provider` and `model` are required, and the tenant's own
+key is used. Two providers: `openai` (text-embedding-3-small/large), `gemini`
+(text-embedding-004).
 
 **Input:**
 
@@ -386,17 +540,24 @@ Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding
 { "provider": "openai", "model": "text-embedding-3-small", "input": "text to embed" }
 ```
 
-`input` may also be an array of strings for batch embedding.
+`input` may also be an array of strings for batch embedding. `log_prompt: false` works
+as it does on `os.ai.complete`.
 
 **Output:**
 
 ```json
 {
-  "embeddings": [[0.012, -0.034, ...]],
-  "model": "text-embedding-3-small",
-  "usage": { "input_tokens": 4 }
+  "embeddings":  [[0.012, -0.034, ...]],
+  "tokens_used": { "input": 4, "output": 0, "total": 4 },
+  "cost_usd":    0.0000001,
+  "cost_known":  true,
+  "provider":    "openai",
+  "model":       "text-embedding-3-small"
 }
 ```
+
+**Errors:** `412 integration_not_configured` (no key for that provider); `502` with
+`"<provider>_upstream_error:<status>"` or `"upstream_error:<provider>"`.
 
 ---
 

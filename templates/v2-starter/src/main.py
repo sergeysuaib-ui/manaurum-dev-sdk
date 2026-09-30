@@ -84,7 +84,7 @@ async def read_me(claims: UserContextClaims = Depends(auth_claims)) -> dict[str,
 async def get_notes(claims: UserContextClaims = Depends(auth_claims)) -> dict[str, Any]:
     """Read this user's note out of os.kv."""
     try:
-        return {"text": await read_note(claims.user_id)}
+        return {"text": await read_note(claims.user_id, user_context=claims.token)}
     except CapabilityError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -99,7 +99,9 @@ async def put_notes(
     if not isinstance(body, dict) or not isinstance(body.get("text"), str):
         raise HTTPException(status_code=422, detail="expected_json_text_string")
     try:
-        return {"text": await write_note(claims.user_id, body["text"])}
+        return {"text": await write_note(
+            claims.user_id, body["text"], user_context=claims.token,
+        )}
     except CapabilityError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 

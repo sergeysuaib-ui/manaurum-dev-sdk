@@ -14,7 +14,7 @@ authenticated request 401s.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import HTTPException, Request
 
@@ -29,15 +29,26 @@ class UserContextClaims:
     """The verified caller.
 
     Claims the gateway signs: ``sub`` (user id), ``tenant_id``,
-    ``app_id``, ``app_version``. There is deliberately no
-    ``workspace_id`` — the token does not carry one, so do not key your
-    data on a workspace.
+    ``app_id``, ``app_version``, and ``workspace_id`` when the request
+    came from a workspace — both the desktop and the Assistant sign one.
+    Do not key your data on it: the same person reaches your app from
+    more than one workspace. It is there so that capabilities which act
+    per workspace (text AI) can tell which one, and they read it from
+    the token you forward, not from anything you send.
+
+    ``token`` is the raw JWT, kept so a route can forward it to the
+    capability gateway on the person's behalf (``call_capability(...,
+    user_context=claims.token)``). It lives for 60 seconds: forward it
+    within the request, never store it. ``repr=False`` keeps it out of
+    logs and tracebacks.
     """
 
     user_id: str
     tenant_id: str = ""
     app_id: str = ""
     app_version: str = ""
+    workspace_id: str = ""
+    token: str = field(default="", repr=False, compare=False)
 
 
 def verify_user_context(token: str) -> UserContextClaims:
@@ -80,6 +91,8 @@ def verify_user_context(token: str) -> UserContextClaims:
         tenant_id=str(claims.get("tenant_id", "")),
         app_id=str(claims.get("app_id", "")),
         app_version=str(claims.get("app_version", "")),
+        workspace_id=str(claims.get("workspace_id") or ""),
+        token=token,
     )
 
 

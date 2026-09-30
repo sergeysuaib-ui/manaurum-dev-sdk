@@ -1,3 +1,127 @@
+# 2.13.0 - text AI: the platform pays by default, and the SDK finally says so
+
+### Why
+
+An agent building `dindex-kb` for the zennolab tenant added a model call,
+followed this SDK to the letter, and told the app's owner to go and paste an AI
+provider key into the workspace. The owner did not need one. ManAurum has a
+platform-funded default for text AI, and every surface of this plugin taught the
+exception as the rule:
+
+* the reference titled `os.ai.complete` "(BYOK)", opened with "the tenant's API
+  key is used", marked `provider` and `model` **required**, and pinned both in
+  the example. On the platform those two fields are the switch that turns its
+  own funding OFF: unpinned, the call goes to the workspace's AI (the backend it
+  chose in Settings, or the managed ManAurum model); pinned, it goes to the
+  tenant's key and is `412` without one. Following the page produced an app
+  that could not run until its owner bought a key;
+* the reference's output shape (`usage`) and error codes
+  (`missing_provider_credentials`, `upstream_5xx`) were never what the handler
+  returns, and `top_p` - listed as passed through - is a `422`;
+* the starter's `call_capability` said "do NOT forward the user_context header -
+  the gateway rejects it", on the same day the reference said anyone reading
+  that is reading something wrong. Text AI reads the workspace out of that
+  header: without it, an app works while one workspace has it installed and
+  answers `412 workspace_context_required` from the day a second one does;
+* the starter's `auth.py` said the JWT carries no `workspace_id`. Both platform
+  mint sites sign one;
+* `os.ai.providers` - the capability that answers "what will this call use, and
+  what do I tell the person if nothing" - was not documented at all, while the
+  page claimed to document all 26 capabilities. There are 32.
+
+Every claim below was checked against the monorepo's `main` (`ai.py`,
+`completion_context.py`, `agent_resolver.py`, `platform_spend.py`,
+`capability_gateway.py`, `user_context_jwt.py`), not against the report.
+
+### What changed
+
+`skills/manaurum-app/SKILL.md`:
+
+* a new section before Step 3, **"Whose key, whose money, whose authorization"**:
+  the platform pays by default; naming a provider or a model is an opt-out;
+  forward `X-Manaurum-User-Context` on every call made for a person, not only
+  the user-scoped ones; a capability in the manifest is not a granted one;
+* the header bullet, the Node example (now forwards the context), the capability
+  table (`os.ai.complete`, a new `os.ai.providers` row, `os.ai.embed` as the
+  BYOK one it is), the Step 3.6 table and the rejection-code table follow.
+
+`references/capabilities-reference.md`:
+
+* a **"Text AI - who pays"** chapter ahead of the capability: who pays when you
+  leave the fields out, what naming either one does, that a `model` without a
+  `provider` is still a pin (sent to the first provider the tenant has a key
+  for), and that a failure never changes who pays;
+* `os.ai.complete` rewritten against the handler: the unpinned example, the
+  real input table (`log_prompt`; `provider`/`model` "no - leave it out"), the
+  real output (`tokens_used`, `cost_usd`, `cost_known`, `provider`), how the
+  workspace is chosen (signed context, then `X-Manaurum-Workspace-Id`, then the
+  only install), why `max_tokens` matters (the platform-funded path reserves the
+  input at one token per UTF-8 byte and the output at `max_tokens` or the
+  model's ceiling, against $5/$20 per person and $50/$200 per tenant per
+  day/month by default), and every error with the sentence to show the person;
+* `os.ai.providers` documented, with a what-to-show table;
+* `os.ai.embed`'s output corrected, and marked BYOK-only;
+* the call contract says what the user context does on app-scoped capabilities
+  instead of "only enriches the audit log";
+* the opening count: 32 registered, 27 documented, the five undocumented named.
+
+`templates/v2-starter/`:
+
+* `call_capability(name, payload, *, user_context=None)` forwards the person's
+  JWT; the notes routes and `/agent/*` handlers pass `claims.token`;
+* `CapabilityError` carries `status`, `code` and `detail`, so an app can tell
+  `capability_not_granted` from a timeout;
+* `UserContextClaims` carries `workspace_id` and the raw `token` (`repr=False`);
+* tests: every route that acts for a person forwards their context, through real
+  HTTP; the client sends the header only when given one and keeps the error
+  code, string or object, against `httpx.MockTransport`.
+
+`templates/recipes/ai-complete/` (new): `complete()` - messages and a required
+`max_tokens`, nothing else; `status()` over `os.ai.providers`; every setup state
+as a sentence (`AIUnavailable.message`), every app bug left loud; and
+`complete_with_tenant_key()`, the deliberate BYOK variant, marked. Its tests run
+in CI with the starter's dependencies.
+
+`templates/check_app.py`:
+
+* **Rule 8** - an `os.ai.complete` payload that names `provider` or `model`
+  without `manaurum:byok` on the line is a problem, and so is one without
+  `max_tokens`. Python is read with `ast`, scope by scope, including payloads
+  built a line above the call (`payload["model"] = ...`) and f-string URLs; JS
+  and TS from the capability name to the end of the enclosing call;
+* **Rule 6b** - every `requires_capabilities` / `optional_capabilities` entry is
+  `{"name": ..., "version": "1"}`. A bare string or a numeric version passed
+  every local rule and was refused by the deploy;
+* the `/agent/*` rule no longer counts `user_context=` as verification. Once
+  handlers forward the context, the word is in every body - including one whose
+  `Depends(auth_claims)` was deleted, which the existing mutation caught.
+
+`scripts/check_repo.py`:
+
+* **refuted claims** - a register of statements the reference has corrected
+  ("the gateway rejects a forwarded user context", "os.ai.complete ... BYOK",
+  "no workspace_id"), checked sentence by sentence across every live document
+  and everything under `templates/`. Quoting one to call it wrong stays legal;
+* **the default example** - the reference's `os.ai.complete` input example may
+  not name a provider or a model, and neither field may be marked required.
+
+`scripts/linter_mutations.py`: a mutation per new rule (a pinned model, no
+`max_tokens`, a pinned provider in JavaScript, a bare-string capability, a
+numeric version; a template that drops the context, a BYOK row, a pinned
+example, a required `provider`), and the first green app mutation - a pin marked
+`manaurum:byok` must stay clean, or the opt-out is not really possible.
+
+### Not in this release
+
+* The migration rules from the same report (`CREATE INDEX` without
+  `CONCURRENTLY` on an existing table; a `CONCURRENTLY` file containing nothing
+  else) landed in 2.12.0: `check_app.py` defers to the deploy's own validator
+  when a current `manaurum-cli` is importable, and says the rule went unchecked
+  when it is not.
+* `os.ocr.extract`'s section still lists error codes its handler does not use
+  (`missing_provider_credentials`, `object_not_found`, `schema_violation`), and
+  five capabilities remain undocumented; the reference names those five.
+
 # 2.12.0 - the migration chapter stops hiding a rule (MAN-2624)
 
 ### Why

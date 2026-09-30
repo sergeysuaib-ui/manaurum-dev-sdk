@@ -190,6 +190,76 @@ def a_baked_deploy_token(app: Path) -> None:
          "ENV MANAURUM_V2_TOKEN=mna_9f3c1de77a04b26e5c81\nENV PYTHONUNBUFFERED=1")
 
 
+def a_capability_as_a_bare_string(app: Path) -> None:
+    # Reads naturally, passes Rule 6, and the deploy refuses the manifest.
+    def mutate(data):
+        data["requires_capabilities"][0] = "os.kv.get"
+    patch_manifest(app, mutate)
+
+
+def a_numeric_capability_version(app: Path) -> None:
+    def mutate(data):
+        data["requires_capabilities"][0]["version"] = 1
+    patch_manifest(app, mutate)
+
+
+# Text AI. Each variant declares os.ai.complete, so the capability rule stays
+# quiet and the only finding left is the one under test.
+AI_CALL = '''from src.capability import call_capability
+
+
+async def summarise(text: str, user_context: str) -> str:
+    output = await call_capability(
+        "os.ai.complete",
+        {%s},
+        user_context=user_context,
+    )
+    return output["content"]
+'''
+AI_MESSAGES = '"messages": [{"role": "user", "content": text}]'
+
+
+def _ai_module(app: Path, payload: str) -> None:
+    def mutate(data):
+        data["requires_capabilities"].append({"name": "os.ai.complete", "version": "1"})
+    patch_manifest(app, mutate)
+    (app / "src" / "summary.py").write_text(AI_CALL % payload, encoding="utf-8")
+
+
+def a_pinned_model(app: Path) -> None:
+    # dindex-kb 0.9.0, 2026-09-21: the reference's own example, copied.
+    _ai_module(app, '"model": "gpt-4o", %s, "max_tokens": 200' % AI_MESSAGES)
+
+
+def ai_with_no_max_tokens(app: Path) -> None:
+    _ai_module(app, AI_MESSAGES)
+
+
+def a_pinned_provider_in_javascript(app: Path) -> None:
+    def mutate(data):
+        data["requires_capabilities"].append({"name": "os.ai.complete", "version": "1"})
+    patch_manifest(app, mutate)
+    (app / "server.js").write_text(AI_CALL_JS, encoding="utf-8")
+
+
+AI_CALL_JS = """export async function ask(core, text) {
+  const r = await fetch(`${core}/api/capability/os.ai.complete`, {
+    method: 'POST',
+    body: JSON.stringify({ provider: 'openai',
+                           messages: [{ role: 'user', content: text }],
+                           max_tokens: 100 }),
+  });
+  return r.json();
+}
+"""
+
+
+def a_pin_the_person_asked_for(app: Path) -> None:
+    # The opt-out has to stay possible: marked, it is a decision, not a slip.
+    _ai_module(app, '"provider": "anthropic",  # manaurum:byok - asked for Claude'
+                    + "\n         " + AI_MESSAGES + ', "max_tokens": 200')
+
+
 APP_MUTATIONS = [
     ("routes: a path the manifest does not declare", undeclared_route,
      "no runtime.api_routes rule covers it"),
@@ -241,6 +311,19 @@ APP_MUTATIONS = [
      "still the starter's placeholder"),
     ("secrets: a deploy token baked into the image", a_baked_deploy_token,
      "live mna_9f3c... token"),
+    ("capabilities: an entry that is a bare string", a_capability_as_a_bare_string,
+     'is the bare string "os.kv.get"'),
+    ("capabilities: a numeric version", a_numeric_capability_version,
+     'must be the string "1"'),
+    ("ai: os.ai.complete pinned to a model", a_pinned_model,
+     "os.ai.complete names `model`"),
+    ("ai: os.ai.complete with no max_tokens", ai_with_no_max_tokens,
+     "os.ai.complete with no max_tokens"),
+    ("ai: a pinned provider in JavaScript", a_pinned_provider_in_javascript,
+     "os.ai.complete names `provider`"),
+    # None: the linter must stay CLEAN. A rule that cannot be satisfied on
+    # purpose gets switched off, and then it catches nothing.
+    ("app-green: a pin marked manaurum:byok", a_pin_the_person_asked_for, None),
 ]
 
 
@@ -361,7 +444,43 @@ def a_stale_claims_line(repo: Path) -> None:
     path.write_text(text.replace("2026-09-09", "not-a-date", 1), encoding="utf-8")
 
 
+def a_template_that_drops_the_user_context(repo: Path) -> None:
+    # The 2.12.0 starter, verbatim in substance.
+    append(repo, "templates/v2-starter/src/capability.py",
+           "# Do NOT forward the user_context header here - the gateway rejects "
+           "it on this path.")
+
+
+def a_byok_row_for_text_ai(repo: Path) -> None:
+    append(repo, APP_SKILL,
+           "| `os.ai.complete` | LLM (BYOK - tenant configures keys in Settings). |")
+
+
+def a_pinned_ai_example(repo: Path) -> None:
+    edit(repo / "skills" / "manaurum-app" / "references" / "capabilities-reference.md",
+         '{\n  "messages": [\n    { "role": "system", "content": "Summarise',
+         '{\n  "model": "gpt-4o-mini",\n  "messages": [\n'
+         '    { "role": "system", "content": "Summarise')
+
+
+def a_required_provider(repo: Path) -> None:
+    edit(repo / "skills" / "manaurum-app" / "references" / "capabilities-reference.md",
+         "| `provider` | string | **no — leave it out** |",
+         "| `provider` | string | yes |")
+
+
 # The must-stay-green half.
+
+
+def refuting_a_refuted_claim(repo: Path) -> None:
+    append(repo, README,
+           "If a page tells you the gateway rejects a forwarded user context, that "
+           "page is wrong: forward it on every call made for a person.")
+
+
+def teaching_the_opt_out_marker(repo: Path) -> None:
+    append(repo, README,
+           "Pin a provider on os.ai.complete only with `manaurum:byok` on the line.")
 
 
 def teaching_the_tmp_lesson(repo: Path) -> None:
@@ -412,12 +531,23 @@ REPO_MUTATIONS = [
      "MAN-9999 is still open"),
     ("repo: a claims line with no date", a_stale_claims_line,
      "no readable YYYY-MM-DD"),
+    ("repo: a template that drops the user context",
+     a_template_that_drops_the_user_context,
+     "says the gateway rejects a forwarded user context"),
+    ("repo: os.ai.complete called BYOK", a_byok_row_for_text_ai,
+     "calls os.ai.complete BYOK"),
+    ("repo: the text AI example pinned", a_pinned_ai_example,
+     "input example names a provider or a model"),
+    ("repo: provider marked required", a_required_provider,
+     "marks `provider` required"),
     ("repo-green: teaching the /tmp lesson", teaching_the_tmp_lesson, None),
     ("repo-green: a per-run /tmp path", a_per_run_tmp_path, None),
     ("repo-green: an instruction to write tests", an_instruction_to_write_tests, None),
     ("repo-green: a ticket that is Done", a_ticket_that_is_done, None),
     ("repo-green: a path in the reader's project", a_path_in_the_readers_project, None),
     ("repo-green: a binary file", a_binary_file, None),
+    ("repo-green: refuting a refuted claim", refuting_a_refuted_claim, None),
+    ("repo-green: teaching the opt-out marker", teaching_the_opt_out_marker, None),
 ]
 
 
@@ -577,7 +707,14 @@ def main() -> int:
             target = app if kind == "app" else app / "src" / "static"
             env = with_stub_validator(workdir) if needs_validator else None
             done = run(linter, target, env=env)
-            if done.returncode == 0:
+            if expected is None:
+                if done.returncode != 0:
+                    problems.append("%s: %s went RED on code it should accept. It "
+                                    "said:\n%s" % (name, linter.name,
+                                                   done.stdout.strip()))
+                else:
+                    print("ok  %s" % name)
+            elif done.returncode == 0:
                 problems.append("%s SURVIVED - %s said `clean` on it. That rule is "
                                 "not being checked." % (name, linter.name))
             elif not said(done.stdout, expected):

@@ -185,6 +185,56 @@ PAIRED_CLAIMS = [
      "shrink the window instead of using ?width="),
 ]
 
+# ── Statements the reference has refuted ────────────────────────────────────
+# A template is what an agent copies; the reference is what it opens once
+# something has already broken. When the two disagree, the template wins every
+# time. Until 2.13.0 the starter's `call_capability` said the gateway REJECTS
+# a forwarded user context - while the reference said, in so many words, that
+# anyone who reads that is reading something wrong. An app copied from the
+# starter then called text AI with no workspace.
+#
+# Each entry is a statement the platform has been shown NOT to make, matched
+# across every live document and everything under templates/. It may still be
+# quoted in order to refute it: a sentence that also calls it wrong is a
+# correction, not a claim. Add an entry whenever the reference corrects
+# something a copyable file could still be saying.
+REFUTED_CLAIMS = [
+    ("says the gateway rejects a forwarded user context",
+     re.compile(r"(?i)\brejects?\s+(?:the\s+|a\s+|any\s+)?(?:forwarded\s+)?"
+                r"(?:x-manaurum-)?user[\s_-]?context"
+                r"|\bdo\s+not\s+forward\s+(?:the\s+)?(?:x-manaurum-)?user[\s_-]?context"),
+     "the gateway accepts it on every capability, requires it on user-scoped "
+     "ones, and text AI reads the workspace out of it (capabilities-reference.md, "
+     "\"The call contract\")"),
+    # Case-sensitive on purpose: `manaurum:byok` is the opt-out marker, and a
+    # line teaching it is not a line calling the capability BYOK. A dot that
+    # is part of a name does not end the reach - the 2.12.0 row read
+    # "os.ai.complete / os.ai.embed | LLM (BYOK", and stopping at the first
+    # dot let exactly that row through.
+    ("calls os.ai.complete BYOK",
+     re.compile(r"\bos\.ai\.complete\b(?:[^.\n]|\.(?=\w)){0,80}\bBYOK\b"),
+     "an unpinned call runs on the workspace's AI, platform-funded by default; "
+     "only naming a provider or a model makes it BYOK (capabilities-reference.md, "
+     "\"Text AI - who pays\")"),
+    ("says the user-context JWT carries no workspace_id",
+     re.compile(r"(?i)\bno\s+workspace_id\b|\bdoes\s+not\s+carry\s+(?:a\s+)?workspace"),
+     "both mint sites sign workspace_id, and text AI resolves the workspace from "
+     "it"),
+]
+# What turns a quotation into a refutation, within the same sentence.
+REFUTATION = re.compile(r"(?i)\b(wrong|incorrect|untrue|not\s+true|refuted)\b")
+SENTENCE_BREAK = re.compile(r"[.!?](?=\s)|\n\s*\n")
+TEXT_SUFFIXES = {".md", ".py", ".html", ".js", ".mjs", ".ts", ".css", ".json",
+                 ".txt", ".ini", ".sql", ".toml", ".yml", ".yaml"}
+
+# The call people copy out of the reference has to be the one the platform
+# pays for. A pinned example taught the exception as the rule until 2.13.0.
+AI_REFERENCE = "skills/manaurum-app/references/capabilities-reference.md"
+AI_COMPLETE_HEADING = re.compile(r"(?m)^## `os\.ai\.complete`[^\n]*$")
+JSON_BLOCK = re.compile(r"```json\n(.*?)```", re.S)
+PINNED_KEY = re.compile(r'"(provider|model)"\s*:')
+FIELD_ROW = re.compile(r"(?m)^\|\s*`(provider|model)`\s*\|([^\n]*)$")
+
 # ── Artifacts that have to carry their own correction ───────────────────────
 STARTER = "templates/v2-starter"
 REQUIRED_IGNORES = {
@@ -633,6 +683,93 @@ def check_paired_claims(problems: list) -> None:
                 problems.append("%s:1: %s - %s" % (name, label, why))
 
 
+def refutable_files() -> list:
+    """Every file a reader copies from or believes: the docs and templates/."""
+    paths = live_docs()
+    for path in sorted((ROOT / "templates").rglob("*")):
+        if not path.is_file() or path.suffix not in TEXT_SUFFIXES:
+            continue
+        if any(part in SKIP_DIRS for part in path.relative_to(ROOT).parts):
+            continue
+        paths.append(path)
+    return paths
+
+
+def check_refuted_claims(problems: list) -> None:
+    """A statement the reference has refuted may not reappear anywhere.
+
+    Judged per SENTENCE, not per line: the reference's own correction wraps
+    ("…that the gateway *rejects* a user context on this path, that
+    statement is wrong"), and a line-level test would flag it or miss it
+    depending on where an editor happened to break the line. Backticks and
+    asterisks are dropped before matching so markdown emphasis cannot hide a
+    claim; newlines are kept, so the line numbers stay true.
+    """
+    for path in refutable_files():
+        text = re.sub(r"[`*]", "", read(path))
+        breaks = [m.end() for m in SENTENCE_BREAK.finditer(text)]
+        for label, pattern, why in REFUTED_CLAIMS:
+            for match in pattern.finditer(text):
+                left = max([b for b in breaks if b <= match.start()], default=0)
+                right = min([b for b in breaks if b >= match.end()], default=len(text))
+                if REFUTATION.search(text[left:right]):
+                    continue
+                problems.append(
+                    "%s:%d: %s - refuted: %s. A template or doc that repeats it is "
+                    "copied in preference to the reference that corrects it"
+                    % (rel(path), line_of(text, match.start()), label, why))
+
+
+def check_ai_default_example(problems: list) -> None:
+    """The reference's `os.ai.complete` example is the unpinned call.
+
+    It is the first JSON an agent sees for text AI, and it gets copied
+    verbatim. Until 2.13.0 it pinned `provider` and `model` and the table
+    marked both required - which is precisely the switch that turns the
+    platform's own funding off. The input example (the first JSON block of
+    the section) must name neither, and neither field may be marked
+    required.
+    """
+    path = ROOT / AI_REFERENCE
+    if not path.exists():
+        problems.append("%s:1: missing - it carries the os.ai.complete contract"
+                        % AI_REFERENCE)
+        return
+    text = read(path)
+    heading = AI_COMPLETE_HEADING.search(text)
+    if heading is None:
+        problems.append("%s:1: no `## os.ai.complete` section - the text AI contract "
+                        "has to live somewhere an agent can find it" % AI_REFERENCE)
+        return
+    end = text.find("\n## ", heading.end())
+    section_start, section = heading.end(), text[heading.end():end if end != -1 else None]
+    block = JSON_BLOCK.search(section)
+    if block is None:
+        problems.append("%s:%d: the os.ai.complete section has no input example"
+                        % (AI_REFERENCE, line_of(text, heading.start())))
+    else:
+        pinned = PINNED_KEY.search(block.group(1))
+        if pinned:
+            problems.append(
+                "%s:%d: the os.ai.complete input example names a provider or a model "
+                "(`%s`) - that is the opt-out from the platform-funded path, and this "
+                "is the example people copy"
+                % (AI_REFERENCE,
+                   line_of(text, section_start + block.start(1) + pinned.start()),
+                   pinned.group(1)))
+    for row in FIELD_ROW.finditer(section):
+        # Any cell, not a column index: the 2.12.0 table was `Field | Required`
+        # and today's is `Field | Type | Required | Notes`, and a check bound
+        # to one layout would have passed the other.
+        cells = [cell.strip(" *").lower() for cell in row.group(2).split("|")]
+        if any(cell == "yes" or cell.startswith("yes ") for cell in cells):
+            problems.append(
+                "%s:%d: os.ai.complete marks `%s` required - it is optional, and "
+                "setting it switches the call to the tenant's own key"
+                % (AI_REFERENCE, line_of(text, section_start + row.start()),
+                   row.group(1)))
+
+
 def open_claims_file() -> dict:
     """`scripts/open-claims.txt`, parsed. Empty if it is not there."""
     path = ROOT / "scripts" / "open-claims.txt"
@@ -777,6 +914,8 @@ CHECKS = (
     check_starter_hygiene,
     check_documented_invocations,
     check_paired_claims,
+    check_refuted_claims,
+    check_ai_default_example,
     check_tickets,
 )
 

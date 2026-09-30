@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 2.12.0.** A plugin install caches one directory per
+> **This page is SDK 2.13.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -348,6 +348,38 @@ The `manaurum:init` payload carries the app's `granted_capabilities`. **For a v2
 
 Full message contract: `references/sdk-api.md` § "`manaurum:ready` — the shell handshake".
 
+## Whose key, whose money, whose authorization
+
+Read this before the first capability call. Getting it wrong does not fail a check or a
+deploy: it produces an app that works on your test tenant and then tells its owner to
+go and buy an API key they never needed.
+
+- **The platform pays by default.** Call `os.ai.complete` with no `provider` and no
+  `model`, and the workspace's AI answers: the backend the workspace chose in Settings,
+  or, when it chose none, the managed ManAurum model, paid for by the platform. That is
+  the call to write, and nobody has to paste a key for it to work.
+- **Naming a provider or a model is an opt-out.** It means "use the tenant's own key
+  from Settings → Интеграции", and without that key the call is `412`. Pin only when
+  the person asked for that specific provider — `check_app.py` (Step 3.6) fails a pin
+  that is not marked `manaurum:byok`. (`os.ai.embed`, `os.ai.transcribe` and
+  `os.ocr.extract` have no platform-funded path yet; they always need the tenant's key.)
+- **Forward `X-Manaurum-User-Context` on every capability call made on behalf of a
+  person** — not only on the user-scoped ones. It carries the signed workspace: text AI
+  needs it to know whose settings apply, and answers `412 workspace_context_required`
+  without it as soon as a second workspace installs your app. It also puts the person,
+  not just your app, on the spend and the audit trail. The starter's
+  `call_capability(name, payload, user_context=claims.token)` does it.
+- **A capability in the manifest is not a granted capability.** Grants are per install
+  and checked before every call. A redeploy never widens a live install's grants, so a
+  capability added in a later version is `403 capability_not_granted` until an admin
+  extends the install.
+
+Every one of those failures is a setup state — a person has to do something — so an app
+renders it as that sentence, never as a 500. The working call, the error-to-message
+table and the deliberate BYOK variant: `<plugin>/templates/recipes/ai-complete/`. The
+contract: `references/capabilities-reference.md` § "Text AI — who pays, and what makes a
+call leave that path".
+
 ## Step 3 — Use capabilities (from inside your container)
 
 Your container calls the gateway at `${MANAURUM_CORE_URL}/api/capability/<name>` (singular `capability`). **The platform injects the credential for you.** You never mint one, never bake one into the image, and never use your own `mna_*` developer token at runtime — that token is for `POST /api/dev/v2/deploy` from your laptop and nothing else.
@@ -357,7 +389,7 @@ Headers:
 - `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` — an app-scoped `mna_*` runtime credential the platform mints fresh on every deploy and injects as an env var. It is scoped to this one app; it is not your developer token.
 - `X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}`.
 - `X-Manaurum-App-Id` — the **UUID** (`MANAURUM_APP_ID`) for `os.kv.*` and `os.events.emit`; the slug is rejected there with `412 app_id_must_be_uuid`.
-- `X-Manaurum-User-Context` — forward it **unchanged** for user-scoped capabilities (`os.drive.*`, `os.calendar.*`), exactly as your `auth: "user"` route received it. Omitting it is `403 user_context_required`. It is optional on app-scoped capabilities, where it only enriches the audit log.
+- `X-Manaurum-User-Context` — forward it **unchanged on every call you make on behalf of a person**, exactly as your `auth: "user"` route (or `/agent/*` handler) received it, within its 60 seconds. User-scoped capabilities (`os.drive.*`, `os.calendar.*`) refuse the call without it (`403 user_context_required`); on `os.ai.complete` and `os.ai.providers` it picks the workspace and the person whose allowance pays; everywhere it names the acting user in the audit log.
 
 Body shape: a JSON object matching the capability's input schema (no wrapper). Read `references/capabilities-reference.md` for the canonical input/output for every capability.
 
@@ -367,7 +399,9 @@ Body shape: a JSON object matching the capability's input schema (no wrapper). R
 // inside your container — Node example
 const CORE = process.env.MANAURUM_CORE_URL;
 
-async function setKV(key, value) {
+// userContext: the X-Manaurum-User-Context your route received — pass it on
+// every call made for a person, and null only when no person is behind it.
+async function setKV(key, value, userContext) {
   const resp = await fetch(`${CORE}/api/capability/os.kv.set`, {
     method: 'POST',
     headers: {
@@ -375,6 +409,7 @@ async function setKV(key, value) {
       'X-Manaurum-Tenant-Id': process.env.MANAURUM_TENANT_ID,
       'X-Manaurum-App-Id':    process.env.MANAURUM_APP_ID,
       'Content-Type':         'application/json',
+      ...(userContext ? { 'X-Manaurum-User-Context': userContext } : {}),
     },
     body: JSON.stringify({ key, value }),
   });
@@ -391,7 +426,9 @@ Capabilities available today:
 | `os.tenant_config.get` | Read tenant feature flags / config. |
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
 | `os.files.upload` / `.download` / `.delete` | R2 (presigned URLs). |
-| `os.ai.complete` / `os.ai.embed` | LLM (BYOK — tenant configures keys in Settings → Интеграции). |
+| `os.ai.complete` | Text completion. **Leave `provider` and `model` out**: the workspace's AI answers, platform-funded unless the workspace chose its own. Naming either one switches the call to the tenant's key — `412` without one. Always pass `max_tokens`. |
+| `os.ai.providers` | What an unpinned `os.ai.complete` would use right now — or why nothing can — for an honest setup screen. Spends nothing. |
+| `os.ai.embed` | Embeddings. BYOK: the tenant's OpenAI or Gemini key, no platform-funded path. |
 | `os.ai.transcribe` | Speech-to-text (BYOK — needs the tenant's **OpenAI** key). ≤ 25 MB decoded audio. Pair with manifest `"permissions": ["microphone"]` to record in the shell iframe. |
 | `os.ocr.extract` | OCR via vision LLM (BYOK). |
 | `os.notifications.send_to_user` | In-app / Resend / Twilio. |
@@ -537,6 +574,8 @@ packs. Exit 0 or fix what it names.
 | `frontend.entry_point` naming a file that is not there | the window opens on a 404 |
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
+| a `requires_capabilities` / `optional_capabilities` entry that is not `{"name": "os.kv.get", "version": "1"}` — a bare string, or a numeric `version` | a deploy refused for manifest validation — after the `202`, so it reads as shipped until you poll |
+| an `os.ai.complete` payload that names `provider` or `model` with no `manaurum:byok` marker on the line | an app that cannot run until its owner buys and pastes a key, on a platform that would have paid |
 | `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
 | an invented key in `runtime` (`"prot": 8000`) | the `runtime` sub-object is not strict, so it validates, deploys green and is silently ignored — a debugging session rather than a 422 |
 | an `/agent/*` path listed in `api_routes` | nothing. It configures nothing while looking exactly like it did. |
@@ -660,6 +699,8 @@ A `deploy.sh` template with the polling loop, the live NDJSON progress stream, a
 | 404 `route_not_declared` | An `/api/*` path is missing from `runtime.api_routes`. Default-deny — the container never saw the request. | Declare the path. Remember `/api/x/*` does not cover `/api/x`. |
 | 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
 | 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
+| 412 `workspace_context_required` | `os.ai.complete` / `os.ai.providers` called with no `X-Manaurum-User-Context`, and the app is installed in more than one workspace. | Forward the header. It worked while one workspace had the app, which is why it looks like a platform change. |
+| 412 `integration_not_configured` | `os.ai.complete` named a `provider`, and the tenant has no key for it. | Drop `provider` and `model` — the workspace's AI answers — unless the person asked for that provider. |
 | 502 (serving, after a green deploy) | Nothing is listening where the gateway dials. | Bind `0.0.0.0` on port 80, or set `runtime.port` to the port you actually listen on. |
 | 502 (during deploy) | Image build failed. | Look at `result.error` for the Docker stderr. Common: `COPY` source doesn't exist, dependency install failed. |
 

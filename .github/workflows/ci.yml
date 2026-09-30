@@ -52,6 +52,14 @@ jobs:
         working-directory: templates/v2-starter
         run: pytest -q
 
+      - name: The text AI recipe
+        # It imports the starter's `src.capability` and the manifest linter,
+        # so it runs on the starter's pinned dependencies and nothing else.
+        # Two of its tests hold it and `check_app.py` to each other: the
+        # deliberate pin must pass the rule, and must fail it unmarked.
+        working-directory: templates/recipes/ai-complete
+        run: pytest -q
+
       - name: How many tests that was
         # The number lives HERE and nowhere else. README said "19 tests" when
         # there were 24, then 27, because a count in prose does not grow with

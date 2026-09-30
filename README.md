@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 2.12.0.** Skills that teach Claude Code to build and ship apps for
+**Version 2.13.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -169,14 +169,23 @@ parts inlined. Reading one real app beats reading four pages about apps.
   the `CMD` or with `EXPOSE`, an `entry_point` naming nothing, a `.env*` inside the app
   directory, a capability called but not declared (or declared and never called), and
   migrations that are not ordered `*.sql` or carry destructive DDL without
-  `migration.breaking`. Routes are read out of Python decorators with `ast`; for another
-  language it says so and skips those two rules rather than guessing.
-  `python check_app.py my-app`, exit 1 on findings.
+  `migration.breaking`, a capability entry that is not `{"name", "version": "1"}`, and an
+  `os.ai.complete` payload that names `provider` or `model` without a `manaurum:byok`
+  marker (the opt-out from the platform-funded path) or leaves out `max_tokens`. Routes
+  are read out of Python decorators with `ast`; for another language it says so and skips
+  the route and handler rules rather than guessing. `python check_app.py my-app`, exit 1
+  on findings.
+* `templates/recipes/ai-complete/` — text AI the way the platform intends it: the
+  unpinned call the workspace's AI answers (platform-funded by default), the person's
+  user context forwarded, `max_tokens` required, every setup state turned into a
+  sentence for the person, `os.ai.providers` for the settings screen, and the deliberate
+  bring-your-own-key variant kept apart and marked. Copy `ai.py` into `src/`.
 * `scripts/check_repo.py` + `scripts/linter_mutations.py` + `scripts/smoke_tools.py` —
   the plugin checking itself, run by CI on every PR. `check_repo.py` holds the documents
   to the repository (one version string, every documented path and heading citation
   resolves, no hardcoded self-counts, no control byte, no fixed `/tmp` path, no
-  documented flag the tool rejects); `linter_mutations.py` breaks the starter once per
+  documented flag the tool rejects, and no doc or template repeating a statement the
+  reference has refuted); `linter_mutations.py` breaks the starter once per
   rule and demands that each linter goes red; `smoke_tools.py` starts `preview.py` and
   the version hook and checks they still behave. All stdlib, all runnable locally.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy

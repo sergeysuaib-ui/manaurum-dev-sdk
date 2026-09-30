@@ -117,7 +117,7 @@ def fake_kv(monkeypatch):
     """
     store: dict[str, object] = {}
 
-    async def _call(name: str, payload: dict) -> dict:
+    async def _call(name: str, payload: dict, *, user_context: str | None = None) -> dict:
         if name == "os.kv.set":
             store[payload["key"]] = payload["value"]
             return {"ok": True}

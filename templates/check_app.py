@@ -21,6 +21,9 @@ otherwise fails LATER and in a way that does not look like its cause:
     a .env* in the app dir  packed into the build context, baked into an
                             image layer, retained per version in object
                             storage. There is no way to un-leak it.
+    a pinned os.ai.complete an app that cannot run until its owner buys
+                            and pastes an API key, on a platform that would
+                            have paid for the call.
 
 Standard library only, with one optional upgrade: if a usable `manaurum-cli`
 is importable, the migration rule defers to the deploy's own AST validator
@@ -94,6 +97,23 @@ DESTRUCTIVE = (
 USER_CONTEXT_MARKERS = ("auth_claims", "verify_user_context", "user_context",
                         "UserContextClaims", "X-Manaurum-User-Context",
                         "USER_CONTEXT_HEADER", "require_user")
+# FORWARDING the context is not verifying it. Since 2.13.0 every handler that
+# acts for a person passes `user_context=claims.token` on to the gateway, so
+# the bare word is in every handler body - including one whose
+# `Depends(auth_claims)` was deleted. Only a keyword whose value is a FastAPI
+# dependency still counts.
+FORWARDED_CONTEXT = re.compile(r"\buser_context\s*=\s*(?!(?:Depends|Header|Security)\b)")
+# Text AI. Leaving `provider` and `model` out of an os.ai.complete payload is
+# what puts the call on the workspace's AI - platform-funded unless the
+# workspace chose its own. Naming either one moves it to the tenant's key.
+AI_COMPLETE = "os.ai.complete"
+PIN_KEYS = ("provider", "model")
+# The one way to say "the person asked for this provider": on the line of the
+# call or of the key. Deliberately a word nobody writes by accident.
+BYOK_MARKER = "manaurum:byok"
+JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".mts", ".cts"}
+JS_AI_COMPLETE = re.compile(r"""[`'"/]os\.ai\.complete\b""")
+JS_PAYLOAD_KEY = re.compile(r"""(?:^|[{,\s])["']?(provider|model|max_tokens|messages)["']?\s*:""")
 
 
 def read(path: Path) -> str:
@@ -278,7 +298,8 @@ def check_agent_handlers(routes: list, problems: list) -> None:
     for method, path, module, line, source in routes:
         if not path.startswith("/agent/") and path != "/agent":
             continue
-        if any(marker in source for marker in USER_CONTEXT_MARKERS):
+        verifying = FORWARDED_CONTEXT.sub("", source)
+        if any(marker in verifying for marker in USER_CONTEXT_MARKERS):
             continue
         problems.append(
             "%s:%d: %s %s has no user-context verification - this path is on the "
@@ -494,6 +515,221 @@ def check_capabilities(root: Path, manifest: dict, problems: list) -> None:
             "where a tenant admin reads it" % name)
 
 
+def check_capability_entries(manifest: dict, problems: list) -> None:
+    """Rule 6b - every capability entry is `{"name": ..., "version": "1"}`.
+
+    The manifest schema requires an object with a string `name` and a
+    string `version`, and `["os.ai.complete"]` reads so naturally that it
+    gets written - then passes every local rule (Rule 6 above accepts the
+    bare string, so the called/declared comparison stays about names) and
+    comes back from the deploy job as a validation failure, after the 202
+    that looked like a ship.
+    """
+    for field in ("requires_capabilities", "optional_capabilities"):
+        entries = manifest.get(field)
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            problems.append("manifest.json: %s is not a list - the deploy refuses "
+                            "the manifest" % field)
+            continue
+        for index, entry in enumerate(entries):
+            where = "manifest.json: %s[%d]" % (field, index)
+            if isinstance(entry, str):
+                problems.append(
+                    '%s is the bare string "%s" - every entry is an object, '
+                    '{"name": "%s", "version": "1"}, and the deploy refuses the '
+                    "manifest otherwise" % (where, entry, entry))
+                continue
+            if not isinstance(entry, dict):
+                problems.append('%s is not an object - write {"name": "os.x.y", '
+                                '"version": "1"}' % where)
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                problems.append("%s has no string `name` - the deploy refuses the "
+                                "manifest" % where)
+            if "version" not in entry:
+                problems.append('%s (%s) has no `version` - write "version": "1"'
+                                % (where, name))
+            elif not isinstance(entry["version"], str):
+                problems.append(
+                    '%s (%s) has "version": %s - it must be the string "1", and a '
+                    "number is refused by the deploy"
+                    % (where, name, json.dumps(entry["version"])))
+
+
+def _names_ai_complete(node) -> bool:
+    """Is this expression the text-AI capability - a name, or a URL ending in it?"""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value == AI_COMPLETE or node.value.endswith("/" + AI_COMPLETE)
+    if isinstance(node, ast.JoinedStr):              # f"{base}/api/capability/os.ai.complete"
+        return any(_names_ai_complete(part) for part in node.values)
+    return False
+
+
+def _literal_keys(node) -> list:
+    """[(key, line)] of a dict literal or a `dict(...)` call; [] for anything else."""
+    if isinstance(node, ast.Dict):
+        return [(key.value, key.lineno) for key in node.keys
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)]
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "dict"):
+        return [(kw.arg, kw.value.lineno) for kw in node.keywords if kw.arg]
+    return []
+
+
+def _own_nodes(scope):
+    """The nodes of one scope, without descending into a nested def or class."""
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                             ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _python_ai_payloads(tree) -> list:
+    """[(call line, [(key, line)], lines that may carry the marker)] per call.
+
+    Scope by scope, because the payload is usually built a line or two before
+    the call - `payload = {...}`, `payload["model"] = ...` - and a module with
+    an embed call (which MUST name a model) next to a completion call must
+    not lend the first one's keys to the second.
+    """
+    found = []
+    scopes = [tree] + [node for node in ast.walk(tree)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    for scope in scopes:
+        built = {}                  # variable -> [(key, line)]
+        calls = []
+        for node in _own_nodes(scope):
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and node.value is not None:
+                        built.setdefault(target.id, []).extend(_literal_keys(node.value))
+                    elif (isinstance(target, ast.Subscript)
+                          and isinstance(target.value, ast.Name)
+                          and isinstance(target.slice, ast.Constant)
+                          and isinstance(target.slice.value, str)):
+                        built.setdefault(target.value.id, []).append(
+                            (target.slice.value, node.lineno))
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if (isinstance(func, ast.Attribute) and func.attr == "update"
+                        and isinstance(func.value, ast.Name)):
+                    keys = [(kw.arg, kw.value.lineno) for kw in node.keywords if kw.arg]
+                    for arg in node.args:
+                        keys += _literal_keys(arg)
+                    built.setdefault(func.value.id, []).extend(keys)
+                arguments = list(node.args) + [kw.value for kw in node.keywords]
+                if any(_names_ai_complete(arg) for arg in arguments):
+                    calls.append((node, arguments))
+        for node, arguments in calls:
+            keys = []
+            for arg in arguments:
+                keys += _literal_keys(arg)
+                if isinstance(arg, ast.Name):
+                    keys += built.get(arg.id, [])
+            lines = set(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+            lines |= {line for _, line in keys}
+            found.append((node.lineno, keys, lines))
+    return found
+
+
+def _js_ai_payloads(text: str) -> list:
+    """The same, for JS/TS, from the text: the rest of the enclosing call.
+
+    From the capability name to the bracket that closes the call it sits in
+    - which is where `fetch(url, {body: JSON.stringify({...})})` and
+    `call("os.ai.complete", {...})` both keep their payload. A payload built
+    in a variable above the call is out of reach here; say so rather than
+    guess.
+    """
+    found = []
+    for match in JS_AI_COMPLETE.finditer(text):
+        depth, end = 0, match.end()
+        for end in range(match.end(), min(len(text), match.end() + 4000)):
+            char = text[end]
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+                if depth < 0:
+                    break
+        segment = text[match.start():end]
+        start_line = text.count("\n", 0, match.start()) + 1
+        keys = [(key.group(1), start_line + segment.count("\n", 0, key.start()))
+                for key in JS_PAYLOAD_KEY.finditer(segment)]
+        lines = set(range(start_line, start_line + segment.count("\n") + 1))
+        found.append((start_line, keys, lines))
+    return found
+
+
+def check_ai_payloads(root: Path, problems: list) -> None:
+    """Rule 8 - `os.ai.complete` stays on the path the platform pays for.
+
+    Leave `provider` and `model` out and the workspace's AI answers: the
+    backend it chose in Settings, or the managed ManAurum model, funded by
+    the platform. Name either one and the call moves to the tenant's own
+    key and is `412` wherever there is none - an app that runs on its
+    author's tenant and tells every other owner to go and buy a key. That
+    shipped (dindex-kb, 2026-09-21) from an agent that followed this SDK's
+    own reference to the letter. A pin the person asked for is legitimate,
+    so it is one word to keep: `manaurum:byok` on the line.
+
+    And `max_tokens`: optional in the schema, not in practice. Leave it out
+    and each call reserves the model's WHOLE output ceiling against the
+    person's allowance, which meets `429 ai_spend_cap` long before real
+    usage does. Only a payload this rule can see all of is held to it.
+    """
+    for path in source_files(root):
+        if path.name.startswith("test_") or path.parent.name in ("tests", "test"):
+            continue
+        if path.suffix == ".py":
+            text = read(path)
+            try:
+                payloads = _python_ai_payloads(ast.parse(text))
+            except SyntaxError:
+                continue                  # find_routes already reported it
+        elif path.suffix in JS_SUFFIXES:
+            text = read(path)
+            payloads = _js_ai_payloads(text)
+        else:
+            continue
+        source_lines = text.splitlines()
+
+        def marked(lines) -> bool:
+            return any(BYOK_MARKER in source_lines[line - 1]
+                       for line in lines if 0 < line <= len(source_lines))
+
+        for call_line, keys, lines in payloads:
+            names = {key for key, _ in keys}
+            pins = sorted(((key, line) for key, line in keys if key in PIN_KEYS),
+                          key=lambda pin: pin[1])
+            if pins and not marked(lines):
+                key, line = pins[0]
+                problems.append(
+                    "%s:%d: os.ai.complete names `%s` - that moves the call off the "
+                    "workspace's AI, which the platform pays for by default, onto "
+                    "the tenant's own key: 412 %s for every tenant without one. "
+                    "Leave `provider` and `model` out, or - if the person asked for "
+                    "that provider - mark the line `%s`"
+                    % (rel(path, root), line, key,
+                       "integration_not_configured" if "provider" in names
+                       else "no_ai_provider_configured", BYOK_MARKER))
+            if "messages" in names and "max_tokens" not in names:
+                problems.append(
+                    "%s:%d: os.ai.complete with no max_tokens - the platform then "
+                    "reserves the model's whole output ceiling against the person's "
+                    "allowance on every call, and 429 ai_spend_cap arrives long "
+                    "before real usage would. Size it to the answer you want"
+                    % (rel(path, root), call_line))
+
+
 # A file the deploy refuses and a validator that predates the rule accepts:
 # ADD COLUMN is additive, CREATE INDEX CONCURRENTLY is additive, and only a
 # validator that knows about transactionality rejects the two together.
@@ -687,6 +923,8 @@ def check(root: Path) -> tuple:
     check_port(root, manifest, problems, notes)
     check_env_files(root, problems)
     check_capabilities(root, manifest, problems)
+    check_capability_entries(manifest, problems)
+    check_ai_payloads(root, problems)
     check_migrations(root, manifest, problems, notes)
     check_manifest_shape(manifest, problems)
     check_secret_literals(root, problems)

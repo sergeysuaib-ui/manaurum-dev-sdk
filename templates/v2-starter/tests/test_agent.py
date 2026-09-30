@@ -52,7 +52,7 @@ async def test_capability_failure_is_a_failed_tool_call_not_a_crash(monkeypatch)
     surfaces as an opaque tool error and the Assistant just gives up."""
     from src.capability import CapabilityError
 
-    async def _boom(user_id: str) -> str:
+    async def _boom(user_id: str, **_) -> str:
         raise CapabilityError("os.kv.get -> 403: capability_not_granted")
 
     monkeypatch.setattr("src.agent_routes.read_note", _boom)

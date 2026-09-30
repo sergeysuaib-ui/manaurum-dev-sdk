@@ -74,7 +74,7 @@ async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict
     argument.
     """
     try:
-        return _ok({"text": await read_note(claims.user_id)})
+        return _ok({"text": await read_note(claims.user_id, user_context=claims.token)})
     except CapabilityError as exc:
         return _fail(str(exc))
 
@@ -85,6 +85,8 @@ async def save_my_note(
     claims: UserContextClaims = Depends(auth_claims),
 ) -> dict:
     try:
-        return _ok({"text": await write_note(claims.user_id, data.text)})
+        return _ok({"text": await write_note(
+            claims.user_id, data.text, user_context=claims.token,
+        )})
     except CapabilityError as exc:
         return _fail(str(exc))

@@ -21,7 +21,27 @@ _TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 class CapabilityError(Exception):
     """The runtime env is missing, the gateway is unreachable, or it
     returned a non-2xx. One exception type so callers have one thing to
-    map to a user-visible error."""
+    map to a user-visible error.
+
+    ``status`` and ``code`` are what make that mapping possible. Most
+    gateway refusals are SETUP states - ``capability_not_granted``,
+    ``ai_disabled``, ``ai_spend_cap``, ``integration_not_configured`` -
+    where a person has to do something, and an app that renders them as
+    "something went wrong" hides the one sentence that would fix it.
+    ``code`` is ``detail.error`` when the gateway sent an object and the
+    ``detail`` string itself when it sent a string (``openai_upstream_
+    error:500``); both are ``None`` for a transport failure. ``detail``
+    is the parsed body's ``detail``, for the fields a code carries
+    (``subject`` and ``window`` on ``ai_spend_cap``, ``message`` on
+    ``ai_backend_unavailable``).
+    """
+
+    def __init__(self, message: str, *, status: int | None = None,
+                 code: str | None = None, detail: Any = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.detail = detail
 
 
 def _gateway() -> tuple[str, dict[str, str]]:
@@ -51,14 +71,33 @@ def _gateway() -> tuple[str, dict[str, str]]:
     }
 
 
-async def call_capability(name: str, payload: dict[str, Any]) -> Any:
+async def call_capability(
+    name: str,
+    payload: dict[str, Any],
+    *,
+    user_context: str | None = None,
+) -> Any:
     """POST one capability call and return its ``output``.
 
     Every capability goes through this one door:
-    ``POST {MANAURUM_CORE_URL}/api/capability/{name}``. Do NOT forward
-    the user_context header here — the gateway rejects it on this path.
+    ``POST {MANAURUM_CORE_URL}/api/capability/{name}``.
+
+    ``user_context`` is the ``X-Manaurum-User-Context`` JWT your route
+    received (``claims.token``). Pass it on EVERY call you make on behalf
+    of a person. User-scoped capabilities (``os.drive.*``,
+    ``os.calendar.*``) refuse the call without it; ``os.ai.complete``
+    reads the person's workspace out of it, and without it answers
+    ``412 workspace_context_required`` once a second workspace installs
+    the app; and on every capability it puts the person on the audit
+    row. Leave it ``None`` only when no person is behind the call.
+
+    (Up to SDK 2.12.0 this docstring said the gateway REJECTS the header
+    here. That was wrong, and the reference said so; a template that
+    contradicts the reference is now a CI failure in the SDK repo.)
     """
     base, headers = _gateway()
+    if user_context:
+        headers["X-Manaurum-User-Context"] = user_context
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await client.post(
@@ -73,9 +112,29 @@ async def call_capability(name: str, payload: dict[str, Any]) -> Any:
         # 403 capability_not_granted is the usual first failure: the
         # manifest asks for the capability but the tenant admin has not
         # granted it on this install yet.
-        raise CapabilityError(f"{name} -> {response.status_code}: {response.text[:200]}")
+        detail = _detail_of(response)
+        code = detail.get("error") if isinstance(detail, dict) else detail
+        raise CapabilityError(
+            f"{name} -> {response.status_code}: {response.text[:200]}",
+            status=response.status_code,
+            code=code if isinstance(code, str) else None,
+            detail=detail,
+        )
     body = response.json()
     return body.get("output", body) if isinstance(body, dict) else body
+
+
+def _detail_of(response: httpx.Response) -> Any:
+    """The gateway's ``detail``: an object with ``error``, or a string.
+
+    A proxy in front of Core can answer with HTML, so a body that is not
+    JSON is not an error of its own - the status still says what failed.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    return body.get("detail") if isinstance(body, dict) else None
 
 
 def note_key(user_id: str) -> str:
@@ -83,15 +142,21 @@ def note_key(user_id: str) -> str:
     return f"notes:{user_id}"
 
 
-async def read_note(user_id: str) -> str:
-    output = await call_capability("os.kv.get", {"key": note_key(user_id)})
+async def read_note(user_id: str, *, user_context: str | None = None) -> str:
+    output = await call_capability(
+        "os.kv.get", {"key": note_key(user_id)}, user_context=user_context,
+    )
     value = output.get("value") if isinstance(output, dict) else None
     return value.get("text", "") if isinstance(value, dict) else ""
 
 
-async def write_note(user_id: str, text: str) -> str:
+async def write_note(
+    user_id: str, text: str, *, user_context: str | None = None,
+) -> str:
     text = text[:10_000]
     await call_capability(
-        "os.kv.set", {"key": note_key(user_id), "value": {"text": text}}
+        "os.kv.set",
+        {"key": note_key(user_id), "value": {"text": text}},
+        user_context=user_context,
     )
     return text
