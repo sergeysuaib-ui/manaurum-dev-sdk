@@ -1,0 +1,18 @@
+{
+  "name": "manaurum-dev-sdk",
+  "version": "3.0.0",
+  "description": "Build, test, and deploy ManAurum OS Platform v2 apps with shared SDK skills and templates.",
+  "author": {
+    "name": "ManAurum OS"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ManAurum Developer SDK",
+    "shortDescription": "Build and deploy ManAurum OS apps.",
+    "longDescription": "Skills and templates for developing, testing, and deploying ManAurum OS Platform v2 apps.",
+    "developerName": "ManAurum OS",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "defaultPrompt": "Help me build a ManAurum OS app."
+  }
+}

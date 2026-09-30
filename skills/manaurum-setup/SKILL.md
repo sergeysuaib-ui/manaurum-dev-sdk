@@ -68,7 +68,6 @@ my-app/
 │                           deploy, so there is no placeholder to hold it open.
 ├── .dockerignore        ← Keeps .env* / .git / tests out of the build context
 ├── deploy.sh            ← Optional CLI helper (see /manaurum-deploy)
-├── .env.manaurum        ← Deploy-time token (gitignored) — never read by your container
 └── .gitignore
 ```
 
@@ -248,11 +247,9 @@ The irreducible minimum is:
 node_modules
 ```
 
-The CLI packager already drops `.git`, `node_modules`, `dist`, `build`, `__pycache__`
-and `.venv` from the deploy tarball — but **not** `.env*`, and the tarball is streamed
-straight into Docker's build endpoint, which does not apply `.dockerignore` server-side.
-So `.dockerignore` protects your **local** `docker build`, and the narrow `COPY src/`
-above is what protects the deployed image. Keep real secrets outside the app directory.
+The deploy archive and Docker build have different filtering paths across CLI
+versions. `.dockerignore` helps keep the context small, but do not rely on it
+to protect credentials. Keep real secrets outside the app directory.
 
 ### The `manaurum:ready` handshake
 
@@ -322,6 +319,10 @@ the `X-Manaurum-User-Context` header exactly as your route received it — omitt
 Full capability list + input schemas: `references/capabilities-reference.md`.
 
 ### `.env.manaurum`
+
+Place this file **outside** the app directory passed to `manaurum app deploy`
+(for example, next to `my-app/`). Even a gitignored file can enter an upload
+archive in older CLI releases.
 
 ```
 # DEPLOY-TIME ONLY — read by deploy.sh / the CLI on your machine.

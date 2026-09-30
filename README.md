@@ -1,6 +1,6 @@
-# ManAurum OS Developer SDK — Claude Code plugin
+# ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.0.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.0.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -68,6 +68,33 @@ and a `current` pointer beside it. It prints nothing when your copy is current, 
 cannot fail a session — but it only speaks at session start, so after `/plugin update`
 the honest move is still to re-invoke the skill.
 
+## Install in Codex / ChatGPT Work
+
+This repository also provides a Codex plugin. The same `skills/` and `templates/`
+serve both agents; `.codex-plugin/plugin.json` supplies Codex metadata. To try
+the current checkout locally, put this repository in your personal plugins
+directory as `~/.agents/plugins/plugins/manaurum-dev-sdk` and add it to
+`~/.agents/plugins/marketplace.json` as a local plugin:
+
+```json
+{
+  "name": "personal",
+  "interface": {"displayName": "Personal"},
+  "plugins": [{
+    "name": "manaurum-dev-sdk",
+    "source": {"source": "local", "path": "./plugins/manaurum-dev-sdk"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Developer Tools"
+  }]
+}
+```
+
+If you already have a personal marketplace, append only the entry in
+`plugins[]`. Restart ChatGPT, open
+the Plugins Directory, select the Personal source, and install **ManAurum
+Developer SDK**. Start a new chat to load its skills. The Codex CLI alone does
+not install a local plugin; installation is done in the ChatGPT desktop app.
+
 ## Install the CLI
 
 The `manaurum` CLI scaffolds, validates and deploys. It is **not on PyPI yet**; until it
@@ -75,7 +102,7 @@ is, install the wheel from this repo's
 [releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
 ```bash
-pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.2.0/manaurum_cli-0.2.0-py3-none-any.whl
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.0/manaurum_cli-0.3.0-py3-none-any.whl
 manaurum --version
 ```
 
@@ -99,11 +126,8 @@ manaurum app validate           # manifest against the v2 schema
 manaurum app deploy             # 202 + poll; prints the live URL when it activates
 ```
 
-Copy the starter rather than running `manaurum app init`. The CLI's scaffold was rebuilt
-to this same shape (MAN-1397). That rewrite is in no released wheel, and
-`pip install manaurum-cli` still 404s on PyPI (MAN-1385), so the wheel you can actually
-install is `cli-v0.2.0`, built before it. Until a release carries the new scaffold, the
-directory below is the one that is tested on every PR.
+The starter in this repository is tested on every PR. Use it when you want the
+exact example documented below; `manaurum app init` is a separate CLI scaffold.
 
 The starter deploys unchanged. It is not a hello-world stub: it serves a UI that answers
 the shell handshake, verifies a real user-context JWT on `/api/me`, does a real key-value
@@ -150,8 +174,7 @@ parts inlined. Reading one real app beats reading four pages about apps.
   exists today. It is deliberately shaped like a real app: `auth.py` + `capability.py` as
   shared infrastructure, `main.py` + `agent_routes.py` as the two surfaces on top, and
   `tests/`. Apps grow by adding surfaces, not by growing one file. It is **not** identical
-  to `manaurum app init` output, and it stays here until a CLI release ships the same
-  scaffold (MAN-1385).
+  to `manaurum app init` output.
 * `templates/check_ui.py` — the UI contract, mechanically. It reads your static files and
   fails on what a green deploy hides: a hex hidden in a `var()` fallback whose token does
   not exist, `style=`, a `tab`/`sidebar` class, `<button class="row">`, a click target
