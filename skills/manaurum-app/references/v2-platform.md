@@ -194,17 +194,43 @@ Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manauru
   "mode": "hosted" | "byo" | "dev",
   "port": 8000,
   "api_routes": [ { "path": "/api/items/*", "auth": "user" } ],
+  "public_paths": [ "/g/*" ],
+  "health_path": "/healthz",
   "egress_allowed_hosts": [...]
 }
 ```
 
-Only `mode` and `api_routes` are declared in `manifest_v2.schema.json`. `port`, `egress_allowed_hosts`, `replicas` and `sandbox` are **not** — they validate only because the `runtime` sub-object omits `additionalProperties: false`. Some of those undeclared keys are read by Core (`port`, `egress_allowed_hosts`); others are read by nothing at all (`replicas`). The practical rule: a misspelled `runtime` key never errors, it just silently does nothing.
+`runtime` is **strict** (`additionalProperties: false`, since MAN-1899 on 2026-08-23): a key outside the eleven below is a `422` at deploy, and `templates/check_app.py` says so before you upload.
 
-Leave `runtime.sandbox` alone. The shell takes it **verbatim, replacing** the whole default token list (`allow-scripts allow-forms allow-same-origin`), so `"sandbox": ["allow-modals"]` costs you `allow-scripts` and your app renders blank. Whether the `runtime` sub-object should become strict — which would also invalidate `port` and `egress_allowed_hosts` — is an open design question; this section documents what the platform does today, not where it is going.
+| Key | Read by |
+|---|---|
+| `mode`, `port`, `api_routes`, `public_paths` | the gateway |
+| `health_path` | the readiness probe after a deploy |
+| `egress_allowed_hosts` | the deploy pipeline and `os.http.fetch` |
+| `resources` | Swarm, as the container's limits |
+| `sandbox` | the shell (see below — leave it out) |
+| `entrypoint` | the shell, for `mode: "byo"` only |
+| `replicas`, `image` | nothing. Accepted so old manifests keep deploying: the replica count is the operator's, and the image tag is derived from (registry, `app_id`, `version`). |
+
+Leave `runtime.sandbox` alone. Its enum is the default triple (`allow-scripts allow-forms allow-same-origin`), and the shell keeps only what you declare, so declaring it can only take tokens away — `["allow-forms"]` costs you `allow-scripts` and the app renders blank.
 
 ### `runtime.port`
 
-The port your container listens on. **Default 80.** The Core gateway resolves the upstream as `<swarm-service>:<port>` where `port` is `runtime.port` if present and 80 otherwise. Nothing in Core parses your Dockerfile's `EXPOSE` line — it is documentation only. `runtime.port` is in production use (`libi/manifest.json` ships `"port": 8000`), so it is safe; just know it is schema-undeclared. It is also **untyped**: `"port": "abc"` passes validation and produces a broken upstream host, so write an integer.
+The port your container listens on. **Default 80.** The Core gateway resolves the upstream as `<swarm-service>:<port>` where `port` is `runtime.port` if present and 80 otherwise, and the post-deploy probe dials the same port. Nothing in Core parses your Dockerfile's `EXPOSE` line — it is documentation only. An integer from 1 to 65535; `libi/manifest.json` ships `"port": 8000`.
+
+### `runtime.public_paths`
+
+Pages a browser tab may open **without a session**. Without the key every page is private: a top-level navigation by someone not signed in is redirected to the Manaurum login and comes back afterwards. Same glob syntax as `api_routes.path`, with the same trap — `/*` does not match `/`, so a fully public app declares `["/", "/*"]`.
+
+It covers document navigations only. It never touches `api_routes`, and it never says who is asking: a member who opens a public page reaches your container exactly as a guest does, with no `user_context`. See "Pages that guests and members both open" below.
+
+### `runtime.health_path`
+
+The path the platform polls after a deploy, straight to your container at `runtime.port` over the internal network — so it needs no `api_routes` entry and is not reachable from outside. Declared, it is strict: a `5xx` on it fails the deploy. Left out, the probe only needs something to answer HTTP on the port. Either way a container that never answers is rolled back to the previous version and the deploy is reported failed.
+
+### `runtime.resources`
+
+`{"memory_mb": 64–2048, "cpu_millicores": 50–2000}`, default 512 MiB and 500 millicores. A value above the ceiling is a `422`, not a quiet clamp. Over its memory the container is OOM-killed and restarted; over its CPU it is throttled.
 
 ### `runtime.api_routes` — default-deny
 
@@ -213,10 +239,41 @@ The declaration table for every `/api/*` path your container serves. **A path th
 | Key | Notes |
 |---|---|
 | `path` | Required. Must start with `/`. Trailing `*` is a wildcard (`/api/orders/*`); anything else is an exact match. `/api/tasks/*` does **not** match the bare `/api/tasks` — declare both if you serve both. |
-| `auth` | Required, `"user"` or `"anonymous"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). |
-| `streaming` | Optional bool, default false. Proxy in SSE / chunked passthrough mode instead of buffering the upstream response. Orthogonal to `auth`. Emit SSE heartbeats, honour `Last-Event-ID`, and do not hold a DB connection for the stream's lifetime. |
+| `auth` | Required, `"user"` or `"anonymous"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). There is no third, optional mode. |
+| `streaming` | Optional bool, default false. Proxy in SSE / chunked passthrough mode instead of buffering the upstream response. Orthogonal to `auth`. Emit SSE heartbeats, honour `Last-Event-ID`, and do not hold a DB connection for the stream's lifetime. Limits below. |
 
-There is no `method` field — one rule covers every verb. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they are always anonymous on `<slug>.apps.manaurum.com`.
+There is no `method` field — one rule covers every verb. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they always reach your container anonymously, and a page navigation without a session is sent to log in unless `runtime.public_paths` lists it.
+
+The gateway strips `Cookie` and `Authorization` from every request it proxies, `/api/*` or not. Whatever identity you need arrives as `X-Manaurum-User-Context`, or in a header of your own.
+
+### Pages that guests and members both open
+
+A share link, a voting room, an invite page: the same page, opened by people with a Manaurum session and by people without one. The gateway has no mode for it. A `user` route answers the guest `401 authentication_required`; an `anonymous` route — and every page under `public_paths` — tells you nothing even when a member is the one asking.
+
+What the apps that have this shape do (zb-product-kb, planning-poker):
+
+1. One `auth: "user"` route — say `POST /api/pass` — verifies the `user_context` and answers a short-lived pass the app signs itself: HMAC over (user id, what it grants, expiry), with the key kept in `os.secrets`.
+2. The page asks for it once. A guest gets `401` and carries on as a guest; a member keeps the pass.
+3. The guest-facing routes are `anonymous` and take the pass in a header of the app's own (`X-App-Pass`). Not `Authorization` — the gateway strips it.
+
+The pass is the only proof on those routes, so bind it to what it grants (this room, this document), keep it short, and renew it through the `user` route. Platform session renewal does not cover it: it only acts on `user` routes (see `references/sdk-api.md` → "Sessions in a standalone tab").
+
+**Names.** The `user_context` JWT carries ids: `sub`, `tenant_id`, `workspace_id`, `app_id` (the slug), `app_version`. No name and no email. Inside the desktop window `manaurum:init` carries `user.nickname`; in a standalone tab nothing does, so ask the person and store the answer against `sub`.
+
+### Streaming routes — the limits
+
+Defaults in Core's `v2_gateway_streaming.py`, each one overridable by the operator:
+
+| Limit | Default | Past it |
+|---|---|---|
+| Concurrent streams per (app, tenant), per Core process | 50 | `429 stream_concurrency_exceeded` |
+| Concurrent streams per Core process, all apps | 200 | `429 stream_concurrency_exceeded` |
+| Lifetime of one stream | 15 minutes | closed cleanly |
+| Silence from your container | 60 seconds | closed |
+
+Plan your capacity on 50: Core runs more than one process, but nothing lets you choose which one a stream lands on. Send a heartbeat comment (`:\n\n`) well inside 60 seconds — every 20 is plenty — and expect the 15-minute close: it is the point where a reconnect re-runs authentication, so the client reconnects with `Last-Event-ID` and the server resumes from it.
+
+On a `user` route the stream is authenticated once, at connect. `EventSource` cannot send headers and is not covered by session renewal; in a standalone tab a reconnect after the session lapsed is a `401` that `EventSource` gives up on. Read such a stream with `fetch` and a body reader, which renewal does cover.
 
 ### `hosted` (default — what 99% of apps want)
 
@@ -249,7 +306,7 @@ You host the app yourself; the platform proxies signed requests to your endpoint
 
 Manifest looks the same plus **`runtime.entrypoint`** — the absolute HTTPS URL of your endpoint. The shell honours it only for `mode: "byo"`; for `hosted` apps the URL is platform-derived (`https://<slug>.apps.manaurum.com/`) and any `entrypoint` you write is ignored.
 
-> Do **not** write `runtime.byo_endpoint_url`. That spelling appears nowhere in Core — and because the `runtime` sub-object is not strict, it **validates cleanly and is silently ignored**, leaving your app with no URL at all. The field is `entrypoint`.
+> Do **not** write `runtime.byo_endpoint_url`. That spelling appears nowhere in Core, and since `runtime` became strict it is a `422`. The field is `entrypoint`.
 
 Your endpoint must implement the BYO health-check contract (`GET /.well-known/manaurum-byo-health` → 200) and verify the platform's HMAC signature on capability dispatch. See R-5 documentation in the manaurum repo if you really need this; most apps shouldn't.
 
@@ -263,7 +320,7 @@ Files live in `dev_apps` / `dev_app_files` tables; output served via `/api/dev/v
 
 List of external hostnames your app may reach via the `os.http.fetch` capability. **Empty (or absent) list = default deny** → `412 egress_not_declared`; a host outside the list → `412 host_not_in_allow_list`. The deploy pipeline copies the list onto the version row and the `os.http.fetch` handler reads it there, so this is the real enforcement point.
 
-Like `runtime.port`, the field is schema-undeclared (`runtime` accepts extra keys) but genuinely read by Core. Don't be alarmed when a schema dump doesn't show it.
+The schema declares it, as an array of strings; a host there is not checked for shape until `os.http.fetch` compares it with a URL, and the comparison is an exact hostname match, case aside: write `api.example.com` — no scheme, no path, no wildcard — and list a redirect's host separately.
 
 > **Unresolved — current behaviour is not the intended behaviour.** The deploy also writes each declared host into the container's Swarm `Hosts` entries as `0.0.0.0 <host>`, which means a raw `fetch()` from inside the container to a host you **declared** resolves to `0.0.0.0` and fails, while an *undeclared* host resolves normally. That is the opposite of an allow-list, and it is a live monorepo bug rather than a designed boundary. Until it is resolved, do not write code that depends on either reading of container-level egress: route all external HTTP through `os.http.fetch`, which is enforced, audited, and unaffected.
 
@@ -512,6 +569,16 @@ It runs the exact same validator the deploy pipeline runs, file by file in the s
 At runtime your container reads `DATABASE_URL` — a per-(app, tenant) `appusr_*` **login** role, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on exactly one schema plus `SELECT/INSERT/UPDATE/DELETE` on its objects. It holds **no `CREATE`**, so runtime DDL is impossible: a `CREATE TABLE IF NOT EXISTS` on boot — a common framework default — dies with `permission denied for schema app_<slug>__<hex>`. Schema changes happen only through `migrations/*.sql`.
 
 The role's `search_path` is locked to your schema, so write plain unqualified SQL. Your schema is already per-tenant, so there is no `tenant_id` column to filter on and no RLS to satisfy.
+
+**Sequences: your container can draw from them, not move them.** The runtime role holds `USAGE, SELECT` on sequences — enough for `nextval`, not for `setval` or `ALTER SEQUENCE … RESTART`. That bites when you bring rows over with their original ids, moving an app here from somewhere else: the inserts succeed, the sequence is still at 1, and the next ordinary insert collides with an imported id. The migrator role created the sequence, so it owns it, and the realignment belongs in a migration that runs after the import:
+
+```sql
+-- 0004_realign_ids.sql: the import kept the source ids
+SELECT setval(pg_get_serial_sequence('item', 'id'),
+              COALESCE((SELECT max(id) FROM item), 0) + 1, false);
+```
+
+A `SELECT` is `neutral`, so the validator passes it. Like every migration it runs once per tenant, so a second import later needs a second file. If the data can travel inside the migration itself as `INSERT`s, put this line at the end of the same file.
 
 **Your container serves exactly one tenant.** The platform runs a separate Swarm service per (app, tenant) — the service DNS name is derived from both — and injects a fixed `MANAURUM_TENANT_ID` that never changes for the life of that container. So process-local state (in-memory caches, module globals, connection pools) is already single-tenant: you do **not** need to key caches by tenant, and doing so adds complexity that buys nothing. What you must still not assume is that `sub` is stable-shaped — treat it as opaque TEXT (see the user-context section).
 

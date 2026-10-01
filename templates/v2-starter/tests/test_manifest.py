@@ -112,3 +112,36 @@ def test_the_app_linter_is_clean():
     done = subprocess.run([sys.executable, str(linter), str(_APP_DIR)],
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_slug_the_code_sends_is_the_manifests():
+    """os.secrets / os.files are keyed by the slug exactly as sent.
+
+    A slug that drifted from `app_id` reads and writes a namespace nothing
+    else uses: `manaurum app set-secret` wrote under the manifest's slug, so
+    every secret the tenant set looks unset to the app.
+    """
+    from src.capability import APP_SLUG
+
+    assert APP_SLUG == _MANIFEST["app_id"], (
+        "src/capability.py APP_SLUG is %r but manifest app_id is %r"
+        % (APP_SLUG, _MANIFEST["app_id"]))
+
+
+# (family, verb) rather than a quoted name: check_app.py reads a quoted
+# capability name anywhere in the app as a call this app makes.
+@pytest.mark.parametrize("family, verb, expected", [
+    ("kv", "get", "uuid"),
+    ("kv", "set", "uuid"),
+    ("events", "emit", "uuid"),
+    ("secrets", "get", "slug"),
+    ("files", "upload", "slug"),
+])
+def test_each_capability_gets_the_app_id_form_it_is_keyed_by(
+        monkeypatch, family, verb, expected):
+    from src.capability import APP_SLUG, app_id_header
+
+    uuid = "6f1c2c1e-0000-4000-8000-000000000000"
+    monkeypatch.setenv("MANAURUM_APP_ID", uuid)
+    want = uuid if expected == "uuid" else APP_SLUG
+    assert app_id_header("os.%s.%s" % (family, verb)) == want

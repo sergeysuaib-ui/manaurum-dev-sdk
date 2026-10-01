@@ -297,9 +297,9 @@ If your app needs to call the OS (KV, files, AI, etc.), the platform passes thes
 **You ship no token.** The platform injects `MANAURUM_RUNTIME_TOKEN` for you — never bake
 a credential into the image and never use your `mna_*` developer token at runtime.
 (`runtime.env_secrets` does not exist: it is not in the schema, Core never reads it, and
-because the `runtime` sub-object is not strict it validates and then silently does
-nothing. `MANAURUM_BROKER_URL` is likewise never injected — MAN-163 removed it because
-the shared broker DSN could reach every tenant's schema.)
+since `runtime` is strict a manifest carrying it is rejected with a `422`.
+`MANAURUM_BROKER_URL` is likewise never injected — MAN-163 removed it because the shared
+broker DSN could reach every tenant's schema.)
 
 ```javascript
 // inside your container

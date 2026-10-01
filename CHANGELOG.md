@@ -1,3 +1,60 @@
+# 3.1.0 - what the first app ported to v2 found missing (Planning Poker)
+
+### Why
+
+Moving Planning Poker onto Platform v2 produced eleven points of feedback.
+Checked against Core's `main`, most of them were gaps in these skills rather
+than in the platform, and two were defects in the SDK itself:
+
+* `check_app.py` called `runtime.public_paths` and `runtime.health_path` "a
+  key the platform does not read". The gateway reads the first and the
+  post-deploy probe reads the second, so every app with a guest page got a
+  false red.
+* The starter's `src/capability.py` said in a comment to send the slug to
+  everything but `os.kv` and `os.events`, and then sent the UUID to
+  everything. `os.secrets` and `os.files` store under the header as sent, and
+  `manaurum app set-secret` writes under the slug. So an app grown from the
+  starter read every secret set from the CLI as `404`.
+
+Checking those turned up a third: since MAN-1899 (2026-08-23) `runtime` is
+`additionalProperties: false`. Five places here still said it was not strict
+and that a typo deploys green and does nothing. A typo is a `422` now.
+
+### What changed
+
+* **`templates/check_app.py`** knows all eleven `runtime` keys the schema
+  declares, and says a stray one is a `422`. `scripts/linter_mutations.py`
+  gains a must-stay-green case with `public_paths`, `health_path` and
+  `resources`. It was red on 3.0.0.
+* **The starter** sends the UUID to `os.kv.*` / `os.events.*` and the slug,
+  kept as `APP_SLUG`, to everything else. Two new tests pin the slug to the
+  manifest and the form to each family.
+* **`references/v2-platform.md`**:
+  * §2 lists the eleven keys and who reads each one, and documents
+    `public_paths`, `health_path` and `resources`, which these skills had
+    never mentioned.
+  * New: "Pages that guests and members both open". There is no optional
+    auth mode, and the gateway strips `Cookie` and `Authorization`. The
+    section gives the signed-pass pattern two apps already use, and says
+    that `user_context` carries no name.
+  * New: "Streaming routes - the limits". The limits are 50 streams per
+    (app, tenant) per process, 15 minutes per stream and 60 seconds of
+    silence; the section covers what each means for a client.
+  * §7 explains why the runtime role cannot `setval` and how a migration
+    realigns a sequence after an import that kept its ids.
+* **`references/capabilities-reference.md`**: which app-id form each family
+  keys by and what the wrong one looks like; `404 secret_not_found` named;
+  drop credentials when an `os.http.fetch` redirect changes host, and declare
+  the redirect's host.
+* **`references/sdk-api.md`**: a new "Sessions in a standalone tab" section
+  covers the 15-minute cookie, the `fetch` renewal Core injects (MAN-2541),
+  and what it does not cover (`EventSource`, `anonymous` routes, an
+  `Authorization` header of your own).
+* **`SKILL.md`** "What will bite you": the window has no downloads, new tabs
+  or clipboard writes, and says what to do instead of each.
+* **`manaurum-deploy`**: the `mna_*` token, not the manifest, decides the
+  tenant a deploy lands in, and how to check it before the first deploy.
+
 # 3.0.0 - the v1 app path is retired (MAN-3021)
 
 ### Why

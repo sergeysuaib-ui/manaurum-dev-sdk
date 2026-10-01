@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.0.0.** A plugin install caches one directory per
+> **This page is SDK 3.1.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -233,7 +233,8 @@ Each entry is `{ "path": …, "auth": … }`:
 - `auth` is `"user"` or `"anonymous"` — both required, both explicit.
   - `"user"`: the gateway mints a 60-second RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`. The end user's own bearer token is **never** forwarded to you.
   - `"anonymous"`: proxied with no user context. This is how you expose a kiosk/public endpoint, and it must be declared — a route you forget is unreachable, not open.
-- Optional `"streaming": true` for `text/event-stream` routes, so the gateway passes chunks through instead of buffering the response.
+  - **There is no third mode.** No "the user if signed in, nobody otherwise": a `user` route answers a guest `401`, an `anonymous` route tells you nothing even about a member, and the gateway strips `Cookie` and `Authorization` from everything it proxies. An app whose pages both guests and members open (a share link, a voting room) needs its own pass — `references/v2-platform.md` → "Pages that guests and members both open".
+- Optional `"streaming": true` for `text/event-stream` routes, so the gateway passes chunks through instead of buffering the response. A stream is closed after 15 minutes, and after 60 seconds in which your container sent nothing; a 51st concurrent stream for one (app, tenant) is `429`. Limits and the reconnect contract: `references/v2-platform.md` → "Streaming routes — the limits".
 - **There is no `method` field.** One rule covers GET, POST, PATCH, DELETE alike. You cannot declare `/api/items` anonymous for reads and `user` for writes — enforce that inside your app.
 
 The two failure modes that will actually catch you:
@@ -247,7 +248,7 @@ The two failure modes that will actually catch you:
 
 Precedence: the longer literal prefix wins, ties break by declaration order. That lets you carve one path out of a wildcard — `{"path": "/api/orders/*", "auth": "user"}` plus `{"path": "/api/orders/public", "auth": "anonymous"}` does what it looks like.
 
-Static assets (HTML/JS/CSS, `/healthz`, anything not under `/api/`) are **not** declared here and are always served anonymously.
+Static assets (HTML/JS/CSS, `/healthz`, anything not under `/api/`) are **not** declared here and always reach your container anonymously. A person opening a page in a browser tab with no session is redirected to log in first, unless the page's path is listed in `runtime.public_paths`.
 
 For declaring custom capabilities, secrets, migrations, see `references/v2-platform.md` § Manifest reference.
 
@@ -288,7 +289,7 @@ Two consequences, both of which produce the same symptom — a deploy that repor
   ```
   and set `"port": 8000` in the manifest to match. `app.listen(80)` in Node binds all interfaces by default, but `app.listen(80, 'localhost')` does not.
 
-Note `runtime.port` validates because the `runtime` sub-object is not strict — which cuts both ways. Unknown `runtime` keys (`replicas`, anything you invent) also validate and are then **silently ignored**, so a typo'd `"prot": 8000` deploys green and 502s.
+`runtime` is strict: a typo'd `"prot": 8000` is a `422` at deploy, and `templates/check_app.py` names it before you pack anything.
 
 Traffic path: `https://<slug>.apps.manaurum.com` → Traefik → **Core backend** (which adds the `/apps/<slug>` prefix) → Core gateway → your container. Traefik never talks to your container directly, so publishing ports in the Dockerfile changes nothing.
 
@@ -352,7 +353,7 @@ Headers:
 
 - `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` — an app-scoped `mna_*` runtime credential the platform mints fresh on every deploy and injects as an env var. It is scoped to this one app; it is not your developer token.
 - `X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}`.
-- `X-Manaurum-App-Id` — the **UUID** (`MANAURUM_APP_ID`) for `os.kv.*` and `os.events.emit`; the slug is rejected there with `412 app_id_must_be_uuid`.
+- `X-Manaurum-App-Id` — the **UUID** (`MANAURUM_APP_ID`) for `os.kv.*` and `os.events.emit`; the slug is rejected there with `412 app_id_must_be_uuid`. The **slug** (your manifest's `app_id`) for everything else, and above all for `os.secrets.*` and `os.files.*`: those store under the value exactly as sent, `manaurum app set-secret` writes under the slug, and a UUID there is a successful call against an empty namespace. The env carries only the UUID, so the slug is a constant in your code — the starter's `src/capability.py` picks the form per capability.
 - `X-Manaurum-User-Context` — forward it **unchanged** for user-scoped capabilities (`os.drive.*`, `os.calendar.*`), exactly as your `auth: "user"` route received it. Omitting it is `403 user_context_required`. It is optional on app-scoped capabilities, where it only enriches the audit log.
 
 Body shape: a JSON object matching the capability's input schema (no wrapper). Read `references/capabilities-reference.md` for the canonical input/output for every capability.
@@ -556,7 +557,7 @@ packs. Exit 0 or fix what it names.
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
 | `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
-| an invented key in `runtime` (`"prot": 8000`) | the `runtime` sub-object is not strict, so it validates, deploys green and is silently ignored — a debugging session rather than a 422 |
+| an invented key in `runtime` (`"prot": 8000`) | a `422` at deploy, after the pack and the upload — the linter names it offline, with the keys you could have meant |
 | an `/agent/*` path listed in `api_routes` | nothing. It configures nothing while looking exactly like it did. |
 | a relative `frontend.icon` (`icons/app.svg`) | that literal string painted into the launcher tile |
 | an `mna_*`/`mnu_*` token literal anywhere in the directory | your deploy (or MCP and Drive) rights handed to every future reader of the image |
@@ -729,7 +730,13 @@ Everything here shares one property: it works when you open `https://<slug>.apps
 
 **Keep `.env*` out of the app directory.** The packager excludes `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.venv` — not `.env*`. Anything else you don't want in the image needs a `.dockerignore`.
 
-**Unknown `runtime` keys validate and do nothing.** The `runtime` sub-object isn't strict, so `"prot": 8000` or an invented `env_secrets` passes the schema, deploys green, and is silently ignored. Typos here cost you a debugging session, not a 422.
+**No downloads, no new tabs, no clipboard writes.** The sandbox has no `allow-downloads` and no `allow-popups`, and the frame's `allow` delegates only `microphone` and `camera`, and those only when `permissions[]` asks. Inside the desktop, then:
+
+- a download — `<a download>`, a blob URL, a `Content-Disposition: attachment` response — does nothing. Put the file into the person's Files with `os.drive.publish` (`references/capabilities-reference.md` → "`os.drive.publish` — publish the staged artefact into the user's Drive") and tell them where it went.
+- `target="_blank"` and `window.open()` do nothing, and there is no shell message that opens a URL. Show the link as text the person can select.
+- `navigator.clipboard.writeText()` rejects. Show the value in a read-only field that selects itself on focus, so Ctrl+C works.
+
+All three work on the standalone URL, which is how they ship.
 
 **A capability in your manifest is not a capability you may call.** Grants are enforced per-install ahead of dispatch; an empty grant list is a deny, not a pass. Adding a capability and redeploying still 403s until the tenant's install grants are extended.
 

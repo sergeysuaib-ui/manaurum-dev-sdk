@@ -17,6 +17,28 @@ import httpx
 
 _TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
+# The manifest's `app_id`. The setup step's `sed` renames it with everything
+# else, and tests/test_manifest.py fails if the two ever disagree.
+APP_SLUG = "my-app"
+
+# `X-Manaurum-App-Id` is stored AS SENT - the gateway does not normalise it -
+# and two families key by different forms. os.kv.* and os.events.emit key by
+# the app UUID and answer 412 `app_id_must_be_uuid` to a slug. Everything else
+# that stores something keys by the slug: os.secrets.* (which is where
+# `manaurum app set-secret` writes) and os.files.*. Send the UUID there and the
+# call succeeds against an empty namespace - a secret set from the CLI reads
+# back as 404, and a file uploaded before the switch is not found after it.
+# Prefixes, not names: `check_app.py` reads a quoted capability name as a
+# call, and this module calls neither of the events ones.
+_UUID_KEYED = ("os.kv.", "os.events.")
+
+
+def app_id_header(name: str) -> str:
+    """The `X-Manaurum-App-Id` value capability `name` is keyed by."""
+    if name.startswith(_UUID_KEYED):
+        return os.environ.get("MANAURUM_APP_ID") or ""
+    return APP_SLUG
+
 
 class CapabilityError(Exception):
     """The runtime env is missing, the gateway is unreachable, or it
@@ -24,21 +46,17 @@ class CapabilityError(Exception):
     map to a user-visible error."""
 
 
-def _gateway() -> tuple[str, dict[str, str]]:
-    """Return ``(base_url, headers)`` for a capability call.
+def _gateway(name: str) -> tuple[str, dict[str, str]]:
+    """Return ``(base_url, headers)`` for a call to capability ``name``.
 
-    All four values are injected by the deploy. Never hard-code or bake
-    them into the image — the token is minted per deploy and rotates.
+    The URL, token, tenant and UUID are injected by the deploy. Never
+    hard-code or bake them into the image — the token is minted per deploy
+    and rotates. Only the slug is yours, because it is your manifest's.
     """
     base = (os.environ.get("MANAURUM_CORE_URL") or "").rstrip("/")
     token = os.environ.get("MANAURUM_RUNTIME_TOKEN") or ""
     tenant_id = os.environ.get("MANAURUM_TENANT_ID") or ""
-    # X-Manaurum-App-Id takes the app UUID for os.kv.* and
-    # os.events.emit, and the SLUG for every other capability.
-    # MANAURUM_APP_ID is already the UUID, which is what os.kv wants —
-    # a slug here is rejected with 412 `app_id_must_be_uuid`.
-    app_uuid = os.environ.get("MANAURUM_APP_ID") or ""
-    if not (base and token and tenant_id and app_uuid):
+    if not (base and token and tenant_id and os.environ.get("MANAURUM_APP_ID")):
         raise CapabilityError(
             "capability env not fully injected (MANAURUM_CORE_URL / "
             "MANAURUM_RUNTIME_TOKEN / MANAURUM_TENANT_ID / MANAURUM_APP_ID)"
@@ -46,7 +64,7 @@ def _gateway() -> tuple[str, dict[str, str]]:
     return base, {
         "Authorization": f"Bearer {token}",
         "X-Manaurum-Tenant-Id": tenant_id,
-        "X-Manaurum-App-Id": app_uuid,
+        "X-Manaurum-App-Id": app_id_header(name),
         "Content-Type": "application/json",
     }
 
@@ -58,7 +76,7 @@ async def call_capability(name: str, payload: dict[str, Any]) -> Any:
     ``POST {MANAURUM_CORE_URL}/api/capability/{name}``. Do NOT forward
     the user_context header here — the gateway rejects it on this path.
     """
-    base, headers = _gateway()
+    base, headers = _gateway(name)
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await client.post(

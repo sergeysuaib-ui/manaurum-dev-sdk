@@ -18,6 +18,7 @@ description: Deploy a ManAurum OS app on Platform v2 (containerized — `manauru
 ### Prereqs
 
 - An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → Credentials → Create token. Shown ONCE, save immediately.
+- **The token decides the tenant, not the manifest.** An `mna_*` is bound to the workspace that was active in Dev Hub when it was minted, and every deploy with it lands in that tenant; nothing in `manifest.json` chooses it. The deploy response does not name the tenant and no endpoint answers "who is this token", so check before the first deploy. The Create dialog names the tenant it is about to bind to, and Dev Hub → Credentials lists only the active workspace's tokens — if yours, by its prefix, is not in the list, it belongs to another tenant. zb-analytics was deployed into a personal tenant this way.
 - A project directory containing `manifest.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
 
 ### Pre-flight: two linters, then a small window with a lot of data

@@ -73,10 +73,15 @@ EXPOSE = re.compile(r"(?mi)^\s*EXPOSE\s+(\d+)")
 PORT_IN_COMMAND = re.compile(r"--port[=\s]+(\d+)|\s-p[=\s]+(\d+)|0\.0\.0\.0:(\d+)")
 DOCKER_RUNLINE = re.compile(r"(?mi)^\s*(?:CMD|ENTRYPOINT)\s+(.*)$")
 MIGRATION_NUMBER = re.compile(r"^(\d+)")
-# The manifest's root object is strict, so a typo up there is a 422 that finds
-# itself. `runtime` is not, which is why this list has to exist here.
-RUNTIME_KEYS = {"mode", "port", "api_routes", "egress_allowed_hosts",
-                "replicas", "sandbox"}
+# Every key `runtime.properties` declares in manifest_v2.schema.json - change
+# one, change both. `runtime` has been strict since MAN-1899 (2026-08-23), so a
+# key outside this set is a 422 at deploy. Catching it here costs nothing and
+# happens before the upload. A key the platform reads that is missing from this
+# set is worse than no check at all: every app that uses it gets a red it does
+# not deserve (`public_paths` and `health_path` did, until 3.1.0).
+RUNTIME_KEYS = {"mode", "port", "api_routes", "public_paths", "health_path",
+                "egress_allowed_hosts", "resources", "sandbox", "entrypoint",
+                "replicas", "image"}
 # Long enough not to match `mna_*`, `mna_<...>` or `mna_…` in a comment that is
 # telling you not to do this.
 TOKEN_LITERAL = re.compile(r"\bmn[au]_[A-Za-z0-9]{16,}")
@@ -359,19 +364,19 @@ def check_port(root: Path, manifest: dict, problems: list, notes: list) -> None:
 def check_manifest_shape(manifest: dict, problems: list) -> None:
     """Rules the skill states and nothing enforced.
 
-    The root object is strict - `additionalProperties: false` over 23 keys -
-    so a typo up there is a 422 and finds itself. `runtime` is NOT: an
-    invented key, or `"prot": 8000`, validates, deploys green and is silently
-    ignored. That costs a debugging session rather than a rejection, which is
-    the worse of the two.
+    The root object and `runtime` are both strict - `additionalProperties:
+    false` - so a typo in either is a 422 at deploy. Until MAN-1899 `runtime`
+    was not, and `"prot": 8000` deployed green and did nothing. The check
+    stays because it answers offline, before the upload, and names the keys
+    you could have meant.
     """
     runtime = manifest.get("runtime", {})
     if isinstance(runtime, dict):
         for key in sorted(set(runtime) - RUNTIME_KEYS):
             problems.append(
-                "manifest.json: runtime.%s is not a key the platform reads. The "
-                "runtime object is not strict, so this validates, deploys green "
-                "and does nothing - check the spelling against %s"
+                "manifest.json: runtime.%s is not a key the platform reads, and "
+                "the deploy rejects the manifest with a 422 over it - check the "
+                "spelling against %s"
                 % (key, ", ".join(sorted(RUNTIME_KEYS))))
 
     for entry in runtime.get("api_routes", []) if isinstance(runtime, dict) else []:
