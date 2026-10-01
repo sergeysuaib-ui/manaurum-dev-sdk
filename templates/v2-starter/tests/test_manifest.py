@@ -137,11 +137,30 @@ def test_the_slug_the_code_sends_is_the_manifests():
     ("secrets", "get", "slug"),
     ("files", "upload", "slug"),
 ])
-def test_each_capability_gets_the_app_id_form_it_is_keyed_by(
+async def test_each_capability_is_sent_the_app_id_form_it_is_keyed_by(
         monkeypatch, family, verb, expected):
-    from src.capability import APP_SLUG, app_id_header
+    """Asserted on the request `call_capability` actually sends, so a
+    regression anywhere between the name and the wire shows up here."""
+    import httpx
+
+    from src import capability
 
     uuid = "6f1c2c1e-0000-4000-8000-000000000000"
-    monkeypatch.setenv("MANAURUM_APP_ID", uuid)
-    want = uuid if expected == "uuid" else APP_SLUG
-    assert app_id_header("os.%s.%s" % (family, verb)) == want
+    for name, value in {"MANAURUM_CORE_URL": "https://core.test",
+                        "MANAURUM_RUNTIME_TOKEN": "runtime-token",
+                        "MANAURUM_TENANT_ID": "tenant",
+                        "MANAURUM_APP_ID": uuid}.items():
+        monkeypatch.setenv(name, value)
+    sent = {}
+
+    async def post(self, url, json=None, headers=None):
+        sent.update(url=url, headers=headers)
+        return httpx.Response(200, json={"output": {}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    name = "os.%s.%s" % (family, verb)
+    await capability.call_capability(name, {})
+
+    assert sent["url"] == "https://core.test/api/capability/" + name
+    want = uuid if expected == "uuid" else capability.APP_SLUG
+    assert sent["headers"]["X-Manaurum-App-Id"] == want
