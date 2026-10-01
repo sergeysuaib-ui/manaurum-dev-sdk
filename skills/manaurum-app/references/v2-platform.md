@@ -253,10 +253,11 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 What the apps that have this shape do (zb-product-kb, planning-poker):
 
 1. One `auth: "user"` route — say `POST /api/pass` — verifies the `user_context` and answers a short-lived pass the app signs itself: HMAC over (user id, what it grants, expiry), with the key kept in `os.secrets`.
-2. The page asks for it once. A guest gets `401` and carries on as a guest; a member keeps the pass.
-3. The guest-facing routes are `anonymous` and take the pass in a header of the app's own (`X-App-Pass`). Not `Authorization` — the gateway strips it.
+2. The page asks for it once. A guest gets `401` and carries on without one; a member keeps the pass.
+3. The routes both of them call are `anonymous` and read the pass from a header of the app's own (`X-App-Pass`). Not `Authorization` — the gateway strips it.
+4. Each such route decides on its own what a request **without** a pass may do. That is the guest's whole permission set, so make it deliberate: what the share link was for (see the board, cast a vote under a name the guest typed) and nothing a member's identity would unlock. Whatever needs to know *which member* needs a valid pass, and a missing or bad pass gets the guest answer, never an error that falls through to member behaviour.
 
-The pass is the only proof on those routes, so bind it to what it grants (this room, this document), keep it short, and renew it through the `user` route. Platform session renewal does not cover it: it only acts on `user` routes (see `references/sdk-api.md` → "Sessions in a standalone tab").
+The pass is the only proof of membership on those routes, so bind it to what it grants (this room, this document), keep it short, and renew it through the `user` route. Platform session renewal does not cover it: it only acts on `user` routes (see `references/sdk-api.md` → "Sessions in a standalone tab").
 
 **Names.** The `user_context` JWT carries ids: `sub`, `tenant_id`, `workspace_id`, `app_id` (the slug), `app_version`. No name and no email. Inside the desktop window `manaurum:init` carries `user.nickname`; in a standalone tab nothing does, so ask the person and store the answer against `sub`.
 
