@@ -165,9 +165,20 @@ def migrations_out_of_order(app: Path) -> None:
 
 
 def a_typo_in_runtime(app: Path) -> None:
-    # `runtime` is not strict, so this validates, deploys green and is
-    # silently ignored - a debugging session rather than a 422.
+    # The deploy would 422 this (MAN-1899); the linter says so before upload.
     patch_manifest(app, lambda data: data["runtime"].update(prot=8000))
+
+
+def guest_pages_and_a_health_path(app: Path) -> None:
+    # Both keys are in the schema and both are read - the gateway reads
+    # `public_paths`, the post-deploy probe reads `health_path`. check_app.py
+    # 2.11.0-3.0.0 called them keys the platform does not read, so every app
+    # with a guest page got a false red (Planning Poker, 2026-10).
+    def mutate(data):
+        data["runtime"]["public_paths"] = ["/g/*", "/invite"]
+        data["runtime"]["health_path"] = "/healthz"
+        data["runtime"]["resources"] = {"memory_mb": 256, "cpu_millicores": 250}
+    patch_manifest(app, mutate)
 
 
 def agent_path_in_api_routes(app: Path) -> None:
@@ -233,6 +244,8 @@ APP_MUTATIONS = [
      "zero-padded"),
     ("manifest: a typo in runtime", a_typo_in_runtime,
      "runtime.prot is not a key the platform reads"),
+    ("manifest: public_paths, health_path and resources are real keys",
+     guest_pages_and_a_health_path, None),
     ("manifest: /agent/* declared in api_routes", agent_path_in_api_routes,
      "configures nothing while looking like it did"),
     ("manifest: a relative frontend.icon", a_relative_icon,

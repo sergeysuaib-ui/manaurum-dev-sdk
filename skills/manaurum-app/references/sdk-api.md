@@ -126,7 +126,7 @@ A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from t
 - postMessage is the only channel. No shared DOM, no shared `localStorage`, no `document.domain` tricks.
 - You cannot read the shell's origin from inside the frame. Either reply with `'*'` (fine — `manaurum:ready` carries nothing secret), or capture `event.origin` off `manaurum:init` and reply to exactly that, which is what the v2 SDK does.
 - The shell posts `manaurum:init` with your origin as `targetOrigin`, so no other embedder can receive it.
-- The iframe sandbox is `allow-scripts allow-forms allow-same-origin` (`IframeAppHost.tsx:211`). `allow-modals` is never emitted — `alert()` / `confirm()` / `prompt()` are dead in the shell (and work fine on your standalone URL, so "it worked in my browser" proves nothing).
+- The iframe sandbox is `allow-scripts allow-forms allow-same-origin` (`iframeHostPolicy.ts`). `allow-modals` is never emitted — `alert()` / `confirm()` / `prompt()` are dead in the shell (and work fine on your standalone URL, so "it worked in my browser" proves nothing). Nor are `allow-downloads` or `allow-popups`, and `allow` never delegates `clipboard-write`: downloads, `target="_blank"`, `window.open()` and `navigator.clipboard.writeText()` all fail in the window. What to do instead: `SKILL.md` → "What will bite you".
 - Browser features are delegated through the iframe `allow` attribute only when your manifest declares them in `permissions[]` (`:210`, `:218-222`, `:919`). See `references/v2-platform.md`.
 
 ### Which messages a v2 app may send
@@ -236,6 +236,16 @@ const res = await app.fetch('/api/orders', {
 
   Only `GET` / `HEAD` / `OPTIONS` retry unless you pass `retry: { …, force: true }` — replaying a POST without an idempotency key risks a double write. Only 5xx and 429 are treated as transient; other 4xx return immediately. Backoff is exponential with full jitter (`200ms`, `400ms`, `800ms`…), capped at 5s per wait. A thrown network error is re-thrown on the last attempt.
 - On a 401 the `onAuthFailure` callbacks fire before the Response is returned.
+
+### Sessions in a standalone tab
+
+The `manaurum_session` cookie on `.manaurum.com` is good for 15 minutes from when it was issued; the refresh credential behind it lasts 7 days and never leaves Core's origin. Core renews the session for you (MAN-2541). Every HTML document the gateway serves gets a script injected ahead of your own that wraps `window.fetch`: when a same-origin `/api/*` call to an `auth: "user"` route comes back `401` with `X-Manaurum-Session: required`, it renews — through the shell inside the desktop window, through a hidden `<core>/v2-session` frame in a standalone tab — and retries once. The retry is safe even for a `POST`: a `401` carrying that header came from the gateway, so the request never reached your container. When the refresh credential has expired too, the `401` comes back to you and `app.onAuthFailure` fires. If the person signed in as someone else in the meantime, the call throws instead of retrying.
+
+`app.fetch` goes through the same `window.fetch`, so it is covered. These are not, and in a standalone tab each of them stops recognising the person once the cookie lapses:
+
+- `EventSource` and `XMLHttpRequest` — only `fetch` is wrapped. Read an authenticated stream with `fetch` and a body reader.
+- `auth: "anonymous"` routes — the gateway never answers them with the session `401`, so there is nothing to renew. An app that carries its own pass on such routes owns that pass's expiry.
+- A call with `credentials: 'omit'`, an `Authorization` header of your own, a streaming request body, or a cross-origin URL. These go out untouched.
 
 ### `app.pickFromDrive({ accept? })`
 

@@ -28,9 +28,17 @@ Content-Type: application/json
   Never bake an `mna_*` you created yourself into the image; that one is deploy-time only.
   In production `MANAURUM_CORE_URL` resolves to `https://manaurum.com`, but read the env
   var rather than hardcoding it.
-- **App-id form matters.** `os.kv.*` and `os.events.emit` key their tables by UUID and
-  return `412 app_id_must_be_uuid` if you send the slug. Always send `MANAURUM_APP_ID`
-  (the UUID); every other capability accepts either form.
+- **App-id form matters, and nothing converts it.** The gateway hands
+  `X-Manaurum-App-Id` to the handler exactly as sent, and each family keys its storage by
+  one form. `os.kv.*` and `os.events.emit` key by the **UUID** (`MANAURUM_APP_ID`) and
+  answer `412 app_id_must_be_uuid` to a slug. `os.secrets.*` and `os.files.*` key by the
+  **slug** — your manifest's `app_id` — and accept a UUID too, which is the trap: the call
+  succeeds against a namespace nothing else writes. `manaurum app set-secret` stores under
+  the slug, so an app that sends the UUID reads every CLI-set secret as
+  `404 secret_not_found`, and a file uploaded under one form is not found under the other.
+  Send the slug to every capability except those two families. The env carries only the
+  UUID, so keep the slug as a constant in your code; the starter's `src/capability.py`
+  does, and its tests pin it to the manifest.
 
 Success response: `{ "output": { … }, "correlation_id": "<uuid>" }`. Streaming
 capabilities (`os.apps.bulk_export`) return `application/x-ndjson` instead.
@@ -121,7 +129,8 @@ settings UI, or use `os.secrets.*` for credentials.
 
 ## `os.secrets.set` — store an encrypted secret
 
-Encrypted at rest. Per-(app, tenant, name).
+Encrypted at rest. Per-(app, tenant, name), where "app" is the `X-Manaurum-App-Id` value
+as sent — send the slug, which is what `manaurum app set-secret` writes under.
 
 **Input:**
 
@@ -142,7 +151,9 @@ Encrypted at rest. Per-(app, tenant, name).
 
 **Input:** `{ "name": "openai_api_key" }`
 
-**Output:** `{ "value": "sk-..." }` or 404 if not set.
+**Output:** `{ "value": "sk-..." }`, or `404 secret_not_found` when nothing is stored under
+this (app, tenant, name) — which is also what a secret set under the other app-id form
+looks like (see the header rules at the top of this page).
 
 ---
 
@@ -635,7 +646,12 @@ them into `body_base64`; to receive raw bytes (file downloads), pass
 
 Upstream 4xx/5xx are NOT errors — they come back in `status` and your app
 handles them. Redirects are not followed; handle `Location` yourself with
-a second call (it re-passes the allow-list checks).
+a second call (it re-passes the allow-list checks, so the redirect's host has to be
+in `egress_allowed_hosts` too). Your `headers` are sent verbatim on every call, so
+when the `Location` host differs from the one you called, drop `Authorization`
+and any other credential before following it — Jira answers attachment downloads
+with a `303` to a CDN, and following it with the headers unchanged hands your
+Jira token to the CDN.
 
 **Errors:**
 - `412 egress_not_declared` — manifest declares no egress hosts at all.
