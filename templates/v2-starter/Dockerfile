@@ -7,8 +7,8 @@
 # PORT — read this before you change it. The gateway proxies to
 # `manifest.runtime.port` (default 80 when the field is absent).
 # `EXPOSE` is documentation only; the platform never parses it. So the
-# port below and `runtime.port` in manifest.json MUST agree, or every
-# request 502s with `upstream_unreachable`.
+# port below and `runtime.port` in manifest.json MUST agree, or the
+# deploy's readiness probe finds nobody listening, rolls back and fails.
 #
 # This starter listens on 8000 and declares it explicitly, which is what
 # every hosted v2 app in production does. 8000 is also unprivileged, so

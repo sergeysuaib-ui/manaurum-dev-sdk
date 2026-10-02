@@ -226,7 +226,7 @@ It covers document navigations only. It never touches `api_routes`, and it never
 
 ### `runtime.health_path`
 
-The path the platform polls after a deploy, straight to your container at `runtime.port` over the internal network — so it needs no `api_routes` entry and is not reachable from outside. Declared, it is strict: a `5xx` on it fails the deploy. Left out, the probe only needs something to answer HTTP on the port. Either way a container that never answers is rolled back to the previous version and the deploy is reported failed.
+The path the platform polls after a deploy, straight to your container at `runtime.port` over the internal network. It needs no `api_routes` entry, and like every non-`/api` path it is also served publicly through the gateway, so keep it free of anything secret. Declared, it is strict: a `5xx` on it fails the deploy. Left out, the probe only needs something to answer HTTP on the port. Either way a container that never answers is rolled back to the previous version and the deploy is reported failed.
 
 ### `runtime.resources`
 
@@ -356,89 +356,45 @@ Every call (success or failure) lands in `capability_audit_log` (FORCE-RLS by te
 
 ## 4. Tokens — `mna_*` issuance, scope, revocation
 
-The format is `mna_<keyid>_<secret>` where keyid is 12 hex chars and secret is 32+ url-safe chars. The secret is hashed with bcrypt and stored in `developer_credentials`.
+The format is `mna_<keyid>_<secret>`: a 12-hex key id and a 32-char url-safe secret, stored as
+a bcrypt hash. Mint it in Dev Hub → Credentials (or `POST /api/developer/v2-credentials` with your
+signed-in session); the raw token is returned once. Two scopes:
 
-### Issuance — UI
+- `{"scope_kind": "owner"}` — every app you own in this tenant, including ones you create
+  later. Default 90 days. **The only kind that can deploy a brand-new app.**
+- `{"scope_kind": "apps", "apps": ["my-app"]}` — only the listed apps, and only while you own
+  them and are a tenant member. Default 365 days. `"*"` is `400 apps_wildcard_not_allowed`;
+  an app you do not own, or that does not exist yet, is `403 apps_not_owned`.
 
-Manaurum desktop → **Dev Hub → Credentials → Create token**. Every tenant has it.
-
-The form lets you pick:
-- **Apps scope**: comma-separated slugs, or blank for `*` (all apps owned by the developer in this tenant).
-- **Expiry**: 90 / 180 / 365 days.
-
-The token is shown ONCE. Save it.
-
-### Issuance — API
-
-```bash
-curl -sS -X POST https://manaurum.com/api/developer/v2-credentials \
-  -H "Authorization: Bearer $SESSION_JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"apps": ["*"]}'
-```
-
-Same response shape as the UI: `{ id, key_prefix, raw_token, apps, issued_at, expires_at }`. `raw_token` is the bearer; everything else is also retrievable later. Cap: 5 active per (user, tenant).
-
-### Revocation
-
-```bash
-# list (no raw_token returned)
-curl -sS https://manaurum.com/api/developer/v2-credentials \
-  -H "Authorization: Bearer $SESSION_JWT"
-
-# revoke (soft — sets revoked_at)
-curl -sS -X DELETE https://manaurum.com/api/developer/v2-credentials/<id> \
-  -H "Authorization: Bearer $SESSION_JWT"
-```
-
-Soft-deletes via `revoked_at`. The audit trail of issued tokens is preserved.
-
-### Scope semantics
-
-The `apps` array on the token is checked against the `X-Manaurum-App-Id` header on every capability call:
-
-- `["*"]` (default) → any app owned by the developer in this tenant.
-- `["my-app", "other-app"]` → only those two app UUIDs.
-
-Scope is per-tenant. A token issued in tenant A cannot call any capability in tenant B (the resolver returns the row's tenant_id; cross-tenant access is structurally impossible).
+At most 20 active per person per tenant; revoke with `DELETE /api/developer/v2-credentials/<id>`
+(soft). A token is bound to the tenant that was active when it was minted, and nothing reports
+it later (MAN-3199). The capability gateway refuses an `owner` token
+(`403 owner_scoped_credential_not_accepted`); containers use their injected runtime token.
+Everything about using a token for a deploy is in `manaurum-deploy/SKILL.md` → Prereqs.
 
 ---
 
 ## 5. Deploy lifecycle
 
-`POST /api/dev/v2/deploy` is **asynchronous**. It returns `202` with `{"deploy_job_id": "<uuid>", "status": "pending"}` and runs the pipeline on a background task — so a manifest or migration rejection does **not** come back as a synchronous 422; it surfaces as `status: "failed"` on the job. Poll `GET /api/dev/v2/deploy/{job_id}` or follow `GET /api/dev/v2/deploy/{job_id}/stream` (NDJSON, terminated by `{"terminal": true, "status": …}`). Run `manaurum app validate` first if you want fast feedback.
+`POST /api/dev/v2/deploy` checks the credential, manifest, slug, ownership and archive
+synchronously, then returns `202 {"deploy_job_id", "status": "pending"}` and builds, pushes,
+migrates, swaps the container and probes it in the background. The contract — every synchronous
+refusal, the job and its phases, what `succeeded` means (the migration gate and the readiness
+probe), version immutability, and the failure table — lives in one place:
+`manaurum-deploy/SKILL.md`.
 
-The background job does these steps in order:
-
-1. **Manifest validation** — JSON Schema + cross-field rules.
-2. **Migration validation** — the AST validator classifies every statement in `migrations/*.sql`. See § 7 for the exact rules.
-3. **Image build** — Docker Engine API `POST /build` with the tarball as the body. Errors here → `result.error` with the daemon's stderr.
-4. **Image push** — to `manaurum-registry:5000/v2-app-<slug>:<version>`.
-5. **DB writes** — upsert `v2_apps` (in home tenant) + insert `v2_app_versions` (FORCE-RLS).
-6. **Swarm service** — create or update `v2-app-<slug>-<tenant_short>` on `dokploy-network`. Image rewritten to overlay-pull URL so workers on any node can pull.
-7. **Traefik dynamic config** — write `/etc/dokploy/traefik/dynamic/v2-app-<slug>.yml`. Traefik reloads automatically.
-8. **Per-tenant migrations** — fan out to every install of this app and run each unapplied `migrations/*.sql` file in that tenant's app schema. Per-tenant failures isolate to that tenant; other tenants continue. (Nothing here invokes `migrate_command`.)
-
-End-to-end ~7–10s for a small app.
-
-Redeploying the same `(app_id, version)` is **not** a DB no-op: the pipeline runs a plain `INSERT INTO v2_app_versions` with no uniqueness constraint on `(app_id, version_label)`, so every redeploy of `1.0.0` adds another version row. It is effectively idempotent for the *running service* (swarm-service-update + image-pull, useful for dev iteration) but it clutters version history and rollback. Bump the semver for anything you intend to keep.
+Two facts this page's other sections depend on: migrations run **after the image push and
+before the new container replaces the old one**, and a migration that fails in **any** tenant
+stops the version from going live (MAN-2510).
 
 ---
 
 ## 6. Rollback + version history
 
-```bash
-# describe an app
-GET  /api/dev/v2/apps/<app_id>
-
-# all versions
-GET  /api/dev/v2/apps/<app_id>/versions
-
-# rollback to previous version
-POST /api/dev/v2/apps/<app_id>/rollback
-```
-
-Rollback flips `v2_app_installs.installed_version_id` to the prior `v2_app_versions.id` and updates the swarm service's image. URL stays the same.
+`POST /api/dev/v2/apps/<slug>/rollback` with `{"version_label": "…"}` re-points
+`v2_apps.current_version_id`, Swarm and Traefik at that version. It reverts no schema, runs no
+readiness probe or migration gate, and does not re-sync the Assistant's tools. Versions:
+`GET /api/dev/v2/apps/<slug>/versions`. Details: `manaurum-deploy/SKILL.md` → Rollback.
 
 ---
 
@@ -464,7 +420,7 @@ Packaging rules:
 - **SQL-only.** A non-`.sql` file *directly* under `migrations/` fails the deploy — a stray `README.md` there is an error, not a silent skip. The extension check is case-sensitive: `0001.SQL` counts as non-SQL.
 - Subdirectories under `migrations/` are silently ignored. So are symlinks. Keep the directory flat.
 - No `migrations/` directory at all is fine — frontend-only and kiosk-only apps skip migrations entirely.
-- **Never edit an applied file.** The runner re-hashes each file and a sha256 mismatch fails that tenant. It does not currently fail the *deploy* (the new version still activates), so the app goes live with one tenant stuck. Add `0002_*.sql` instead.
+- **Never edit an applied file.** The runner re-hashes each file and a sha256 mismatch fails that tenant, and the migration gate then stops the whole version from going live. Add `0002_*.sql` instead.
 
 You do **not** open your own connection and there is no `MANAURUM_BROKER_URL` to read — that variable is never injected. The runner opens the session, `SET ROLE`s to a per-(app, tenant) `appddl_*` NOLOGIN migrator role, and positions `search_path` on your schema — `app_<slug>__<tenant_hex>`, which is also handed to your container as `MANAURUM_TARGET_SCHEMA`. Write plain unqualified SQL: no schema-qualified names.
 
@@ -560,7 +516,7 @@ SELECT setval(pg_get_serial_sequence('item', 'id'),
 
 A `SELECT` is `neutral`, so the validator passes it. Like every migration it runs once per tenant, so a second import later needs a second file. If the data can travel inside the migration itself as `INSERT`s, put this line at the end of the same file.
 
-**Your container serves exactly one tenant.** The platform runs a separate Swarm service per (app, tenant) — the service DNS name is derived from both — and injects a fixed `MANAURUM_TENANT_ID` that never changes for the life of that container. So process-local state (in-memory caches, module globals, connection pools) is already single-tenant: you do **not** need to key caches by tenant, and doing so adds complexity that buys nothing. What you must still not assume is that `sub` is stable-shaped — treat it as opaque TEXT (see the user-context section).
+**Your container serves exactly one tenant.** The platform runs one Swarm service, for the tenant that deployed the app — the service DNS name is derived from both — and injects a fixed `MANAURUM_TENANT_ID` that never changes for the life of that container. So process-local state (in-memory caches, module globals, connection pools) is already single-tenant: you do **not** need to key caches by tenant, and doing so adds complexity that buys nothing. What you must still not assume is that `sub` is stable-shaped — treat it as opaque TEXT (see the user-context section).
 
 ### Your database can come up after your container
 
@@ -605,13 +561,13 @@ The same goes for anything else you fetch once at boot from Core, such as a secr
 "visibility": { "mode": "private" | "public" | "allow_list", "tenants": [...] }
 ```
 
-- `private` (default) — only the home tenant sees the app. Auto-installed implicitly.
+- `private` (default) — only the home tenant sees the app. The deploy installs it there: on every workspace of a team tenant, on each owner's own desktop in a personal one.
 - `public` — listed in `/api/app-store/v2/catalogue` for every tenant. Tenant admins can `POST /api/app-store/v2/install` to install.
 - `allow_list` — listed only for tenants in `tenants[]` (UUIDs).
 
 Install rows live in `v2_app_installs`. Uninstall is soft (sets `tombstoned_at`). The capability gateway gates capability calls on whether the calling app is installed in the calling tenant.
 
-App Store v2 is a separate frontend slice (A-1 backend shipped 2026-05-07; UI pending). Until the UI ships, install via the API directly:
+A tenant admin installs from the App Store, or through the API. An app installed in a tenant other than the one that deployed it does **not** serve that tenant's users today: its `auth: "user"` routes answer them `404 app_not_found` (`manaurum-deploy/SKILL.md` → "Who gets the app after a deploy").
 
 ```bash
 curl -sS -X POST https://manaurum.com/api/app-store/v2/install \

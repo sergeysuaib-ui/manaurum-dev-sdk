@@ -1,3 +1,52 @@
+# 3.4.0 - the deploy as it runs now: a probe, a migration gate, immutable versions, owner tokens (MAN-2600)
+
+### Why
+
+The audit (`docs/audits/`) found the deploy pages describing the pipeline from before
+September, the same fact repeated in up to twelve places:
+
+* "There is no readiness probe" and "a wrong port deploys green and then 502s". The probe
+  has existed since MAN-1369 and is on by default: a container that does not answer on
+  `runtime.port` fails the deploy and is rolled back.
+* "A failed per-tenant migration still activates the version". Since MAN-2510 it stops the
+  version from going live.
+* "Only three things fail synchronously; the manifest is validated in the job". The POST
+  now refuses a bad manifest, slug or owner (MAN-2597), a used version or another tenant's
+  slug (MAN-1586, MAN-1587) and an oversized archive (MAN-164) with its own `4xx`, none of
+  which were listed.
+* "Redeploying the same version is fine for dev iteration". It is `409
+  version_already_published`, also after a deploy that failed once its image was pushed.
+* The token pages still taught `{"apps":["*"]}`, a cap of 5 and "blank means all apps".
+  `*` is refused, the cap is 20, and a brand-new app can only be deployed with an "all my
+  apps" (`owner`) token (MAN-2597).
+* Rollback was "flips `installed_version_id`, no body"; logs were "a stub"; the README
+  pinned the CLI to `cli-v0.2.0` although `cli-v0.3.0` shipped on 2026-09-03.
+
+### What changed
+
+* **`manaurum-deploy/SKILL.md`** is the single home of the deploy contract, rewritten
+  against Core `main` 97d5660:
+  * Prereqs: both token kinds, what a new app needs, lifetimes, the cap, where the CLI keeps
+    the token, single ownership.
+  * The job: the result on success and on failure (`log_kind`/`log_tail`), the phases in
+    order, migrations before the container swap.
+  * Every synchronous refusal of the POST, in order.
+  * What `succeeded` means: the migration gate and the readiness probe, `health_path`
+    strict when declared.
+  * Versions are immutable; when a label is used up.
+  * Migrations: the 64 KiB total, UTF-8, the 30 s / 5 s timeouts, and `migration.breaking`
+    applying to every file.
+  * Rollback (`version_label`, `409 deploy_in_progress`, what it skips), logs (a real tail,
+    not redacted).
+  * Who gets the app after a deploy, and that another tenant's install does not serve its
+    users today.
+  * Deleting an app: what is kept, and the redeploy-a-deleted-slug trap.
+* **`v2-platform.md` §4–§6** keep the token facts in brief and point at the deploy skill;
+  §7 and §8 are corrected (the gate, the install fan-out, App Store).
+* **`SKILL.md`, `publishing.md`, `manaurum-setup`, README, `check_app.py`, the starter's
+  Dockerfile and README**: the probe instead of "502", the synchronous manifest check,
+  `cli-v0.3.0`.
+
 # 3.3.0 - the capability reference, checked against the code one capability at a time (MAN-2144, MAN-2198, MAN-2995, MAN-1923)
 
 ### Why

@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.3.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.4.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -35,7 +35,7 @@ the user's behalf; `os.drive.*` and `os.calendar.*` refuse a call without it.
 | Rule | What happens if you miss it |
 |---|---|
 | `/api/*` is **default-deny**. Every API path must be listed in `manifest.runtime.api_routes`. | The gateway answers `404 route_not_declared` and the request never reaches your container. Looks like a backend bug with silent logs. |
-| Traefik targets `manifest.runtime.port` (default **80**). `EXPOSE` is never parsed. | Green deploy, then `502 upstream_unreachable` on every request. |
+| The platform reaches your container on `manifest.runtime.port` (default **80**). `EXPOSE` is never parsed. | The deploy's readiness probe finds nobody listening, rolls back and fails the job. |
 | The desktop shell requires the `manaurum:ready` handshake within 10 s. | The standalone URL works fine, so you notice nothing — until someone opens the app on the desktop and gets "App is not responding". |
 | `/agent/*` bypasses the gateway but **not the network**. Verify the user-context JWT in every handler. | `<slug>.apps.manaurum.com` is Traefik straight to your container, so an unauthenticated POST to `/agent/<name>` reaches your code. Skipping the check because "only the runtime calls this" ships an open endpoint. |
 
@@ -77,13 +77,13 @@ is, install the wheel from this repo's
 [releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
 ```bash
-pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.2.0/manaurum_cli-0.2.0-py3-none-any.whl
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.0/manaurum_cli-0.3.0-py3-none-any.whl
 manaurum --version
 ```
 
-Then save your token — ask your ManAurum workspace admin to issue one in
-**DevHub → Credentials** (`mna_…`, choose "All apps" scope unless you have a reason not
-to; a token restricted to specific slugs cannot deploy an app it does not already list):
+Then save your token. Mint it in **DevHub → Credentials** (`mna_…`) and keep the
+default, "all my apps": a token restricted to specific apps cannot deploy an app that does
+not exist yet. The CLI keeps it in `~/.manaurum/config.json`:
 
 ```bash
 manaurum auth login --token mna_...
@@ -101,11 +101,10 @@ manaurum app validate           # manifest against the v2 schema
 manaurum app deploy             # 202 + poll; prints the live URL when it activates
 ```
 
-Copy the starter rather than running `manaurum app init`. The CLI's scaffold was rebuilt
-to this same shape (MAN-1397). That rewrite is in no released wheel, and
-`pip install manaurum-cli` still 404s on PyPI (MAN-1385), so the wheel you can actually
-install is `cli-v0.2.0`, built before it. Until a release carries the new scaffold, the
-directory below is the one that is tested on every PR.
+Copy the starter rather than running `manaurum app init`. The CLI's scaffold has the same
+shape (MAN-1397, in `cli-v0.3.0`), but the starter is the one this repository tests on every
+PR, and it carries what this plugin teaches since. `pip install manaurum-cli` still 404s on
+PyPI (MAN-1385); install the wheel above.
 
 The starter deploys unchanged. It is not a hello-world stub: it serves a UI that answers
 the shell handshake, verifies a real user-context JWT on `/api/me`, does a real key-value
@@ -204,10 +203,9 @@ discover it at 2 a.m.:
   calls the gateway is still deploy and look. The *frontend* now has one —
   `templates/preview.py` frames the page like the shell and stubs the API — but it stubs,
   it does not run your app.
-* **Build failures give you one line.** If the image fails to build you get a short
-  reason, not the Docker log.
-* **"Succeeded" means built and scheduled**, not "your container answers". A deploy that
-  reports success can still be 502 on the first request — check the URL yourself.
+* **"Succeeded" means the container answered one path.** The readiness probe calls
+  `runtime.health_path` (or `/healthz`); it does not exercise your `/api/*` routes or the
+  window.
 * **No scheduled jobs and no inbound webhooks.** `schedules` and `webhooks` exist in the
   manifest schema but nothing runs them yet.
 * **No metrics.** `manaurum app logs` is a tail of the last N lines, with no follow.

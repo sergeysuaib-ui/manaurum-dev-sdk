@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.3.0.** A plugin install caches one directory per
+> **This page is SDK 3.4.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -287,7 +287,7 @@ CMD ["node", "server.js"]   # server.js must listen on 0.0.0.0:80
 
 **`EXPOSE` is never parsed.** Nothing in Core reads it; it is documentation for humans. The gateway resolves your upstream as `<swarm-service>:<port>` where `port` is `manifest.runtime.port` if present and **80** otherwise. That is the only input.
 
-Two consequences, both of which produce the same symptom — a deploy that reports `succeeded` and then 502s on every single request:
+Two consequences, both of which produce the same symptom — a deploy that fails its readiness probe and is rolled back (`readiness_failed`), because the platform probes exactly that port:
 
 - **Wrong or missing `runtime.port`.** If your framework listens on 8000 and your manifest says nothing, the gateway dials port 80 and finds nobody. Either bind 80, or declare the port you actually use. Reference apps declare it: `libi/manifest.json` ships `"runtime": {"mode": "hosted", "port": 8000, …}`.
 - **Bound to `127.0.0.1`.** Many frameworks default to loopback, which is unreachable from outside the container. Bind `0.0.0.0` explicitly:
@@ -596,7 +596,7 @@ packs. Exit 0 or fix what it names.
 | an `/api/*` route no `runtime.api_routes` rule covers — including the `/api/x/*`-does-not-cover-`/api/x` case | `404 route_not_declared` at the gateway. Your handler never runs, and your logs are silent, so it reads as a backend bug. |
 | a declared route nothing serves | the manifest describing an app you did not build |
 | an `/agent/*` handler with no user-context verification | nothing. An open endpoint on the public internet, indefinitely. |
-| `runtime.port` disagreeing with what the container binds (and with `EXPOSE`) | a green deploy and `502 upstream_unreachable` on every request |
+| `runtime.port` disagreeing with what the container binds (and with `EXPOSE`) | a deploy that fails its readiness probe, a build and push later |
 | `frontend.entry_point` naming a file that is not there | the window opens on a 404 |
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
@@ -676,7 +676,7 @@ touched (MAN-2456). Echo the slug before you trust a green deploy.
 }
 ```
 
-So a 202 tells you nothing except that the request was accepted; the manifest has not even been validated yet. Poll the job until it reaches `succeeded` or `failed`:
+So a 202 tells you the request was accepted: the credential, manifest, slug, ownership and archive passed (each has its own synchronous `4xx`, listed in `manaurum-deploy/SKILL.md`). Poll the job until it reaches `succeeded` or `failed`:
 
 ```bash
 curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
@@ -689,13 +689,13 @@ curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
   "result": {
     "app_id":      "<uuid>",
     "version_id":  "<uuid>",
-    "image_tag":   "manaurum-registry:5000/v2-app-my-app:1.0.0",
+    "image_tag":   "manaurum-registry:5000/v2-app-my-app-1a2b3c4d:1.0.0",
     "url":         "https://my-app.apps.manaurum.com"
   }
 }
 ```
 
-**`succeeded` does not mean "serving".** It means Docker accepted the service spec. There is no readiness probe on the hosted path, so the job can go green while your container is crash-looping or listening on the wrong port. Always finish a deploy by hitting the app yourself:
+**`succeeded` means the new container answered the platform's readiness probe** on `runtime.port` and `runtime.health_path` (default `/healthz`; declared, a 5xx fails it). A migration that failed in any tenant stops the version from going live, and a probe that fails rolls the service back; both are `failed` with the reason in `error`, and a failed probe also puts the container's log in `result.log_tail`. Finish with the public URL anyway, which also exercises the gateway and TLS:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' https://my-app.apps.manaurum.com/healthz
@@ -705,11 +705,13 @@ A `deploy.sh` template with the polling loop, the live NDJSON progress stream, a
 
 ## Step 5 — Update + rollback
 
-- **New version**: bump `manifest.json.version` (semver), retar, redeploy. Same endpoint. The platform records a new `v2_app_versions` row and updates the swarm service in-place.
-- **Rollback**: `POST /api/dev/v2/apps/<app_id>/rollback` — flips the install back to the previous version.
-- **List versions**: `GET /api/dev/v2/apps/<app_id>/versions`.
-- **Inspect**: `GET /api/dev/v2/apps/<app_id>`.
-- **Stream logs**: `GET /api/dev/v2/apps/<app_id>/logs` (first slice returns a stub; full log streaming is planned).
+- **New version**: bump `manifest.json.version` (semver) on **every** deploy — a label is used up by the first deploy that pushes it, even one that then fails (`409 version_already_published`). The platform updates the swarm service in place.
+- **Rollback**: `POST /api/dev/v2/apps/<slug>/rollback` with `{"version_label": "1.0.0"}` (required). It re-points the app at that version's image; it does not revert the schema, probe the container, or re-sync the Assistant's tools.
+- **List versions**: `GET /api/dev/v2/apps/<slug>/versions`.
+- **Inspect**: `GET /api/dev/v2/apps/<slug>`.
+- **Logs**: `GET /api/dev/v2/apps/<slug>/logs?tail=200` — the container's last lines (max 1000), not redacted.
+
+Details, errors and the delete-and-redeploy trap: `manaurum-deploy/SKILL.md`.
 
 ## Common rejection codes (v2 deploy)
 
@@ -717,14 +719,15 @@ A `deploy.sh` template with the polling loop, the live NDJSON progress stream, a
 |---|---|---|
 | 401 `invalid_credential` | Bad/expired/revoked `mna_*`, or not an `mna_*` token. | Mint a fresh one in Dev Hub. |
 | 412 `app_id_must_be_uuid` | `os.kv.*` or `os.events.emit` was called with the slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID` for those two families only. |
-| 422 `manifest validation failed` | Manifest fails the v2 schema. | Read `errors[]`; fix and retry. |
-| 422 `migration_validation_failed` | Migration SQL contains destructive DDL and `migration.breaking` is not set. | Either set `migration.breaking: true` (deliberate), or rewrite to additive-only. |
+| 422 `manifest_validation_failed` (from the POST) | Manifest fails the v2 schema, names a reserved slug, or declares a write-named agent tool `is_write: false`. | Read `errors[]`; fix and retry. |
+| 409 `version_already_published` (from the POST) | That `version` was already deployed, including a deploy that failed after its push. | Bump `version`. |
+| job `failed`: `migration validation failed (…)` | Migration SQL contains destructive DDL and `migration.breaking` is not set, or a forbidden statement. | Destructive: set `migration.breaking: true` (deliberate) or rewrite as additive. Forbidden (`DO`, `COPY`, `SET`, …): rewrite; no flag unlocks it. |
 | 412 `egress_not_declared` / `host_not_in_allow_list` | `os.http.fetch` with no egress hosts declared at all / to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
 | 404 `route_not_declared` | An `/api/*` path is missing from `runtime.api_routes`. Default-deny — the container never saw the request. | Declare the path. Remember `/api/x/*` does not cover `/api/x`. |
 | 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
 | 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
-| 502 (serving, after a green deploy) | Nothing is listening where the gateway dials. | Bind `0.0.0.0` on port 80, or set `runtime.port` to the port you actually listen on. |
-| 502 (during deploy) | Image build failed. | Look at `result.error` for the Docker stderr. Common: `COPY` source doesn't exist, dependency install failed. |
+| job `failed` at `readiness_failed` | Nothing answered on `runtime.port` (or `health_path` returned 5xx); the service was rolled back. | Read `result.log_tail`. Bind `0.0.0.0` on port 80, or set `runtime.port` to the port you actually listen on. |
+| job `failed`: `docker build failed` | Image build failed. | Read `result.log_tail`. Common: `COPY` source doesn't exist, dependency install failed. |
 
 ## Tenant context inside the container
 

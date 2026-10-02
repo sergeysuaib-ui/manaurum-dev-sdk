@@ -84,8 +84,8 @@ longer wired together, and the route is open in production.
 **1. The port is a contract between two files.** The gateway proxies to
 `manifest.runtime.port` (80 when the field is absent). `EXPOSE` in the
 Dockerfile is documentation — the platform never parses it. So the
-Dockerfile's `CMD` port and `runtime.port` must agree or every request
-502s `upstream_unreachable`. This starter uses **8000** in both, like
+Dockerfile's `CMD` port and `runtime.port` must agree, or the deploy
+fails its readiness probe and is rolled back. This starter uses **8000** in both, like
 every hosted v2 app in production; 8000 is unprivileged, so the
 container's non-root user can always bind it.
 

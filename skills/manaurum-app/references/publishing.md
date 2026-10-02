@@ -12,17 +12,18 @@ Every app publishes through Platform v2. This page covers the endpoints that put
 | Endpoint | Auth | Response | Where a bad manifest surfaces |
 |---|---|---|---|
 | `POST /api/dev/v2/dev-apps/<dev_app_id>/publish` | session cookie (dev mode — **no UI client since 2026-08-07**) | `202 {deploy_job_id, status:"pending"}` | **synchronously — `422`**, before any job exists |
-| `POST /api/dev/v2/deploy` | `mna_*` bearer (CLI) | `202 {deploy_job_id, status:"pending"}` | **asynchronously** — the job settles as `status: "failed"` |
+| `POST /api/dev/v2/deploy` | `mna_*` bearer (CLI) | `202 {deploy_job_id, status:"pending"}` | **synchronously — `422`**, before any job exists |
 
-Both return `202` and both hand back a `deploy_job_id` to poll. The difference is *when* the manifest
-is checked:
+Both return `202` and both hand back a `deploy_job_id` to poll, and both validate the manifest in the
+request:
 
 - **Dev-mode publish** (the App Builder editor drove this until it was removed on 2026-08-07; the route is still mounted but no UI calls it — use the CLI path) runs the v2 schema validation inside the request. A schema failure is
   `422 {"error": "manifest_validation_failed", "errors": [{"path": "...", "message": "..."}, …]}` —
   one entry per failing assertion, so the editor renders them all at once. Nothing is built.
-- **CLI deploy** validates only the request envelope in-band: a non-base64 `archive_b64` is
-  `422 invalid_archive_b64`. The manifest itself is validated inside the background job. Do **not**
-  expect a `422` from `/deploy` for a bad manifest — poll and read `status` + `error`.
+- **CLI deploy** answers a bad manifest with the same
+  `422 {"error": "manifest_validation_failed", "errors": [...]}` (MAN-2597), and refuses an invalid
+  slug, a slug you do not own, a used version or a bad archive before building anything. Migrations
+  and the build are checked in the job. The full list: `manaurum-deploy/SKILL.md`.
 
 Poll surfaces:
 
@@ -39,8 +40,8 @@ Two more dev-mode-only preconditions:
   v2-required defaults and auto-declares the capabilities your code actually calls (so the gateway
   doesn't default-deny them at runtime). Validation errors can therefore cite paths you never wrote.
 
-A `succeeded` job means Docker accepted the spec, not that the app is serving. There is no readiness
-probe in the hosted path — hit `/healthz` yourself afterwards.
+A `succeeded` CLI deploy means the new container answered the platform's readiness probe on
+`runtime.port` and `runtime.health_path`; a failed probe rolls back and fails the job.
 
 ### What the manifest validator rejects
 
