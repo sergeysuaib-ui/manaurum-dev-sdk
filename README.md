@@ -204,7 +204,9 @@ parts inlined. Reading one real app beats reading four pages about apps.
   that appears nowhere in Core's strings any more, no window
   message the shell does
   not know and none it sends left undescribed, and none of the facts the 2026-10-02 audit
-  found stale back in any document or template); `linter_mutations.py` breaks the starter once per
+  found stale back in any document or template), and the newest CHANGELOG release carries
+  a `Summary:` line — one plain sentence the team's release announcement quotes;
+  `linter_mutations.py` breaks the starter once per
   rule and demands that each linter goes red; `smoke_tools.py` starts `preview.py` and
   the version hook and checks they still behave. All stdlib, all runnable locally.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy

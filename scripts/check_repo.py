@@ -993,6 +993,43 @@ def check_shell_messages(problems: list) -> None:
                             "nowhere here" % (SDK_API, name))
 
 
+SUMMARY_LINE = re.compile(r"(?m)^Summary:[ \t]*(\S.*)$")
+SUMMARY_MAX = 200
+
+
+def check_changelog_summary(problems: list) -> None:
+    """The newest release says what changed in one plain sentence.
+
+    The team's Telegram announcement of a release (MAN-3187) quotes this
+    line. Its readers include people who build apps without reading code, and
+    the headline is written for the people who made the change: 3.1.0 went
+    out as "what the first app ported to v2 found missing (Planning Poker)",
+    which tells a restaurant-app developer nothing about whether to update.
+    """
+    path = ROOT / "CHANGELOG.md"
+    if not path.exists():
+        return
+    text = read(path)
+    headings = list(CHANGELOG_VERSION.finditer(text))
+    if not headings:
+        return
+    newest = headings[0]
+    end = headings[1].start() if len(headings) > 1 else len(text)
+    match = SUMMARY_LINE.search(text, newest.end(), end)
+    line = line_of(text, newest.start())
+    if not match:
+        problems.append(
+            "CHANGELOG.md:%d: release %s has no `Summary:` line - one plain "
+            "sentence for someone who does not program; the release "
+            "announcement quotes it" % (line, newest.group(1)))
+    elif len(match.group(1)) > SUMMARY_MAX:
+        problems.append(
+            "CHANGELOG.md:%d: the `Summary:` of %s is %d characters - keep it "
+            "to one sentence, at most %d"
+            % (line_of(text, match.start()), newest.group(1),
+               len(match.group(1)), SUMMARY_MAX))
+
+
 def check_paired_claims(problems: list) -> None:
     """A measured fact written down twice has to say the same thing twice.
 
@@ -1148,6 +1185,7 @@ def print_tickets() -> None:
 
 CHECKS = (
     check_versions,
+    check_changelog_summary,
     check_doc_paths,
     check_section_refs,
     check_step_refs,
