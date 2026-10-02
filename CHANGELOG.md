@@ -1,3 +1,76 @@
+# 3.7.0 - the linters check what the platform checks, and the plugin can see itself drift
+
+### Why
+
+The 2026-10-02 audit found two things wrong with the tools, beyond the documents.
+
+* **The linters were kinder than the platform.** `check_app.py` accepted `{param}` and a
+  bare `*` in `runtime.api_routes` (the gateway matches both literally, so the route 404s),
+  missed routes mounted with `include_router(prefix=)` or `add_api_route`, passed an
+  `/agent/*` handler whose only "check" was a word in a comment, flagged
+  `optional_capabilities` and capability names in a README, never knew which capabilities
+  exist, and let through most of what the deploy refuses: root-key typos, reserved and
+  invalid slugs, write-named tools declared read-only, tool names the Assistant drops, and,
+  without the CLI installed, `BEGIN`, `SET`, `COPY`, `CREATE EXTENSION`, `RENAME`,
+  `DROP INDEX`, `.SQL` and the 64 KiB cap. `check_ui.py` flagged `ui.confirm()` and
+  `style.width`, and its appearance check passed an app that never applied the shell's
+  appearance.
+* **Nothing compared the plugin with the platform.** Every stale fact had the same history:
+  Core changed and no program here held a copy of what Core says. And the version hook
+  only compared directories in the local cache, so a machine stuck on 2.7.2 with nothing
+  newer on disk heard nothing for six weeks.
+
+### What changed
+
+* **`templates/manifest_v2.schema.json` + `templates/platform-contract.json`**: a copy of
+  Core's contract with the SHA it came from — the schema, the 32 capabilities, reserved
+  slugs, the slug pattern, the write-verb prefixes, the Assistant's tool-name format.
+  **`scripts/sync_contract.py`** refreshes it from a monorepo checkout, read-only.
+* **`check_app.py`** reads the contract instead of keeping its own lists, matches routes
+  exactly as `api_route_matcher.py` does, follows `include_router` and `add_api_route`,
+  decides `/agent/*` protection from the AST (a `Depends`/`Security` on the handler, its
+  decorator, its router or its include, followed through wrappers and `Annotated`
+  aliases across modules), and adds the slug, root-key, `auth`-mode, tool-name,
+  write-verb, `entrypoint` and `byo`/`permissions` rules and the migration ones above.
+  What it cannot trace (an include in a loop, a computed prefix, `app.mount`) it says
+  as a note instead of guessing. FastAPI's own security schemes (`OAuth2PasswordBearer`
+  and the rest, however assigned or imported) never count as a check: they read headers
+  the gateway strips, and the runtime calls `/agent/*` with `X-Manaurum-User-Context`
+  only (`agent/v2_capability_dispatch.py`). A library dependency is taken silently only
+  when its name says user context or claims; one that says only auth, user, token,
+  verify or the like is taken and named in a note. Migrations are read through a small
+  SQL lexer, so a plpgsql or `BEGIN ATOMIC` function body, a string or a comment is not
+  a statement: an `updated_at` trigger is no longer "transaction control", and
+  `'Rename it'` is not a RENAME. `DROP EXTENSION` is destructive (a `DropStmt` to Core),
+  not forbidden; a function in a language other than sql or plpgsql is forbidden; a file
+  that starts with a UTF-8 BOM is refused, as the deploy's parser refuses it; a
+  subdirectory under `migrations/` is a note (the deploy skips it); the 64 KiB cap is
+  measured on the concatenation exactly as the deploy builds it.
+* **`check_ui.py`**: only the global `alert`/`confirm`/`prompt`, in scripts and inline
+  `on*=` handlers; only a colour set through `element.style`; appearance must be written
+  from a value read off the payload (directly or destructured) by code that is used -
+  called, or passed by name as a handler.
+* **`check_repo.py`** holds every document and every text file under `templates/` to the
+  contract — each registered capability documented, no unregistered one named, the
+  `permissions` enum as the schema has it, `check_app.py`'s fallback keys equal to the
+  schema's — and refuses eleven facts found stale, wherever they come back. "An earlier
+  version said..." excuses its own sentence only, not the paragraph around it.
+* **`version_check.py`** also reads the marketplace clone and, at most daily, the released
+  version on GitHub (2 s, opt-out `MANAURUM_SDK_NO_UPDATE_CHECK`), and says how to update
+  and how to turn auto-update on. A failed check is remembered for the day too, and the
+  whole fetch, DNS included, has one 2 s deadline. `hooks.json` finds `python3`, `python`
+  or `py -3`.
+* **`linter_mutations.py`**: 65 new mutations, red and must-stay-green, for every new rule.
+* **README**: auto-update, the contract files, what the checks now cover.
+* **The gateway drops a client's identity headers (MAN-3214, platform `c1a7ccc`),
+  continued from 3.6.0.** `v2-platform.md` and the starter's `auth.py` still said, in
+  places, that the gateway passes the client's headers through. It now drops that
+  header, `X-Manaurum-Person` and the system-call headers on every branch
+  (`_CORE_ASSERTED_HEADERS` in `routes/v2_app_gateway.py`). The starter still refuses two
+  copies, as defense in depth; `check_repo.py` refuses the old sentence.
+* **The contract is synced at platform `56ce52c`**, which includes MAN-3200: `auth:
+  "optional"` is in the schema's enum, so `check_app.py` accepts it (3.6.0 documents it).
+
 # 3.6.0 - `auth: "optional"` and the person pass (Core MAN-3200, MAN-3214)
 
 ### Why
@@ -23,6 +96,7 @@ before that deploy an `optional` route fails manifest validation.
   check for a token with no `aud` at all. Core does the same (sergeysuaib-ui/manaurum#2328).
 * The duplicate `X-Manaurum-User-Context` note: Core now drops a client-sent copy
   (MAN-3214). The starter keeps refusing two headers; it costs nothing.
+
 # 3.5.0 - the manifest, the gateway, the window and the Assistant, checked against the code (MAN-1452)
 
 ### Why

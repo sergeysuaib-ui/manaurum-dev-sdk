@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.6.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.7.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -62,12 +62,19 @@ claude plugin update manaurum-dev-sdk@manaurum-sdk
 Restart Claude Code afterwards. If a skill still describes something this README
 contradicts, your local plugin cache is stale — run `/plugin` and update.
 
+**Turn on auto-update.** A marketplace added from GitHub does not update itself by
+default: one machine was still running 2.7.2 six weeks and a major version later. In
+`/plugin` → Marketplaces → `manaurum-sdk` → Enable auto-update, and Claude Code refreshes
+the marketplace and the plugin at each session start.
+
 **A session that is already running does not notice the update**: the cache keeps one
 directory per version, and a skill loaded from the old one keeps reading it. Since 2.9.0
 the plugin ships a `SessionStart` hook (`hooks/hooks.json` → `scripts/version_check.py`)
 that says so out loud when it happens, leaves a `STALE.md` in the superseded directory
-and a `current` pointer beside it. It prints nothing when your copy is current, and it
-cannot fail a session — but it only speaks at session start, so after `/plugin update`
+and a `current` pointer beside it. Since 3.7.0 it also notices a newer release that is not
+on disk at all: it reads the marketplace clone, and at most once a day the version on
+GitHub (2 s timeout; `MANAURUM_SDK_NO_UPDATE_CHECK=1` turns that off). It prints nothing
+when your copy is current, and it cannot fail a session — but it only speaks at session start, so after `/plugin update`
 the honest move is still to re-invoke the skill.
 
 ## Install the CLI
@@ -164,20 +171,32 @@ parts inlined. Reading one real app beats reading four pages about apps.
   that survives a hurry. CI runs it against the starter, so the reference app is held to
   the reference linter.
 * `templates/check_app.py` — the same idea for the backend, run on the directory the
-  deploy packs: an `/api/*` route no `runtime.api_routes` rule covers (including the
-  `/api/x/*`-does-not-cover-`/api/x` case), a declared route nothing serves, an
-  `/agent/*` handler with no user-context verification, `runtime.port` disagreeing with
-  the `CMD` or with `EXPOSE`, an `entry_point` naming nothing, a `.env*` inside the app
-  directory, a capability called but not declared (or declared and never called), and
-  migrations that are not ordered `*.sql` or carry destructive DDL without
-  `migration.breaking`. Routes are read out of Python decorators with `ast`; for another
-  language it says so and skips those two rules rather than guessing.
+  deploy packs: an `/api/*` route no `runtime.api_routes` rule covers, matched the way
+  the gateway matches (a trailing `/*` covers what is below, everything else is literal),
+  a declared route nothing serves, an `/agent/*` handler with no user-context
+  verification, `runtime.port` disagreeing with the `CMD` or with `EXPOSE`, an
+  `entry_point` naming nothing, a `.env*` inside the app directory, a capability called
+  but not declared, declared and never called, or not registered on Core at all, a root
+  key, `auth` mode, slug or Assistant tool name the deploy refuses, and migrations it
+  would refuse (read through a small SQL lexer, so a function body, a string or a comment
+  is not a statement).
+  Routes are read with `ast` from decorators, `add_api_route` and `include_router`
+  prefixes; for another language it says so and skips those rules rather than guessing.
   `python check_app.py my-app`, exit 1 on findings.
+* `templates/manifest_v2.schema.json` + `templates/platform-contract.json` — the copy of
+  Core's contract the linters and `check_repo.py` read: the manifest schema, the 32
+  registered capabilities, the reserved slugs, the slug pattern, the write-verb rule and
+  the Assistant's tool-name limit, with the Core SHA they came from.
+  `python scripts/sync_contract.py --monorepo ../Manaurum` refreshes them; run
+  `check_repo.py` afterwards and it names every sentence the refresh made false.
 * `scripts/check_repo.py` + `scripts/linter_mutations.py` + `scripts/smoke_tools.py` —
   the plugin checking itself, run by CI on every PR. `check_repo.py` holds the documents
   to the repository (one version string, every documented path and heading citation
   resolves, no hardcoded self-counts, no control byte, no fixed `/tmp` path, no
-  documented flag the tool rejects); `linter_mutations.py` breaks the starter once per
+  documented flag the tool rejects) and to the contract (every registered capability
+  documented, no capability named that Core lacks, the `permissions` enum as the schema
+  has it, and none of the facts the 2026-10-02 audit found stale back in any document or
+  template); `linter_mutations.py` breaks the starter once per
   rule and demands that each linter goes red; `smoke_tools.py` starts `preview.py` and
   the version hook and checks they still behave. All stdlib, all runnable locally.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy

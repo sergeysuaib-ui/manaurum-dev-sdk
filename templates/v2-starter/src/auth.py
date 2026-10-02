@@ -16,8 +16,9 @@ minted for some other app — or for this app in some other tenant —
 verifies here just as well. Whoever runs that other app sees its users'
 tokens, and has 60 seconds to present one to you. So this module also
 checks that the token names THIS app and THIS tenant, and refuses a
-request that carries the header twice (the gateway adds its own copy;
-a second one came from the client).
+request that carries the header twice. Since MAN-3214 the gateway drops
+a copy the client sent; an earlier version added its own and forwarded
+the client's too, and this check costs nothing to keep.
 """
 from __future__ import annotations
 
@@ -128,9 +129,9 @@ def auth_claims(request: Request) -> UserContextClaims:
     ``claims: UserContextClaims = Depends(auth_claims)``.
 
     Never on an `auth: "anonymous"` route. The gateway mints nothing
-    there and passes the request's headers through, so any
-    `X-Manaurum-User-Context` an anonymous route sees was written by the
-    client.
+    there and drops a copy the client sent (MAN-3214), so any
+    `X-Manaurum-User-Context` an anonymous route sees did not come
+    through the gateway and was not written by Core for this request.
     """
     tokens = request.headers.getlist(USER_CONTEXT_HEADER)
     if not tokens:
@@ -138,9 +139,10 @@ def auth_claims(request: Request) -> UserContextClaims:
         # request did not come through the Manaurum gateway.
         raise HTTPException(status_code=401, detail="missing_user_context")
     if len(tokens) > 1:
-        # The gateway sets exactly one. A second copy was sent by the
-        # client alongside it, and headers.get() would have returned the
-        # client's — so refuse rather than guess which one is Core's.
+        # The gateway sets exactly one and, since MAN-3214, drops the
+        # client's. An earlier version forwarded the client's alongside
+        # it, and headers.get() returned the client's — so refuse rather
+        # than guess which one is Core's.
         raise HTTPException(status_code=401, detail="user_context_ambiguous")
     return verify_user_context(tokens[0])
 
