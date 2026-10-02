@@ -151,7 +151,7 @@ Validation rules:
 - `runtime.port`: the port your process actually listens on. The gateway resolves your
   container as `<swarm-service>:<port>`, using `runtime.port` if present and **80**
   otherwise. Nothing in the platform parses your Dockerfile's `EXPOSE` line. Set this
-  value and your `CMD` from the same number, or every request 502s.
+  value and your `CMD` from the same number, or the deploy fails its readiness probe and is rolled back.
 - `runtime.api_routes`: **default-deny declaration of every `/api/*` path your container
   serves.** A path that matches no rule returns `404 route_not_declared` from the gateway
   and never reaches your container. `path` must start with `/`; a trailing `/*` matches
@@ -238,8 +238,8 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 **`EXPOSE` is documentation only — nothing in the platform parses it.** The gateway
 routes to `manifest.runtime.port` (default 80). The three numbers that must agree are
 `runtime.port`, your `CMD`'s `--port`/`PORT`, and `EXPOSE`. Always bind `0.0.0.0`: a
-server bound to `127.0.0.1` starts fine, passes its own healthcheck, and 502s from
-outside the container.
+server bound to `127.0.0.1` starts fine, passes its own healthcheck, and fails the
+platform's readiness probe from outside the container.
 
 ### `.dockerignore`
 
@@ -343,7 +343,7 @@ inside it is uploaded, built into the image and kept with every version.
 MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
 ```
 
-Get the token via Manaurum desktop → **Dev Hub → Credentials → Create token**. Shown ONCE — save immediately. Bound to the tenant of whoever issued it.
+Get the token via Manaurum desktop → **Dev Hub → Credentials → Create token**. Shown ONCE — save immediately. Bound to the tenant of the workspace that was active in Dev Hub when it was minted.
 
 ### `.gitignore`
 

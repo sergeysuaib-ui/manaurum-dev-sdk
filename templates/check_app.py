@@ -11,7 +11,7 @@ otherwise fails LATER and in a way that does not look like its cause:
 
     route not declared      the gateway answers 404 and your handler never
                             runs. Looks like a backend bug with silent logs.
-    port disagreement       green deploy, then 502 on every request.
+    port disagreement       a build and push, then a failed readiness probe.
     an /agent/ handler with
     no user-context check   an open endpoint on the public internet, which
                             nothing will ever tell you about.
@@ -340,8 +340,9 @@ def command_ports(text: str) -> set:
 def check_port(root: Path, manifest: dict, problems: list, notes: list) -> None:
     """Rule 4 - one port, in the manifest, in the CMD and in EXPOSE.
 
-    Traefik targets `manifest.runtime.port` (default 80) and never parses
-    `EXPOSE`. The deploy goes green either way; every request 502s.
+    The platform reaches the container on `manifest.runtime.port` (default 80)
+    and never parses `EXPOSE`. A mismatch builds and pushes, then fails the
+    readiness probe and rolls back.
     """
     declared = manifest.get("runtime", {}).get("port", 80)
     dockerfile = root / "Dockerfile"
@@ -355,8 +356,8 @@ def check_port(root: Path, manifest: dict, problems: list, notes: list) -> None:
     if bound and declared not in bound:
         problems.append(
             "Dockerfile: the run command binds %s but manifest.runtime.port is %s - "
-            "Traefik routes to the manifest's port, so this deploys green and 502s "
-            "on every request"
+            "the platform reaches the container on the manifest's port, so the "
+            "deploy builds, then fails its readiness probe"
             % (", ".join(str(port) for port in sorted(bound)), declared))
     elif not bound:
         notes.append("Dockerfile: could not read a port out of CMD/ENTRYPOINT, so "
