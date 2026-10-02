@@ -1,3 +1,27 @@
+# 3.9.0 - manaurum-app reads in order, and each fact lives in one place (audit Н14)
+
+### Why
+
+`manaurum-app/SKILL.md` gave no reading order, repeated the deploy script that
+`manaurum-deploy` owns, kept a second copy of the container's environment table that had
+already drifted from `v2-platform.md`'s, and shared its trigger ("start building a new app")
+with `manaurum-setup`.
+
+### What changed
+
+* **"How to use this skill"** at the top of `manaurum-app`: the steps in order — including
+  the scaffold step that hands off to `manaurum-setup` — and which reference to open for
+  what.
+* **Step 4** keeps the token and the three things to carry (echo the slug, the POST is
+  asynchronous, what `succeeded` means) and hands the script, the refusals and rollback to
+  `manaurum-deploy`, instead of a second copy of its script.
+* **The environment table lives in `v2-platform.md` only**, now with what the skill's copy
+  knew and it did not (`MANAURUM_APP_ID` is the app id header for `os.kv.*` and
+  `os.events.emit` only; the `DATABASE_URL` role has no CREATE; `MANAURUM_V2_TOKEN` is never
+  injected). The skill keeps the three rules people get wrong and a pointer.
+* **`manaurum-setup`'s description** says what it is for — scaffolding files — and sends
+  "what to build" to `manaurum-app` and deploying to `manaurum-deploy`.
+
 # 3.8.0 - the error codes and the window protocol, checked against Core
 
 ### Why

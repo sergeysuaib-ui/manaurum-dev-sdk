@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.8.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.9.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -138,7 +138,7 @@ manaurum app rollback 0.1.0 --app-id my-app
 | Skill | Fires when you say | What it does |
 |---|---|---|
 | `manaurum-app` | "build / create a ManAurum app" | Writes the app: v2 manifest, Dockerfile, capability calls, user-context verification, the shell handshake. |
-| `manaurum-setup` | "start / scaffold a new project" | Sets up a fresh v2 project directory. |
+| `manaurum-setup` | "scaffold / initialize an app directory" (and `manaurum-app` sends you there) | Sets up a fresh v2 project directory from the starter. |
 | `manaurum-deploy` | "deploy / publish / release it" | Token issuance, build context, the 202-plus-poll deploy contract, rejection codes, rollback, install. |
 
 You rarely invoke them by name — describing the task is enough:

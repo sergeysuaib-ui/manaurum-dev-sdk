@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.8.0.** A plugin install caches one directory per
+> **This page is SDK 3.9.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -18,6 +18,38 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 > ## ⚡ Every app is a Platform v2 app
 >
 > Your app is a Docker container. The manifest declares which capabilities it needs (KV, files, AI, events, HTTP egress, …). One `manaurum app deploy` (or `POST /api/dev/v2/deploy`) and the app is live at `https://<slug>.apps.manaurum.com` with TLS, and opens as a window on the desktop. That is the only path for an app built outside the monorepo, and it is the only one this skill teaches.
+
+
+## How to use this skill
+
+Read it in order; every step ends in something you can run.
+
+1. **Step 0** — find out what you are building, before any file exists.
+2. **Before you write anything** — open a real app, and the seven rules apps get sent
+   back for.
+3. **Scaffold** with the `manaurum-setup` skill: copy `templates/v2-starter` as the
+   project, add `.gitignore` and `deploy.sh`, and put the deploy token one level above
+   the app directory. Steps 1 – 3.6 then change that project, not an empty folder.
+4. **Steps 1 – 2.5** — manifest, Dockerfile, the `manaurum:ready` handshake.
+5. **Step 3** — call capabilities from your container.
+6. **Steps 3.5 and 3.6** — the two checks that fail what a green deploy hides. Both are
+   mandatory.
+7. **Step 4** — deploy, through the `manaurum-deploy` skill.
+
+Open a reference only when a step sends you there, or when you need the detail:
+
+| You need | Open |
+|---|---|
+| Every manifest field, runtime modes, the gateway, migrations, the Assistant's tools | `references/v2-platform.md` |
+| One capability's input, output and errors | `references/capabilities-reference.md` |
+| The window protocol, `manaurum-v2.mjs`, sessions in a standalone tab | `references/sdk-api.md` |
+| Layout, tokens, appearance, the rules a reviewer rejects on sight | `references/design.md` |
+| What to ask a person who cannot describe an app in technical terms | `references/discovery.md` |
+| Production apps to copy from | `references/reference-apps.md` |
+| Publishing to the App Store | `references/publishing.md` |
+
+`manaurum-setup` owns the scaffold (item 3); `manaurum-deploy` owns the deploy, its
+errors and rollback. This page does not repeat either.
 
 ---
 
@@ -633,75 +665,21 @@ MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
 
 This is a **deploy-time** credential only. Your container never sees it and must never contain it — at runtime it uses the injected `MANAURUM_RUNTIME_TOKEN` (Step 3).
 
-The deploy is one API call plus a poll. Bundle the build context, base64-encode, post:
+Then follow the `manaurum-deploy` skill: it has the script (`manaurum app deploy`, or one
+`POST /api/dev/v2/deploy` with the build context, then a poll), every synchronous and
+asynchronous refusal, and rollback. Three things to carry from here:
 
-```bash
-cd my-app
-SLUG=$(jq -r .app_id manifest.json); WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT             # a failed curl must not leave the tar behind
-echo "deploying $SLUG $(jq -r .version manifest.json)"   # not your app? stop.
-
-tar cf "$WORK/ctx.tar" \
-  --exclude='.env*' --exclude='.git' --exclude='node_modules' \
-  --exclude='.venv' --exclude='venv' --exclude='__pycache__' \
-  --exclude='.pytest_cache' --exclude='dist' --exclude='build' \
-  --exclude='deploy.sh' --exclude='*.tar' --exclude='*.zip' \
-  .
-
-# Base64 into a FILE and read it with --rawfile / --slurpfile. Passing it
-# as `jq --arg b "$B64"` puts the whole archive on the command line and
-# fails with "Argument list too long" on any real project.
-base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
-jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' > "$WORK/deploy.json"
-
-curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
-  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @"$WORK/deploy.json" | jq .
-rm -rf "$WORK"
-```
-
-A per-run `mktemp -d`, not `/tmp/ctx.tar`: `/tmp` is shared, and on 2026-09-08
-two sessions deploying two apps collided on fixed filenames — one of them
-shipped the other's archive and reported `activated` for an app it had never
-touched (MAN-2456). Echo the slug before you trust a green deploy.
-
-**The deploy endpoint is asynchronous.** It always returns HTTP **202** with `status: "pending"` — never `succeeded`. Build, push, swarm, Traefik and migrations all run on a background job:
-
-```json
-{
-  "deploy_job_id": "<uuid>",
-  "status": "pending"
-}
-```
-
-So a 202 tells you the request was accepted: the credential, manifest, slug, ownership and archive passed (each has its own synchronous `4xx`, listed in `manaurum-deploy/SKILL.md`). Poll the job until it reaches `succeeded` or `failed`:
-
-```bash
-curl -sS https://manaurum.com/api/dev/v2/deploy/<deploy_job_id> \
-  -H "Authorization: Bearer $MANAURUM_V2_TOKEN" | jq .
-```
-
-```json
-{
-  "status": "succeeded",
-  "result": {
-    "app_id":      "<uuid>",
-    "version_id":  "<uuid>",
-    "image_tag":   "manaurum-registry:5000/v2-app-my-app-1a2b3c4d:1.0.0",
-    "url":         "https://my-app.apps.manaurum.com"
-  }
-}
-```
-
-**`succeeded` means the new container answered the platform's readiness probe** on `runtime.port` and `runtime.health_path` (default `/healthz`; declared, a 5xx fails it). A migration that failed in any tenant stops the version from going live, and a probe that fails rolls the service back; both are `failed` with the reason in `error`, and a failed probe also puts the container's log in `result.log_tail`. Finish with the public URL anyway, which also exercises the gateway and TLS:
-
-```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://my-app.apps.manaurum.com/healthz
-```
-
-A `deploy.sh` template with the polling loop, the live NDJSON progress stream, and the failure-triage table: see `manaurum-deploy/SKILL.md`.
+- **Echo the slug before you trust a green deploy.** Build the archive in a per-run
+  `mktemp -d`, never a fixed `/tmp` name: on 2026-09-08 two sessions collided on one, and
+  one shipped the other's archive and reported `activated` for an app it never touched
+  (MAN-2456).
+- **The POST is asynchronous.** `202` with `status: "pending"` means the credential,
+  manifest, slug, ownership and archive passed; build, push, migrations and the probe run on
+  a job you poll until `succeeded` or `failed`.
+- **`succeeded` means the new container answered the readiness probe** on `runtime.port`
+  and `runtime.health_path` (default `/healthz`). A failed migration in any tenant keeps the
+  version from going live, and a failed probe rolls the service back; both say why in
+  `error`. Finish by opening the public URL anyway, which also exercises the gateway and TLS.
 
 ## Step 5 — Update + rollback
 
@@ -731,25 +709,14 @@ Details, errors and the delete-and-redeploy trap: `manaurum-deploy/SKILL.md`.
 
 ## Tenant context inside the container
 
-The platform sets these env vars on every task:
-
-| Env var | Value |
-|---|---|
-| `MANAURUM_TENANT_ID` | UUID of the tenant your app is installed in. |
-| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. The `X-Manaurum-App-Id` for `os.kv.*` and `os.events.emit` only; send your slug everywhere else (see Step 3). |
-| `MANAURUM_VERSION` | The semver of the running version. |
-| `MANAURUM_TARGET_SCHEMA` | Your Postgres schema, `app_<slug>__<tenant_hex>`. |
-| `MANAURUM_RUNTIME_TOKEN` | App-scoped `mna_*` credential for the capability gateway. Minted fresh every deploy. |
-| `MANAURUM_CORE_URL` | Base URL of the capability gateway. Build your call URLs from it, don't hardcode. |
-| `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` | RSA public key for verifying the `X-Manaurum-User-Context` JWT. |
-| `DATABASE_URL` | Present **only** in the default managed data mode. A per-(app, tenant) login role, `NOSUPERUSER NOBYPASSRLS`, scoped to your one schema, with **no CREATE** — so no DDL at runtime, including `CREATE TABLE IF NOT EXISTS` on boot. Write plain unqualified SQL. Absent under `data.none` / `data.byo`. |
-
-That table is the complete set. Two names that are **not** in it and that older guidance wrongly told you to read:
-
-- **`MANAURUM_V2_TOKEN`** — this is the name these skills use for *your own* deploy credential in `.env.manaurum` on your machine, and it is a plain shell variable in the `curl` examples. The platform never injects it into your container. If your app code reads `MANAURUM_V2_TOKEN` at runtime it will find nothing; the runtime credential is `MANAURUM_RUNTIME_TOKEN`.
-- **`MANAURUM_BROKER_URL`** — never injected. MAN-163 removed it because the shared broker DSN carried grants on every app's schema, so any container holding it could read other tenants' data. Anything built on it will fail.
-
-Your data is **automatically tenant-scoped** by the platform's RLS policies on `app_kv`, `app_secrets`, audit log, etc. You don't need to filter by `tenant_id` in your queries — the platform does it server-side. Use `MANAURUM_TENANT_ID` only for display/branding ("welcome to <tenant>", per-tenant theming, etc.), never as a security filter.
+The platform injects `MANAURUM_TENANT_ID`, `MANAURUM_APP_ID`, `MANAURUM_VERSION`,
+`MANAURUM_TARGET_SCHEMA`, `MANAURUM_RUNTIME_TOKEN`, `MANAURUM_CORE_URL`,
+`CORE_USER_CONTEXT_PUBLIC_KEY_PEM` and, in managed data mode only, `DATABASE_URL` — what each
+is for, and the two names it never injects (`MANAURUM_V2_TOKEN`, `MANAURUM_BROKER_URL`), are
+in `references/v2-platform.md`, section 2 (Runtime modes), under `hosted`. The ones people get wrong: call
+capabilities with `MANAURUM_RUNTIME_TOKEN`, never your own deploy token; send
+`MANAURUM_APP_ID` as `X-Manaurum-App-Id` only to `os.kv.*` and `os.events.emit` (Step 3); and
+use `MANAURUM_TENANT_ID` for display, never as a security filter.
 
 ## What NOT to do
 
@@ -786,9 +753,3 @@ Everything here shares one property: it works when you open `https://<slug>.apps
 All three work on the standalone URL, which is how they ship.
 
 **A capability in your manifest is not a capability you may call.** Grants are enforced per-install ahead of dispatch; an empty grant list is a deny, not a pass. Adding a capability and redeploying still 403s until the tenant's install grants are extended.
-
----
-
-## Next: deploy
-
-For the deploy step in detail, see `manaurum-deploy/SKILL.md`. For project scaffolding (gitignore, deploy.sh template, the `mna_*` deploy credential), see `manaurum-setup/SKILL.md`.

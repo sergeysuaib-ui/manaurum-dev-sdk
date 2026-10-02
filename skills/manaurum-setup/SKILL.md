@@ -1,6 +1,6 @@
 ---
 name: manaurum-setup
-description: Scaffold a new ManAurum OS app project. Every app is a Platform v2 app (containerized, hosted). Use when the user wants to start building a new ManAurum/SeregaOS app, scaffold a project from scratch, or initialize a fresh app directory.
+description: Scaffold the files of a new ManAurum OS app (Platform v2, containerized) — copy the starter, the .gitignore and deploy.sh, keep the mna_* deploy credential out of the app directory. Use for that scaffolding step: when the user asks to scaffold or initialize an app directory, or when manaurum-app sends you here. Deciding what to build and how is manaurum-app; deploying is manaurum-deploy.
 ---
 
 # Set Up a ManAurum App Project

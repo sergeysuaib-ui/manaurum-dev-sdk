@@ -325,15 +325,20 @@ Env vars the platform sets on every task:
 | Env var | Use |
 |---|---|
 | `MANAURUM_TENANT_ID` | UUID of the installed tenant. |
-| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. |
+| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. The `X-Manaurum-App-Id` for `os.kv.*` and `os.events.emit` only; send your slug everywhere else. |
 | `MANAURUM_VERSION` | Currently-running semver. |
 | `MANAURUM_TARGET_SCHEMA` | Your per-(app, tenant) Postgres schema: `app_<slug>__<tenant_hex>`. |
 | `MANAURUM_RUNTIME_TOKEN` | The `mna_*` credential to call the capability gateway with. Minted fresh on every deploy, scoped to this one app. **Never bake your own developer token into the image.** |
 | `MANAURUM_CORE_URL` | Base URL for capability calls: `{MANAURUM_CORE_URL}/api/capability/<name>`. |
 | `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` | RS256 public key for verifying the `X-Manaurum-User-Context` JWT the gateway injects on `auth: "user"` routes. |
-| `DATABASE_URL` | Postgres DSN for your dedicated schema. Injected **only** when a managed schema was provisioned — absent under `data.none` / `data.byo`. |
+| `DATABASE_URL` | Postgres DSN for your dedicated schema. Injected **only** when a managed schema was provisioned — absent under `data.none` / `data.byo`. A per-(app, tenant) login role, `NOSUPERUSER NOBYPASSRLS`, scoped to your one schema, with **no CREATE** — so no DDL at runtime, including `CREATE TABLE IF NOT EXISTS` on boot. |
 
-`MANAURUM_BROKER_URL` is **not** in that list and is never injected: MAN-163 removed it because the shared broker DSN had grants on every app schema. Do not build anything on it.
+That is every `MANAURUM_*` variable the platform sets. Two names that are **not** in it, and that older guidance told people to read:
+
+- **`MANAURUM_V2_TOKEN`** — the name these skills use for *your own* deploy credential in `.env.manaurum` on your machine. The platform never injects it; code that reads it at runtime finds nothing. The runtime credential is `MANAURUM_RUNTIME_TOKEN`.
+- **`MANAURUM_BROKER_URL`** — never injected: MAN-163 removed it because the shared broker DSN had grants on every app schema. Do not build anything on it.
+
+`MANAURUM_TENANT_ID` is for display ("welcome to <tenant>", per-tenant branding), never a security filter: capability calls are scoped to the calling tenant (the gateway binds every handler's session to it), and your schema is already per tenant. Within a tenant, not everything is private to your app — see `os.compliance.audit_query` and `os.tenant_config.*` in `capabilities-reference.md`.
 
 ### `byo` (bring your own — advanced)
 
