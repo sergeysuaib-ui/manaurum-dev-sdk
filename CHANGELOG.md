@@ -1,3 +1,45 @@
+# 3.5.0 - the manifest, the gateway, the window and the Assistant, checked against the code (MAN-1452)
+
+### Why
+
+The last part of the 2026-10-02 audit (`docs/audits/`): facts about the manifest, the
+gateway, the window and the Assistant that had gone stale.
+
+* "`/agent/*` is on the public internet" in twelve places: the gateway has refused it since
+  MAN-1432. The check is still needed, for a different reason: every app's container shares
+  one network.
+* "`runtime` is not strict" (v2-platform.md:24, the copy 3.1.0 missed).
+* "`data.shared` is one cross-tenant schema with an isolation warning": it is managed mode
+  under another name. `connection_cap` is read by nothing; `data.extensions` was not
+  mentioned.
+* "`egress_allowed_hosts` drops everything else" and a `0.0.0.0` bug fixed in MAN-2263: the
+  list is enforced by `os.http.fetch` only.
+* "`entrypoint` on a hosted app is ignored" (it is a `422`); `platforms.mobile.entrypoint`
+  works for v1 only; the `offline` block does nothing for v2.
+* "The rest of your CSP survives verbatim"; "an external `app.fetch` is subject to the
+  gateway's egress rules"; "`tokens.css` has a dead hostname and 6 of 8 accents" (fixed in
+  MAN-2367).
+* Not documented at all: the 57-character limit on slug plus tool name, the approval card,
+  the Assistant's 30 s timeout, `routing_hints` in the user's language, the gateway's other
+  answers (`app_not_found`, `app_disabled`, `path_traversal_rejected`, the 30 s
+  `upstream_timeout`), `/__manaurum/`, the read-only runtime, `locale` / `dir` /
+  `manaurum:locale-change`, the session wrapper's own answers, and that the token carries
+  no role.
+
+### What changed
+
+* **`references/v2-platform.md`**: §1 (strictness, `app_id` rules, `data`, `platforms`,
+  `agent_capabilities`, `offline`), the `/agent/*` warning, routing hints, approval cards,
+  timeouts, the guest pass (HMAC-SHA256, constant-time compare, revocation, the other-tenant
+  `404`), names and roles, a new "What else the gateway answers", `byo` `entrypoint`,
+  egress.
+* **`SKILL.md`**, **`references/sdk-api.md`**, **`references/design.md`**,
+  **`manaurum-setup`**: the same facts where they repeat them; the setup example's reader
+  declares `"is_write": false`.
+* **`/agent/*` wording** in README, `check_app.py`, the starter's `agent_routes.py`, README
+  and test docstrings.
+* **`app.css`**: the tokens note.
+
 # 3.4.0 - the deploy as it runs now: a probe, a migration gate, immutable versions, owner tokens (MAN-2600)
 
 ### Why

@@ -8,8 +8,8 @@ that does not look like its cause:
   so your handler never runs and your own logs say nothing;
 * a capability you call but did not declare is a 403 at the first real use,
   in production, from a user;
-* `/agent/<name>` reached without a verified caller is an open endpoint on
-  the public internet.
+* `/agent/<name>` reached without a verified caller is an endpoint any other
+  app's container can call.
 
 The first test is the one worth copying into your own app: it is the check
 that made the SDK ship `check_app.py`, and an app that keeps it can never

@@ -124,6 +124,7 @@ shape with the noise removed, so you can see what is actually required:
         "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 25}},
         "additionalProperties": false
       },
+      "is_write": false,
       "routing_hints": ["items", "list", "what do I have"]
     }
   ],
@@ -166,8 +167,8 @@ Validation rules:
   every app that persists only via `os.kv` / `os.files` — declare `"data": {"none": true}`.**
   Omitting the block selects managed mode, which tries to provision a schema + login role
   and fails the deploy at `swarm_applying` with `MANAURUM_DDL_DSN is not set`. Other
-  modes: `{"byo": true}` (your own connection string, no isolation guarantees) and
-  `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`).
+  modes: `{"byo": true}` (your own connection string, no isolation guarantees);
+  `{"shared": true}` is accepted but behaves like managed mode today.
 - `frontend.entry_point`: the URL the desktop shell loads in the app's window, normally
   `/index.html`. Without it your app is reachable at its URL but has no desktop window.
   `frontend.icon` takes an emoji, an absolute URL, or an absolute

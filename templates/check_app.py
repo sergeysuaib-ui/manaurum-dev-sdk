@@ -13,8 +13,8 @@ otherwise fails LATER and in a way that does not look like its cause:
                             runs. Looks like a backend bug with silent logs.
     port disagreement       a build and push, then a failed readiness probe.
     an /agent/ handler with
-    no user-context check   an open endpoint on the public internet, which
-                            nothing will ever tell you about.
+    no user-context check   an endpoint any other app's container can
+                            call, which nothing will ever tell you about.
     an undeclared
     capability              403 capability_not_granted at the first call, in
                             production, from a user.
@@ -285,11 +285,10 @@ def check_routes(manifest: dict, routes: list, problems: list) -> None:
 def check_agent_handlers(routes: list, problems: list) -> None:
     """Rule 2 - every `/agent/*` handler verifies the caller.
 
-    `/agent/<name>` bypasses the gateway but NOT the network:
-    `<slug>.apps.manaurum.com` is Traefik straight to the container, so an
-    unauthenticated POST from anywhere on the internet reaches this code.
-    The dependency is the only thing stopping it, and "only the runtime calls
-    this" is how it gets left out.
+    `/agent/<name>` bypasses the gateway. The public host refuses it
+    (MAN-1432), but every app's container shares one network, so another
+    app's container can POST here directly. The dependency is the only thing
+    stopping it, and "only the runtime calls this" is how it gets left out.
     """
     for method, path, module, line, source in routes:
         if not path.startswith("/agent/") and path != "/agent":
@@ -297,8 +296,8 @@ def check_agent_handlers(routes: list, problems: list) -> None:
         if any(marker in source for marker in USER_CONTEXT_MARKERS):
             continue
         problems.append(
-            "%s:%d: %s %s has no user-context verification - this path is on the "
-            "public internet with no gateway in front of it; add the same "
+            "%s:%d: %s %s has no user-context verification - no gateway sits in "
+            "front of it and any app's container can call it; add the same "
             "Depends(auth_claims) your /api/* routes use" % (module, line, method, path))
 
 

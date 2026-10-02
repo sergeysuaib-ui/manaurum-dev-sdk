@@ -1,6 +1,6 @@
 /* ============================================================================
    my-app — stylesheet
-   manaurum-starter app.css 3.4.0 — keep this line when you copy the file.
+   manaurum-starter app.css 3.5.0 — keep this line when you copy the file.
    It is how the platform tells which template an app's stylesheet came from,
    and so which apps still carry a defect fixed in a later one.
    ----------------------------------------------------------------------------
@@ -18,14 +18,13 @@
    the OS stylesheet (`frontend/src/app/globals.css`, mirrored publicly at
    https://manaurum.com/api/library/tokens.css). Keeping the names means that
    when the shared design system becomes a dependable dependency (MAN-1401),
-   swapping to it is one `<link>` — and none of the rules below have to move.
+   swapping to it moves none of the rules below. `--app-bg`, `--surface-input`
+   and `--font-mono` are this file's own and stay here either way.
 
    Why the values are vendored here instead of `<link>`-ing that public file
    today: a stylesheet has no graceful degradation. A dynamically-imported SDK
    can fall back to `fetch()`, but a `<link>` that fails to load leaves your
-   user staring at unstyled HTML. The public file also currently documents a
-   hostname that does not resolve and is missing two of the eight OS accents.
-   Vendoring is the boring, correct choice until that is settled.
+   user staring at unstyled HTML.
 
    THREE RULES THIS FILE ENCODES, because they are the ones that get missed:
      1. The OS draws the title bar. Never draw your own.
