@@ -1,3 +1,34 @@
+# 3.8.0 - the error codes and the window protocol, checked against Core
+
+### Why
+
+The audit's systemic recommendation was a copy of Core's contract that CI checks the
+documents against. 3.7.0 did that for the manifest schema and the capability list. Error
+codes and the window's message types were still trusted to memory, and both are what a
+developer matches on: a renamed code turns an error branch into dead code, and a message the
+shell stopped sending is a handler that never fires.
+
+### What changed
+
+* **`scripts/sync_contract.py`** also records the window protocol in
+  `templates/platform-contract.json` (`messages`: what a v2 app may post, from
+  `V2_ALLOWED_MESSAGES`; what the shell posts back, from `IframeAppHost.tsx`; the v1 prefixes
+  it refuses; the session runtime's two), and writes `scripts/platform-strings.json`: every
+  snake_case word in a string literal of the Core code a developer's errors come from
+  (gateways, deploy and credential routes, capability handlers, the Assistant's dispatch),
+  read with `ast`, docstrings aside, plus the literal tails of the f-strings an error is
+  built from (`detail=f"{prefix}_backslash"`), so a built code still counts.
+* **`check_repo.py`**: every error code a document quotes (`` `404 route_not_declared` ``,
+  `` `502 upstream_error:<provider>` ``, or each code in the second cell of a status row) must
+  still appear in those strings - which catches a code Core dropped, though not one renamed
+  while its old name survives in some other string; every `manaurum:*` a document or
+  template names must be one the shell handles, sends or refuses; and every message in the
+  protocol must be described in `sdk-api.md`. Every quoted code and every message type
+  matches Core today, so this release changes no sentence.
+* **`v2-platform.md`** names MAN-3235 as the CLI release that will know `auth: "optional"`,
+  with a line in `open-claims.txt`, so `--tickets` lists it until it ships.
+* **`linter_mutations.py`**: eight more (139), red and must-stay-green.
+
 # 3.7.1 - what the 2026-10-02 audit left: stale pointers, the `.dockerignore` myth, untested rules
 
 ### Why

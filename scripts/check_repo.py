@@ -237,6 +237,15 @@ SAYS_IT_DOES_NOT_EXIST = re.compile(r"(?i)\b(there is no|is no|nothing else exis
 PERMISSIONS_ENUM = re.compile(r"(?i)\benum\b[^\n]*\bmicrophone\b")
 CAPABILITY_COUNT = re.compile(r"All \*\*(\d+)\*\*")
 CONTRACT = "templates/platform-contract.json"
+STRINGS = "scripts/platform-strings.json"
+SDK_API = "skills/manaurum-app/references/sdk-api.md"
+# An error code as the documents write one: `404 route_not_declared`,
+# `502 upstream_error:<provider>`, or the second cell of a status row,
+# `| 409 | `slug_reserved` / `slug_owned_by_another_tenant` |`.
+DOC_CODE = re.compile(r"`\"?(\d{3}) ([a-z][a-z0-9_]{3,})(?::[^`]*)?`")
+STATUS_ROW = re.compile(r"^\|\s*\d{3}\s*\|([^|\n]*)\|", re.M)
+ROW_CODE = re.compile(r"(?:^|/)\s*`\"?([a-z][a-z0-9_]{3,})(?::[^`]*)?\"?`\s*(?=/|$)")
+SHELL_MESSAGE = re.compile(r"\bmanaurum:[a-z][a-z-]*")
 SCHEMA = "templates/manifest_v2.schema.json"
 REFERENCE = "skills/manaurum-app/references/capabilities-reference.md"
 
@@ -780,6 +789,81 @@ def check_contract(problems: list) -> None:
                             % ", ".join(sorted(copy ^ runtime)))
 
 
+def check_platform_codes(problems: list) -> None:
+    """Every error code a document quotes is one Core still writes.
+
+    `scripts/platform-strings.json` is every snake_case word in a string
+    literal of the Core code a v2 developer's errors come from (the gateways,
+    the deploy, the capability handlers). A documented code that is not in
+    it was renamed or removed: a developer matching on it waits for a
+    response that never comes. A code built from a prefix
+    (`f"{prefix}_backslash"`) counts when its prefix is written somewhere.
+    """
+    try:
+        data = json.loads(read(ROOT / STRINGS))
+    except (OSError, ValueError):
+        problems.append("%s: missing or not JSON - run scripts/sync_contract.py" % STRINGS)
+        return
+    strings, suffixes = set(data.get("strings", [])), data.get("suffixes", [])
+    sha = data.get("source", {}).get("sha", "?")[:9]
+
+    def written(code: str) -> bool:
+        # A built code: the prefix is written somewhere, or is one plain word
+        # filled in at run time (`f"{provider}_upstream_error"`).
+        return code in strings or any(
+            code.endswith(tail) and (code[:-len(tail)] in strings or
+                                     re.fullmatch(r"[a-z]+", code[:-len(tail)]))
+            for tail in suffixes)
+
+    for path in live_docs():
+        text = read(path)
+        quoted = [(m.start(), m.group(2)) for m in DOC_CODE.finditer(text)]
+        for row in STATUS_ROW.finditer(text):
+            quoted += [(row.start(1), m.group(1)) for m in ROW_CODE.finditer(row.group(1))]
+        for start, code in sorted(set(quoted)):
+            if not written(code):
+                problems.append("%s:%d: `%s` is not an error code Core writes (Core @ %s) "
+                                "- renamed or gone; fix the document, or re-run "
+                                "scripts/sync_contract.py if Core added it since"
+                                % (rel(path), line_of(text, start), code, sha))
+
+
+def check_shell_messages(problems: list) -> None:
+    """The window protocol in the documents is the shell's.
+
+    Every `manaurum:*` type a document or template names is one the shell
+    handles, sends or refuses (`iframeHostPolicy.ts`, `IframeAppHost.tsx`,
+    the session runtime), and every type a v2 app may send or will receive
+    is described in the SDK reference.
+    """
+    _, contract = load_contract()
+    messages = (contract or {}).get("messages")
+    if not messages:
+        problems.append("%s: no `messages` - run scripts/sync_contract.py" % CONTRACT)
+        return
+    exact = set(messages["app_to_shell"]) | set(messages["shell_to_app"]) | \
+        set(messages["session"])
+    prefixes = list(messages["rejected_prefixes"])
+
+    def known(name: str) -> bool:
+        # `manaurum:session-` and `manaurum:storage-*` name a family.
+        return name in exact or any(name.startswith(p) for p in prefixes) or \
+            any(e.startswith(name) for e in exact if name.endswith("-"))
+
+    for path in teaching_files():
+        text = read(path)
+        for match in SHELL_MESSAGE.finditer(text):
+            if not known(match.group(0)):
+                problems.append("%s:%d: `%s` is not a message the shell handles, sends "
+                                "or refuses" % (rel(path), line_of(text, match.start()),
+                                                match.group(0)))
+    reference = read(ROOT / SDK_API)
+    for name in sorted(set(messages["app_to_shell"]) | set(messages["shell_to_app"])):
+        if not re.search(re.escape(name) + r"(?![a-z-])", reference):
+            problems.append("%s:1: `%s` is part of the shell's protocol and described "
+                            "nowhere here" % (SDK_API, name))
+
+
 def check_paired_claims(problems: list) -> None:
     """A measured fact written down twice has to say the same thing twice.
 
@@ -947,6 +1031,8 @@ CHECKS = (
     check_tickets,
     check_stale_facts,
     check_contract,
+    check_platform_codes,
+    check_shell_messages,
 )
 
 
