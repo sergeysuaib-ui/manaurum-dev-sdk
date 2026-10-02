@@ -22,7 +22,9 @@ pytestmark = pytest.mark.asyncio
 
 
 def _claims(user_id: str) -> UserContextClaims:
-    return UserContextClaims(user_id=user_id, tenant_id="t", app_id="my-app")
+    return UserContextClaims(
+        user_id=user_id, tenant_id="t", app_id="my-app", app_version="0.1.0",
+    )
 
 
 async def test_read_is_empty_before_anything_is_saved(fake_kv):

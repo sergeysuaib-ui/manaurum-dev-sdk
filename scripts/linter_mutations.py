@@ -197,8 +197,18 @@ def a_todo_description(app: Path) -> None:
 
 
 def a_baked_deploy_token(app: Path) -> None:
+    # The shape Core mints: mna_<12 hex>_<url-safe secret>. Until 3.2.0 this
+    # mutation planted `mna_9f3c1de77a04b26e5c81`, a shape no token has, and
+    # the rule it tested matched only that - so it never fired on a real one.
     edit(app / "Dockerfile", "ENV PYTHONUNBUFFERED=1",
-         "ENV MANAURUM_V2_TOKEN=mna_9f3c1de77a04b26e5c81\nENV PYTHONUNBUFFERED=1")
+         "ENV MANAURUM_V2_TOKEN=mna_3f9c1de77a04_Xq2p-8Wn_Lk4sVb0Rt7yUe1aZc9Md6Fh"
+         "\nENV PYTHONUNBUFFERED=1")
+
+
+def a_tenant_token_in_source(app: Path) -> None:
+    # mnu_<env>_<32 url-safe>: the tenant token for MCP clients and Drive upload.
+    edit(app / "src" / "main.py", "app = FastAPI(",
+         'DRIVE_TOKEN = "mnu_prod_Hk3-Pq8_vB2nM5xL0wZ7rT4yC1eD6gJ9"\n\napp = FastAPI(')
 
 
 APP_MUTATIONS = [
@@ -253,7 +263,9 @@ APP_MUTATIONS = [
     ("manifest: the starter's TODO description", a_todo_description,
      "still the starter's placeholder"),
     ("secrets: a deploy token baked into the image", a_baked_deploy_token,
-     "live mna_9f3c... token"),
+     "live mna_3f9c... token"),
+    ("secrets: a tenant token in the source", a_tenant_token_in_source,
+     "live mnu_prod... token"),
 ]
 
 

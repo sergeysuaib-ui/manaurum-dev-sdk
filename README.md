@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.1.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.2.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -25,8 +25,10 @@ declared in the manifest and granted by the tenant admin at install time.
 
 **Who is asking arrives as a signed header.** For routes you mark `auth: "user"`, the
 gateway mints a 60-second RS256 JWT and injects it as `X-Manaurum-User-Context`. Verify it
-against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`. The end user's own session token is never
-forwarded to you, and you must never forward the user context onward to the gateway.
+against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, then check it names your app and your tenant:
+every app's tokens share one key and one audience. The end user's own session token is
+never forwarded to you. Forward the user context to the capability gateway when you act on
+the user's behalf; `os.drive.*` and `os.calendar.*` refuse a call without it.
 
 **Four rules that cost first-timers the most time:**
 

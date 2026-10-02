@@ -77,6 +77,40 @@ def test_handshake_is_answered_from_inline_head_script():
     )
 
 
+def test_handshake_trusts_the_shell_not_the_first_sender():
+    """MAN-2506: act on `manaurum:*` only from the parent window, and only
+    from the shell's own origins.
+
+    Every v2 app can be framed by another `*.manaurum.com` page. A listener
+    that answers whoever posts `manaurum:init` hands that page the app's
+    appearance and its `manaurum:ready`, and manaurum-v2.mjs 2.3.0 adopts
+    every `init` sender as its shell. The guard has to run before the init
+    branch, drop what it refuses, and be registered before the SDK's listener.
+    It lets exactly `manaurum:session-*` through, for Core's injected session
+    runtime, and nothing broader.
+    """
+    assert "'https://manaurum.com'" in _INDEX and "'https://app.manaurum.com'" in _INDEX
+    assert "*.manaurum.com'" not in _INDEX, "a wildcard origin admits every app"
+    guard = re.search(r"event\.source\s*===\s*window\.parent", _INDEX)
+    assert guard, "no check that the message came from the parent window"
+    assert re.search(r"event\.source\s*!==\s*window\b", _INDEX), (
+        "a page posting to itself is its own parent when not framed")
+    assert "SHELL_ORIGINS.indexOf(event.origin)" in _INDEX
+    assert "stopImmediatePropagation" in _INDEX, (
+        "a refused message must not reach later listeners (the SDK's)")
+    assert guard.start() < _INDEX.index("=== 'manaurum:init'"), (
+        "the sender check must run before init is handled")
+    # The loopback exception admits the page's own origin and nothing else.
+    assert "SHELL_ORIGINS.push(location.origin)" in _INDEX
+    assert not re.search(r"SHELL_ORIGINS\.push\(\s*'\*'", _INDEX)
+    # The only pass-through is Core's session channel.
+    passes = re.findall(r"indexOf\('(manaurum:[^']*)'\)\s*===\s*0\)\s*return;", _INDEX)
+    assert passes == ["manaurum:session-"], passes
+    # Registered before anything that could listen for `message` after it.
+    assert guard.start() < _INDEX.index('<script type="module">')
+    assert "postMessage({ type: 'manaurum:ready' }, '*')" not in _INDEX
+
+
 def test_appearance_comes_from_the_shell_not_only_the_browser():
     """The shell's appearance must reach the DOM, on init AND on change.
 

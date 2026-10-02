@@ -76,7 +76,8 @@ The payload as actually posted today (`sendInit`):
 ### What your app must reply
 
 ```js
-window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+// inside your `message` listener, once the sender passed the check below
+event.source.postMessage({ type: 'manaurum:ready' }, event.origin);
 ```
 
 **Within 10 seconds of the window opening** — `READY_TIMEOUT_MS = 10_000` (`IframeAppHost.tsx`). Miss it and the shell paints an overlay across your UI: *"App is not responding — No `manaurum:ready` received within 10s"* (`:814-836`). Your app is still running underneath; the user just cannot see or use it.
@@ -96,26 +97,38 @@ An SPA whose bundle is deferred can miss `manaurum:init` entirely — the listen
 ```html
 <!-- index.html <head> — alive before the deferred module bundle loads -->
 <script>
+  // Trust the shell, not the first sender (MAN-2506).
+  var SHELL_ORIGINS = ['https://manaurum.com', 'https://app.manaurum.com'];
+  // templates/preview.py frames the page from its own loopback origin.
+  if (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)) SHELL_ORIGINS.push(location.origin);
   window.addEventListener('message', function (e) {
-    if (e.data && e.data.type === 'manaurum:init') {
-      window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+    if (!e.data || typeof e.data.type !== 'string' || e.data.type.indexOf('manaurum:') !== 0) return;
+    // Core's injected session renewal checks its own messages; leave them be.
+    if (e.data.type.indexOf('manaurum:session-') === 0) return;
+    var trusted = e.source === window.parent && e.source !== window &&
+      SHELL_ORIGINS.indexOf(e.origin) !== -1;
+    if (!trusted) { e.stopImmediatePropagation(); return; }
+    if (e.data.type === 'manaurum:init') {
+      e.source.postMessage({ type: 'manaurum:ready' }, e.origin);
     }
-  });
+  }, true);
 </script>
 ```
 
 ```ts
 // main.tsx — after ReactDOM.createRoot(...).render(...)
-try {
-  window.parent.postMessage({ type: 'manaurum:ready' }, '*');
-} catch {
-  /* not embedded in the shell */
+for (const origin of ['https://manaurum.com', 'https://app.manaurum.com']) {
+  try {
+    window.parent.postMessage({ type: 'manaurum:ready' }, origin);
+  } catch {
+    /* not embedded in the shell */
+  }
 }
 ```
 
-A proactive `manaurum:ready` is safe: the shell registers its listener when the host component mounts, before it sends `init`.
+A proactive `manaurum:ready` is safe: the shell registers its listener when the host component mounts, before it sends `init`. Post it once per shell origin rather than to `'*'`; the post whose origin is not the parent's is not delivered, and Chrome logs a console error for it ("target origin provided … does not match"). That error is expected.
 
-If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for you — but only *after* `manaurum:init` arrives, because it replies to `event.origin`. Keep the inline listener anyway if your bundle is deferred.
+If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for you, but only *after* `manaurum:init` arrives. **SDK 2.3.0 does not check who sent it.** It adopts whichever window posts `manaurum:init` as its shell, again on every `init` (the latest sender wins), replies to that window's origin, and sends that window your Drive pick requests (see `app.pickFromDrive()` below). Keep the inline listener above in every app that loads the SDK. It stops every message it refuses, so the SDK never sees one from anybody but the shell, as long as it is registered **before** the SDK's listener: inline at the top of `<head>`, ahead of any module.
 
 > **The trap.** Your standalone URL `https://<slug>.apps.manaurum.com/` works perfectly without the handshake — no shell, no timeout, no overlay. The failure appears *only* inside the desktop window and the mobile home screen, which is where your users are. Libi shipped this way and needed a follow-up release (MAN-1321). Test from the desktop, not just from the tab.
 
@@ -124,7 +137,7 @@ If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for 
 A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from the shell at `manaurum.com`. Consequences:
 
 - postMessage is the only channel. No shared DOM, no shared `localStorage`, no `document.domain` tricks.
-- You cannot read the shell's origin from inside the frame. Either reply with `'*'` (fine — `manaurum:ready` carries nothing secret), or capture `event.origin` off `manaurum:init` and reply to exactly that, which is what the v2 SDK does.
+- You cannot read the shell's origin from inside the frame, so check it: act on a `manaurum:*` message only when `event.source === window.parent` and `event.origin` is `https://manaurum.com` or `https://app.manaurum.com`. Use both origins, never `www.`, and never a `*.manaurum.com` pattern, because every v2 app is a `*.manaurum.com` page and may frame yours. Never adopt the origin of whoever posts `manaurum:init`: an unauthenticated sender then becomes your shell. SDK 2.3.0 does exactly that, on every `init`, which is why the inline guard above has to run before it.
 - The shell posts `manaurum:init` with your origin as `targetOrigin`, so no other embedder can receive it.
 - The iframe sandbox is `allow-scripts allow-forms allow-same-origin` (`iframeHostPolicy.ts`). `allow-modals` is never emitted — `alert()` / `confirm()` / `prompt()` are dead in the shell (and work fine on your standalone URL, so "it worked in my browser" proves nothing). Nor are `allow-downloads` or `allow-popups`, and `allow` never delegates `clipboard-write`: downloads, `target="_blank"`, `window.open()` and `navigator.clipboard.writeText()` all fail in the window. What to do instead: `SKILL.md` → "What will bite you".
 - Browser features are delegated through the iframe `allow` attribute only when your manifest declares them in `permissions[]` (`:210`, `:218-222`, `:919`). See `references/v2-platform.md`.
@@ -210,7 +223,7 @@ const orders = await res.json();
 
 Two gaps worth knowing:
 
-- **`granted_capabilities` is not in `app.context`.** The shell sends it; SDK 2.3.0 does not read it. Same for `offline` and `deepLink`. If you need them, add your own `window.addEventListener('message', …)` for `manaurum:init` / `manaurum:deep-link` alongside the SDK.
+- **`granted_capabilities` is not in `app.context`.** The shell sends it; SDK 2.3.0 does not read it. Same for `offline` and `deepLink`. If you need them, add your own `window.addEventListener('message', …)` for `manaurum:init` / `manaurum:deep-link` alongside the SDK, and act only on what passed the sender check above (register it after the inline guard, which then filters for it too).
 - `appId` falls back to parsing `<slug>.apps.manaurum.com` out of `window.location.hostname` when the shell omits it — so a hand-loaded test page on any other host gets `appId: null`.
 
 ### `app.fetch(path, init?)`
@@ -262,6 +275,7 @@ if (!res.cancelled) {
 - Resolves to `{ cancelled: true }` if the user cancels, if another pick is already open (`picker_busy`), or if nothing answers within **120 s**. Otherwise `{ files: [...] }`.
 - Each handle is `{ file_id, filename, mime_type, size_bytes, download_url, expires_at }`. `download_url` is attachment-pinned and short-lived (~5 min) — fetch it promptly and ask again rather than caching it.
 - Wire: the SDK posts `manaurum:drive-pick` with a `_reqId` and awaits `manaurum:drive-pick-response`. It only works inside the shell — outside it there is no shell to post to and the promise resolves `{ cancelled: true }` after the timeout.
+- SDK 2.3.0 sends the request (and its `_reqId`) to whichever window last posted it `manaurum:init`, and accepts a response carrying that id from any window. Without the inline sender check above, a page that framed your app and posted `init` receives the pick and can answer it with download URLs of its own choosing.
 
 ### What this SDK deliberately does not do
 

@@ -68,8 +68,10 @@ my-app/
 │                           deploy, so there is no placeholder to hold it open.
 ├── .dockerignore        ← Keeps .env* / .git / tests out of the build context
 ├── deploy.sh            ← Optional CLI helper (see /manaurum-deploy)
-├── .env.manaurum        ← Deploy-time token (gitignored) — never read by your container
 └── .gitignore
+
+../.env.manaurum         ← Deploy-time token, ONE LEVEL UP, beside my-app/ and
+                           never inside it — see "`.env.manaurum`" below
 ```
 
 `auth.py` + `capability.py` are shared infrastructure; `main.py` +
@@ -257,7 +259,11 @@ above is what protects the deployed image. Keep real secrets outside the app dir
 ### The `manaurum:ready` handshake
 
 Copy it from `templates/v2-starter/src/static/index.html`, which answers it inline
-in `<head>` before anything else loads. Do not retype it from memory.
+in `<head>` before anything else loads. Do not retype it from memory: the copy
+also checks that `manaurum:init` came from the parent window and from
+`https://manaurum.com` or `https://app.manaurum.com`, and drops everything else
+before the SDK sees it (MAN-2506). A listener that answers whoever posts first
+lets any page that frames your app play the shell.
 
 The reply is **mandatory, v2 included** — scaffold it in, never bolt it on later.
 When the desktop opens your app it loads your URL in an iframe and posts
@@ -323,8 +329,14 @@ Full capability list + input schemas: `references/capabilities-reference.md`.
 
 ### `.env.manaurum`
 
+It lives **beside** the app directory, not in it: `../.env.manaurum` from where
+`manifest.json` is. `manaurum app deploy` packs everything in the app directory
+except a short list of exact names, and `.env*` is not on it, so a token file
+inside it is uploaded, built into the image and kept with every version.
+`check_app.py` refuses one there.
+
 ```
-# DEPLOY-TIME ONLY — read by deploy.sh / the CLI on your machine.
+# DEPLOY-TIME ONLY — read by deploy.sh on your machine.
 # Your container never sees this; it gets MANAURUM_RUNTIME_TOKEN instead.
 MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
 ```

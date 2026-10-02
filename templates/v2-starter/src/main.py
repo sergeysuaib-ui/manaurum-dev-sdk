@@ -25,8 +25,10 @@ The five moving parts, in the order the platform exercises them:
    to answer the ``manaurum:ready`` handshake; see that file.
 3. ``GET /api/me`` — an ``auth: "user"`` route. The gateway mints a
    60-second RS256 JWT and injects it as ``X-Manaurum-User-Context``.
-   The end user's own bearer is NEVER forwarded — that header is the
-   only trustworthy caller identity you get.
+   The end user's own bearer is NEVER forwarded. That header is the only
+   caller identity you get, and it is trustworthy only after
+   ``src/auth.py`` has checked it was minted for THIS app and tenant —
+   every app's tokens share one key and one audience.
 4. ``GET/PUT /api/notes`` — the same auth, plus a real capability call.
 5. ``POST /agent/*`` — the OS Assistant, dispatched server-to-server.
    Not a gateway route. See src/agent_routes.py.
