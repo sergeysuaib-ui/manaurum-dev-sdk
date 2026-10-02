@@ -161,3 +161,107 @@ def test_missing_tenant_env_fails_closed(monkeypatch, user_context):
     with pytest.raises(HTTPException) as exc:
         verify_user_context(token)
     assert exc.value.status_code == 503
+
+
+# ── Person pass (`auth: "optional"`, Core MAN-3200) ────────────────────────
+
+APP_UUID = "44444444-4444-4444-4444-444444444444"
+OTHER_APP_UUID = "55555555-5555-5555-5555-555555555555"
+
+
+@pytest.fixture
+def person_pass(keypair, monkeypatch):
+    """Mint the pass the gateway sends a member on an `optional` route.
+    Its audience is the app's UUID, so the test env needs MANAURUM_APP_ID."""
+    from jose import jwt
+
+    monkeypatch.setenv("MANAURUM_APP_ID", APP_UUID)
+
+    def mint(**overrides) -> str:
+        now = datetime.now(timezone.utc)
+        claims = {
+            "iss": "manaurum-core", "aud": APP_UUID, "typ": "person",
+            "kind": "member", "sub": "u-ann", "tenant_id": TENANT_ID,
+            "app_id": APP_UUID, "app_slug": APP_SLUG,
+            "email": "ann@example.com", "name": "Ann",
+            "facts": {"is_tenant_admin": True, "workspace_role": "member"},
+            "iat": now, "exp": now + timedelta(seconds=60),
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, keypair[0], algorithm="RS256")
+
+    return mint
+
+
+def test_person_pass_for_this_app_is_accepted(person_pass):
+    from src.auth import verify_person_pass
+
+    p = verify_person_pass(person_pass())
+    assert (p.kind, p.sub, p.email, p.name) == ("member", "u-ann", "ann@example.com", "Ann")
+    assert p.is_tenant_admin is True and p.workspace_role == "member"
+
+
+def test_person_pass_for_another_app_is_rejected(person_pass):
+    """The whole point of the pass: bound to one app by its audience."""
+    from src.auth import verify_person_pass
+
+    with pytest.raises(HTTPException) as exc:
+        verify_person_pass(person_pass(aud=OTHER_APP_UUID))
+    assert exc.value.detail == "person_pass_invalid"
+
+
+def test_user_context_is_not_a_person_pass(person_pass, user_context):
+    from src.auth import verify_person_pass
+
+    with pytest.raises(HTTPException):
+        verify_person_pass(user_context())
+
+
+def test_person_pass_from_another_tenant_is_rejected(person_pass):
+    from src.auth import verify_person_pass
+
+    with pytest.raises(HTTPException) as exc:
+        verify_person_pass(person_pass(tenant_id="99999999-9999-9999-9999-999999999999"))
+    assert exc.value.detail == "person_pass_wrong_tenant"
+
+
+def test_person_pass_needs_the_app_id_env(person_pass, monkeypatch):
+    from src.auth import verify_person_pass
+
+    token = person_pass()
+    monkeypatch.delenv("MANAURUM_APP_ID")
+    with pytest.raises(HTTPException) as exc:
+        verify_person_pass(token)
+    assert exc.value.status_code == 503
+
+
+def test_optional_person_is_none_for_a_guest_and_401_for_a_bad_pass(person_pass):
+    from starlette.requests import Request
+
+    from src.auth import optional_person
+
+    def request(*headers):
+        raw = [(b"x-manaurum-person", h.encode()) for h in headers]
+        return Request({"type": "http", "headers": raw})
+
+    assert optional_person(request()) is None
+    assert optional_person(request(person_pass())).sub == "u-ann"
+    for bad in (("garbage",), (person_pass(), person_pass())):
+        with pytest.raises(HTTPException) as exc:
+            optional_person(request(*bad))
+        assert exc.value.status_code == 401
+
+
+def test_person_pass_without_any_audience_is_rejected(person_pass, keypair):
+    """python-jose skips the audience check for a token with no `aud` at
+    all; the verifier must require the claim."""
+    from jose import jwt
+
+    from src.auth import verify_person_pass
+
+    claims = jwt.get_unverified_claims(person_pass())
+    del claims["aud"]
+    no_aud = jwt.encode(claims, keypair[0], algorithm="RS256")
+    with pytest.raises(HTTPException) as exc:
+        verify_person_pass(no_aud)
+    assert exc.value.detail == "person_pass_invalid"
