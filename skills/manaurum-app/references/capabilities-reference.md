@@ -1,13 +1,25 @@
 # Capabilities — input/output reference
 
-The exhaustive reference for every Platform v2 capability. All **26** capabilities
-registered in `backend/app/services/capabilities/` are documented below. Every entry
-documents:
+The exhaustive reference for every Platform v2 capability. All **32** capabilities
+registered on Core (checked against Core `main` 8fe6f5d, 2026-10-02) are documented below,
+all `version: 1`. Every entry gives the input (from the capability's JSON Schema), the
+output on success, and the errors that capability itself raises.
 
-- The capability name + version.
-- Required input fields (JSON Schema-derived).
-- Output shape on success.
-- Common error codes specific to that capability.
+| Family | Capabilities |
+|---|---|
+| Key/value, config, secrets | `os.kv.get`, `os.kv.set`, `os.tenant_config.get`, `os.secrets.get`, `os.secrets.set` |
+| Your app's private files | `os.files.upload`, `.download`, `.delete`, `.list` |
+| The user's Drive | `os.drive.stage`, `.publish`, `.list`, `.read`, `.write`, `.delete` |
+| The user's calendar | `os.calendar.create_event`, `.list_events` |
+| Locations | `os.locations.list`, `.get` |
+| AI | `os.ai.complete`, `.embed`, `.transcribe`, `.image_submit`, `.image_poll`, `.providers`, `os.ocr.extract` |
+| Messaging and events | `os.notifications.send_to_user`, `os.events.emit` |
+| Outbound HTTP | `os.http.fetch` |
+| Audit | `os.compliance.audit_query` |
+| Other apps | `os.apps.call`, `os.apps.bulk_export` |
+
+Nothing else exists: there is no `os.kv.delete` or `os.kv.list`, no `os.secrets.delete`,
+no calendar update or delete, and no `os.workspace.members` (MAN-1289).
 
 ## The call contract
 
@@ -17,9 +29,12 @@ Your **container** makes the call, using credentials the platform injects for it
 POST ${MANAURUM_CORE_URL}/api/capability/<name>
 Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}
 X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}
-X-Manaurum-App-Id:    ${MANAURUM_APP_ID}
-X-Manaurum-User-Context: <the JWT your route received>   # auth_mode: user only
+X-Manaurum-App-Id:    <your slug, or MANAURUM_APP_ID for os.kv.* / os.events.emit>
+X-Manaurum-User-Context: <the JWT your route received>   # required for auth_mode: user
+X-Manaurum-Workspace-Id: <workspace uuid>                # os.ai.complete / .providers, rarely
 Content-Type: application/json
+
+<the capability's input object — no wrapper>
 ```
 
 - `MANAURUM_CORE_URL` and `MANAURUM_RUNTIME_TOKEN` are **injected at deploy** by the
@@ -31,47 +46,81 @@ Content-Type: application/json
 - **App-id form matters, and nothing converts it.** The gateway hands
   `X-Manaurum-App-Id` to the handler exactly as sent, and each family keys its storage by
   one form. `os.kv.*` and `os.events.emit` key by the **UUID** (`MANAURUM_APP_ID`) and
-  answer `412 app_id_must_be_uuid` to a slug. `os.secrets.*` and `os.files.*` key by the
-  **slug** — your manifest's `app_id` — and accept a UUID too, which is the trap: the call
-  succeeds against a namespace nothing else writes. `manaurum app set-secret` stores under
-  the slug, so an app that sends the UUID reads every CLI-set secret as
-  `404 secret_not_found`, and a file uploaded under one form is not found under the other.
-  Send the slug to every capability except those two families. The env carries only the
-  UUID, so keep the slug as a constant in your code; the starter's `src/capability.py`
-  does, and its tests pin it to the manifest.
+  answer `412 app_id_must_be_uuid` to a slug. `os.secrets.*`, `os.files.*` (and therefore
+  `os.ocr.extract`, which reads a file you stored) and the Drive staging key key by the
+  string **as sent** — send the slug, your manifest's `app_id`. `os.drive.publish` and
+  `.write` refuse a key staged under the other form (`403 staging_key_out_of_scope`). They accept a UUID too, which is
+  the trap: the call succeeds against a namespace nothing else writes. `manaurum app
+  set-secret` stores under the slug, so an app that sends the UUID reads every CLI-set
+  secret as `404 secret_not_found`, and a file uploaded under one form is not found under
+  the other. The rest resolve either form, but send one form everywhere. The env carries only the UUID, so keep the slug
+  as a constant in your code; the starter's `src/capability.py` does, and its tests pin it
+  to the manifest.
+- **Forward the user context whenever you act for a user.** It is required for
+  `auth_mode: "user"` capabilities (`os.drive.*`, `os.calendar.*`), it picks the workspace
+  for `os.ai.complete`, and elsewhere it records who acted in the audit log. The gateway
+  verifies it and refuses one minted for another app or tenant. The starter's
+  `call_capability(..., user_context=claims.token)` sends it.
+- **A body that is not valid JSON, or a request without `Content-Length`, is read as
+  `{}`** and then validated, so a serialisation
+  bug shows up as a schema error about a missing field, not as a parse error.
+- **`"format"` is not enforced.** The validator ignores `date-time`, `uri` and the like, so
+  a malformed date reaches the handler and usually comes back as `500 handler_exception`
+  rather than `422`. Validate dates before you send them.
 
-Success response: `{ "output": { … }, "correlation_id": "<uuid>" }`. Streaming
-capabilities (`os.apps.bulk_export`) return `application/x-ndjson` instead.
+**Success:** `{ "output": { … }, "correlation_id": "<uuid>" }` — read `output`.
+`os.apps.bulk_export` streams `application/x-ndjson` instead, with no wrapper.
+
+**Errors:** FastAPI's shape, `{ "detail": <string or object> }`. The code is `detail`
+itself when it is a string, else `detail.error`. Both shapes occur, sometimes within one
+capability, so handle both.
 
 ## Gates that run before your capability does
 
-These fire in the gateway, before any handler code, so they apply to **every** capability.
+These fire in the gateway, in this order, before any handler code, so they apply to
+**every** capability.
 
-| HTTP | `detail.error` | When |
+| HTTP | `detail` / `detail.error` | When |
 |---|---|---|
-| 403 | `capability_not_granted` | The capability is not in the tenant install's `granted_capabilities`. **An install with an EMPTY grant list denies everything** — declaring a capability in your manifest and redeploying is not enough on its own. |
-| 403 | `tenant_mismatch` | `X-Manaurum-Tenant-Id` is not the tenant your credential was issued for. The header is no longer trusted on its own. |
-| 403 | `user_context_required` | The capability is `auth_mode: "user"` (`os.drive.*`, `os.calendar.*`) and you sent no `X-Manaurum-User-Context`. |
-| 401 | `invalid_user_context` | The forwarded JWT failed verification, or its `tenant_id` / `app_id` doesn't match the call. |
-| 403 | `capability_denied_in_dev_mode` | A `runtime.mode: dev` app calling a capability outside the dev allow-list. Publish the app. |
+| 401 | `missing_authorization` | No `Authorization: Bearer …`. |
+| 401 | `invalid_credential` | The bearer is not an `mna_*`. |
+| 501 | `system_caller_not_implemented` | You sent `X-Manaurum-Caller-System`. Don't. |
+| 401 | `invalid_credential` | The `mna_*` is unknown, revoked, expired or wrong. |
+| 412 | `missing_tenant_id_header` | Tenant header absent. |
+| 412 | `missing_app_id_header` | App-id header absent. |
+| 412 | `malformed_tenant_id_header` | Tenant header not a UUID. |
+| 503 | `user_context_unavailable` | You sent a user context and Core cannot verify it right now (fails closed). |
+| 401 | `invalid_user_context` (+ `message`) | The user context is invalid or expired (60 s), lacks a required claim, or names another tenant (`"user_context tenant mismatch"`). |
+| 403 | `owner_scoped_credential_not_accepted` | The bearer is an owner-scoped developer token. Containers use `MANAURUM_RUNTIME_TOKEN`. |
+| 403 | `app_id_out_of_scope` | `X-Manaurum-App-Id` is not an app this credential covers. |
+| 403 | `tenant_mismatch` | `X-Manaurum-Tenant-Id` is not the credential's tenant. |
+| 404 | `capability_not_found` | No such capability (a typo). |
+| 403 | `user_context_required` | `auth_mode: "user"` capability and no user context. |
+| 422 | `input_schema_violation` (+ `message`, `path`) | The input fails the capability's schema. Every schema here is `additionalProperties: false`, so an unknown field is a `422`. |
+| 403 | `capability_denied_in_dev_mode` | A `runtime.mode: dev` app calling outside the dev allow-list: `os.kv.*`, `os.files.*`, `os.tenant_config.*`, `os.secrets.*`, `os.compliance.audit_query`. |
+| — | workspace errors, `ai_disabled` | `os.ai.complete` and `os.ai.providers` only; see `os.ai.complete`. |
+| 401 | `invalid_user_context`, `"user_context app mismatch"` | The user context was minted for another app. |
+| 403 | `capability_not_granted` | The install's `granted_capabilities` lack this capability. **An install with an empty grant list denies everything.** |
+| 429 | `quota_exceeded` | Not reachable today: no capability declares a daily quota (see Quotas). |
+| 500 | `handler_exception` | The handler crashed. Usually bad input the schema could not catch (a malformed date), or a provider failure in `os.ocr.extract` / the image capabilities. |
 
-Grant enforcement is **unconditional** — it is not "when wired". It runs ahead of quota,
-dispatch and audit, and only dev-mode apps and active BYO hosts short-circuit it. There
-is no wildcard grant (MAN-1585): every capability has to be listed.
+Grant enforcement applies whenever your app has an install row in the calling tenant,
+which every deployed hosted app has in its own tenant. Dev-mode apps and active BYO hosts
+skip it, and so, today, does an app id with **no** install row there (MAN-2199): do not
+read a successful call as proof of a grant. There is no
+wildcard grant (MAN-1585): every capability has to be listed. A redeploy never widens an
+existing install's grants, so a capability you add in a later version is missing on old
+installs until an admin grants it (MAN-1112).
 
-The gateway **accepts** `X-Manaurum-User-Context` on `/api/capability/<name>` and
-**requires** it for `auth_mode: "user"` capabilities. On `auth_mode: "app"` capabilities
-it is optional and only enriches `acting_user_id` in the audit log. (If you read anywhere
-that the gateway *rejects* a user context on this path, that statement is wrong.)
-
-Universal error codes for the rest (credential, headers, schema, quota): see
-`v2-platform.md` § 3.
+**Sensitive capabilities.** `os.ai.*`, `os.ocr.*`, `os.notifications.*`, `os.http.*` and
+`os.secrets.*` are classed sensitive. When the platform runs with strict grants, these are
+not granted automatically at install; a tenant admin grants them explicitly.
 
 ---
 
 ## `os.kv.set` — store a value
 
-Per-app, per-tenant key/value in Postgres. FORCE-RLSed.
+Per-app, per-tenant key/value in Postgres. **App id: the UUID.**
 
 **Input:**
 
@@ -82,11 +131,11 @@ Per-app, per-tenant key/value in Postgres. FORCE-RLSed.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `key` | string | yes | 1–256 chars. Treated opaquely. |
-| `value` | any | yes | Stored as `jsonb`. |
+| `value` | any | yes | Stored as `jsonb`; overwrites. No size cap in the schema. |
 
 **Output:** `{ "ok": true }`
 
-**Errors:** universal only.
+**Errors:** `412 app_id_must_be_uuid` — you sent the slug.
 
 ---
 
@@ -96,23 +145,21 @@ Per-app, per-tenant key/value in Postgres. FORCE-RLSed.
 
 **Output:** `{ "value": <stored value, or null> }`
 
-A missing key returns `value: null`, not 404.
+A missing key returns `value: null`, not 404. There is no list and no delete: keep an index
+key yourself if you need to enumerate.
 
 ---
 
 ## `os.tenant_config.get` — read tenant config — ⚠️ DO NOT RELY ON THIS TODAY
 
-**Input:** `{ "key": "some-key" }`
+**Input:** `{ "key": "some-key" }` (1–200 chars)
 
 **Output:** `{ "value": <value, or null> }` — a missing key is `null`, never a 404.
 
 **What it actually reads.** Not `tenants.features`, and not the `tenant_config` values a
 tenant supplied at install (those land in `v2_app_installs.config`, which nothing under
-`capabilities/` reads). The handler calls `get_config_for_tenant` against the
-`tenants.app_builder_config` jsonb column and does a plain `getattr(config, key, None)` on
-the resulting Pydantic model. That model (`TenantAppBuilderConfig`, v0) has **exactly one
-field — `prompt_extension`** — and is declared `extra: "ignore"`, so every other key in
-the column is dropped on load.
+`capabilities/` reads). The handler reads the tenant's `app_builder_config` and does a
+plain attribute lookup on it. That model has **exactly one field — `prompt_extension`**.
 
 Consequences, both of them surprising:
 
@@ -138,10 +185,10 @@ as sent — send the slug, which is what `manaurum app set-secret` writes under.
 { "name": "openai_api_key", "value": "sk-..." }
 ```
 
-| Field | Type | Required |
-|---|---|---|
-| `name` | string | yes |
-| `value` | string | yes |
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | 1–200 chars. |
+| `value` | string | yes | No size cap. |
 
 **Output:** `{ "ok": true }`
 
@@ -153,43 +200,63 @@ as sent — send the slug, which is what `manaurum app set-secret` writes under.
 
 **Output:** `{ "value": "sk-..." }`, or `404 secret_not_found` when nothing is stored under
 this (app, tenant, name) — which is also what a secret set under the other app-id form
-looks like (see the header rules at the top of this page).
+looks like (see the call contract above). There is no list and no delete.
 
 ---
 
-## `os.files.upload` — get a presigned R2 PUT URL
+## `os.files.upload` — get a presigned PUT URL
 
-The platform never proxies bytes — it returns a presigned URL the app uploads directly to.
+Your app's **private** object storage: the user never sees these objects (for that, use
+`os.drive.*`). The platform never proxies bytes — it returns a presigned URL your
+container (or the browser) uploads to directly. **App id: the slug, as sent.**
 
 **Input:**
 
 ```json
-{ "key": "user-uploads/avatar.png", "content_type": "image/png" }
+{ "key": "user-uploads/avatar.png", "content_type": "image/png", "size_hint": 20480 }
 ```
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `key` | string | yes | Relative key inside your namespace. The full storage key is `app/<app_id>/<tenant_id>/<key>` — server-built so cross-app/tenant addressing is impossible by construction. |
-| `content_type` | string | yes | Upload's `Content-Type` (must match the PUT). |
+| `key` | string | yes | 1–1024 chars, relative to your namespace. Stored as `app/<app id as sent>/<tenant_id>/<key>`, server-built. No leading `/`, no `\`, no `..` (`400 invalid_key_…`). |
+| `content_type` | string | yes | 1–255 chars. The PUT must send the same `Content-Type`. |
+| `size_hint` | integer | **yes** | 0–52428800. **Not a hint:** the exact byte length of the body you will PUT, signed into the URL (MAN-1707). A body of any other length is refused by the object store with an error that reads like a permissions problem. |
+| `expires_in` | integer | no | 60–3600 seconds; default 300. |
+
+**Omitting `size_hint` is `422 input_schema_violation`.** This page said otherwise until
+3.3.0, and an app that followed it failed every upload.
 
 **Output:**
 
 ```json
-{
-  "upload_url": "https://...r2.cloudflarestorage.com/...?X-Amz-...",
-  "expires_at": 1735689600
-}
+{ "upload_url": "https://…?X-Amz-…", "expires_at": 1735689600, "content_length": 20480 }
 ```
 
-URL is valid for 5 minutes. The app then `PUT`s the bytes directly with the `Content-Type` header.
+`PUT` the bytes to `upload_url` with the same `Content-Type` and exactly `content_length`
+bytes.
+
+**Limits and errors:**
+
+| HTTP | `detail` | When |
+|---|---|---|
+| 400 | `invalid_key_empty_or_non_string` / `_leading_slash` / `_backslash` / `_parent_traversal` | Bad `key`. |
+| 429 | `{"error":"upload_rate_limited","retry_after_seconds":60}` (+ `Retry-After`) | More than **20 URLs a minute or 200 an hour** for this (app, tenant). |
+| 413 | `{"error":"namespace_quota_exceeded","used_bytes":…,"quota_bytes":…}` | Your (app, tenant) namespace would pass **1 GiB**. |
+| 413 | `{"error":"namespace_scan_incomplete","max_objects":10000}` | More than 10,000 objects: the usage check cannot count them. Keep your own ledger at that size. |
+
+Max **50 MiB** per object.
 
 ---
 
 ## `os.files.download` — get a presigned GET URL
 
-**Input:** `{ "key": "user-uploads/avatar.png" }`
+**Input:** `{ "key": "user-uploads/avatar.png", "expires_in": 300 }` (`expires_in` optional, 60–3600)
 
-**Output:** `{ "download_url": "...", "expires_at": <unix> }` or 404 if not found.
+**Output:** `{ "download_url": "...", "expires_at": <unix> }`
+
+**It does not check that the object exists.** A URL is signed for any key; a missing
+object shows up as an error from the object store when the URL is fetched. Errors: the
+four `400 invalid_key_…`.
 
 ---
 
@@ -197,81 +264,112 @@ URL is valid for 5 minutes. The app then `PUT`s the bytes directly with the `Con
 
 **Input:** `{ "key": "user-uploads/avatar.png" }`
 
-**Output:** `{ "ok": true }`
+**Output:** `{ "ok": true }` — immediate, no trash.
 
 ---
 
 ## `os.files.list` — list your own objects
 
-**Input:** `{ "prefix": "user-uploads/", "max_keys": 100, "cursor": null }` (all optional)
+**Input:** `{ "prefix": "user-uploads/", "max_keys": 100, "cursor": null }` — all optional;
+`max_keys` 1–1000, default 100.
 
 **Output:** `{ "files": [{ "key", "size", "last_modified" }], "cursor": "<next page or null>" }`
 
-Keys are app-relative (what you passed to upload). NOTE: `os.files.*` is your
-app's PRIVATE SCRATCH — the user never sees these objects in their Files app.
-For user-facing documents use `os.drive.*` below.
+Keys are app-relative (what you passed to upload).
 
 ---
 
-## `os.drive.*` — the user's Drive (consent-gated, user-context required)
+## `os.drive.*` — the user's Drive (user context required)
 
-The file system the USER owns and sees in the Files app. All five capabilities
-are `auth_mode: user`: every call MUST forward the inbound
-`X-Manaurum-User-Context` JWT (60s TTL — forward immediately, never store).
-Declare each in `requires_capabilities`. Missing/invalid context → 403/401.
+The file system the USER owns and sees in the Files app. All six capabilities are
+`auth_mode: "user"`: every call MUST forward the inbound `X-Manaurum-User-Context` JWT
+(60 s TTL — forward immediately, never store), or it is `403 user_context_required`.
+Declare each one you use in `requires_capabilities`. All but `os.drive.stage` answer
+`412 user_has_no_workspace_in_tenant` when the user has no workspace here.
 
 ### `os.drive.stage` — presigned PUT to a user-scoped staging key
 
-**Input:** `{ "content_type": "image/png", "expires_in": 600 }` (expires optional)
+**Input:** `{ "content_type": "image/png", "size_hint": 20480, "expires_in": 600 }` —
+`content_type` required; `size_hint` (0–50 MiB) optional but, when given, signed into the
+URL like `os.files.upload`; `expires_in` 60–3600, default 300.
 
 **Output:** `{ "staging_key", "upload_url", "expires_at" }`
 
 The staging key is server-built and scoped to (your app, tenant, acting user) —
-unaddressable by anyone else. PUT your bytes to `upload_url`, then publish.
+unaddressable by anyone else. PUT your bytes to `upload_url`, then publish or write. A
+staged object nobody publishes is removed after 7 days.
 
 ### `os.drive.publish` — publish the staged artefact into the user's Drive
 
 **Input:** `{ "staging_key": "...", "filename": "report.csv", "folder_name": "optional" }`
+(`filename` 1–255 chars, no path; `folder_name` 1–100)
 
 **Output:** `{ "file_id", "filename", "folder_id", "folder_name", "size_bytes" }`
 
-The document becomes the user's OWN file (folder named after your app by
-default), they get a notification, your app keeps no residual access. Limits:
-5 MB; extensions `md txt csv json pdf png jpg jpeg webp` (no svg/html);
-binary types magic-byte-sniffed; per-user rate limit (429).
+The document becomes the user's OWN file, in a folder named after your app by default,
+and your app keeps no residual access. **The user gets no notification** (MAN-2991): they
+asked for the save inside your app, so tell them yourself.
 
-### `os.drive.list` / `os.drive.read` / `os.drive.write` — granted folders
+Limits: **50 MiB**; extensions `md markdown txt csv json pdf png jpg jpeg webp gif doc docx
+xls xlsx zip rar mp3 m4a ogg oga wav flac` (no svg, no html); the content is sniffed, so
+a ".xlsx" that is not one is refused; **20 saves a minute and 200 an hour per user**,
+shared with `os.drive.write`.
 
-Standing access after the folder owner grants your app viewer/editor in
-Files → Share. Effective access = the grant INTERSECTED with the acting
-user's own access; ungranted folders read as 404.
+**Errors:** `403 staging_key_out_of_scope`, `422 filename_must_not_contain_path`,
+`415 {"error":"file_type_not_publishable","allowed_extensions":[…]}`,
+`429 publish_rate_limited`, `404 staging_object_not_found`, `413 artefact_too_large`,
+`415 content_does_not_match_type`, `413 drive_quota_exceeded`.
 
-- `os.drive.list` **Input:** `{ "folder_id" }` → `{ folder, folders[], files[] }`
-- `os.drive.read` **Input:** `{ "file_id" }` → `{ file, download_url, expires_at }` (signed, ~5 min, attachment-pinned)
-- `os.drive.write` **Input:** `{ "staging_key", "filename", "folder_id" }` → create-only; requires editor grant AND the acting user owns the folder (403 `write_requires_folder_owner`)
+### `os.drive.list` / `.read` / `.write` / `.delete` — granted folders
 
-### Drive events + the picker
+Standing access after the folder owner grants your app viewer or editor in Files → Share.
+Effective access = the grant INTERSECTED with the acting user's own access; anything
+outside it reads as 404.
 
-- Subscribe to `drive.{your_slug}.file.{created|updated|deleted}` in
-  `consumes.events` — metadata-only change events for granted subtrees.
-- Frontend: `app.pickFromDrive({ accept: ['image/'] })` (SDK v2.1+) opens the
-  OS picker; the user picks; you get a ~5-min signed URL for that one file.
+- **`os.drive.list`** `{ "folder_id" }` → `{ folder: {folder_id, name}, folders: [{folder_id, name}], files: [{file_id, filename, mime_type, size_bytes, etag}] }`.
+  At most 200 files per call, no paging. `404 folder_not_found`.
+- **`os.drive.read`** `{ "file_id" }` → `{ file: {file_id, filename, mime_type, size_bytes, etag}, download_url, expires_at }`.
+  The URL is signed for 5 minutes and downloads as an attachment.
+  `404 file_not_found` / `folder_not_found`, `503 read_requires_object_storage`.
+- **`os.drive.write`** `{ "staging_key", "filename", "folder_id" | "file_id", "if_match"? }` —
+  exactly one of `folder_id` / `file_id`.
+  - `folder_id` creates a new file → `{ file_id, filename, folder_id, size_bytes }`.
+  - `file_id` (MAN-1958) replaces that file's content; the old content stays as a version
+    the user can restore. The name and type cannot change
+    (`415 overwrite_cannot_change_type`). Pass `if_match` with the `etag` you last saw to
+    get `412 {"error":"version_conflict","current_etag":…}` instead of overwriting someone
+    else's change. → `{ file_id, filename, folder_id, size_bytes, version_no, etag }`.
+  - Needs an editor grant (`403 app_grant_is_viewer_only`) and the acting user must own
+    the folder (`403 write_requires_folder_owner`). Same limits and errors as publish.
+- **`os.drive.delete`** `{ "file_id" }` (MAN-1958) → `{ "deleted": true, "file_id", "filename" }`.
+  A soft delete into the user's Trash, restorable for 30 days. Same grant rules as write.
+  There is no hard delete.
+
+### Drive events and the picker
+
+- When a file changes in a folder granted to apps, the platform emits
+  `drive.<slug>.file.created` / `.updated` / `.deleted` events to every app granted on it,
+  whoever made the change. **A hosted app cannot
+  receive events today** (see `os.events.emit`), so do not build on them.
+- Frontend: `app.pickFromDrive({ accept: ['image/'] })` opens the OS picker; the user
+  picks; you get a ~5-min signed URL for that one file. `sdk-api.md` covers it, including
+  the sender check it depends on.
 
 Full chapter: `docs/handoff/V2_DEVELOPER_GUIDE.md` ("Two storages", "Saving a
 document into the user's Drive", "Working in a granted folder").
 
 ---
 
-## `os.calendar.*` — the user's calendar (user-context required)
+## `os.calendar.*` — the user's calendar (user context required)
 
 Two capabilities over the OS calendar store — the same service the builtin Calendar UI
 and the OS Assistant's agent tools write through, never a second copy. Both are
 `auth_mode: "user"`: every call MUST forward the inbound `X-Manaurum-User-Context` JWT
-(60s TTL — forward immediately, never store), or you get `403 user_context_required`.
-Declare each one you use in `requires_capabilities`.
+(60 s TTL — forward immediately, never store), or you get `403 user_context_required`.
+Declare each one you use in `requires_capabilities`. There is no update or delete.
 
-Events are owned by the **acting user**, not by your app. Your `app_id` is recorded as the
-event's `source_app` so the calendar can show provenance, but it does not scope reads.
+Events are owned by the **acting user**, not by your app. The `X-Manaurum-App-Id` you send
+is recorded, as sent, as the event's `source_app`, so send the same form every time.
 
 ### `os.calendar.create_event` — create (or idempotently upsert) an event
 
@@ -299,8 +397,6 @@ event's `source_app` so the calendar can show provenance, but it does not scope 
 | `description` | string | optional | |
 | `source_ref` | string | optional | **Your** id for the thing the event represents. |
 
-`additionalProperties: false` — an unlisted field is `422 input_schema_violation`.
-
 **Output:** the created event —
 
 ```json
@@ -313,13 +409,13 @@ event's `source_app` so the calendar can show provenance, but it does not scope 
 ```
 
 **Use `source_ref` for anything you may re-sync.** With it, the write is an idempotent
-upsert keyed by `(user, your app, source_ref)` — call it again with new times and the same
-row is updated. Without it, every call creates a NEW event, so a retry duplicates.
+upsert keyed by `(user, source_app, source_ref)` — call it again with new times and the
+same row is updated. Without it, every call creates a NEW event, so a retry duplicates.
 
 ### `os.calendar.list_events` — read the user's events
 
 **Input:** `{ "start": "2026-07-01T00:00:00Z", "end": "2026-08-01T00:00:00Z" }` — both
-optional, `additionalProperties: false`. Omitting a bound makes that side open-ended.
+optional. Omitting a bound makes that side open-ended.
 
 **Output:** `{ "events": [ <same shape as above>, … ] }`, ordered by `start_at`.
 
@@ -327,69 +423,144 @@ Three things to know before you build on it:
 
 - **Overlap, not containment.** An event is returned when `start_at < end` AND
   `end_at > start`, so multi-day and in-progress events appear.
-- **You see the user's WHOLE calendar**, not just events your app created — including
-  Google-synced ones. Filter on `source_app` yourself if you only want your own.
+- **You see the user's WHOLE calendar**, not just events your app created. Filter on
+  `source_app` yourself if you only want your own.
+- **A recurring event comes back once**, as its master row, not once per occurrence.
+  Cancelled events are left out, and `description` is not returned.
 - **No pagination and no server-side cap.** An open-ended range returns every event the
   user has. Always pass a bounded `start`/`end`.
 
-**Errors:** the gateway gates above, plus `422 input_schema_violation`. A malformed
-date-time surfaces as `500 handler_exception`, not a 422 — validate your ISO8601 before
-sending.
-
-> **Codegen auto-detector caveat.** `os.calendar.*`, `os.drive.*` and `os.files.list` are absent
-> from the capability auto-detector (`KNOWN_CAPABILITIES` in `app_builder_v2_capabilities.py` —
-> the name is legacy, the file is live and shared by the codegen path), so generated code
-> calling them will NOT be reconciled into the generated manifest and will `403
-> capability_not_granted` at runtime. Add them to `requires_capabilities` by hand.
+**Errors:** the gates above. A malformed date-time is **`500 handler_exception`**, not a
+422 — validate your ISO8601 before sending.
 
 ---
 
-## `os.ai.complete` — LLM completion (BYOK)
+## `os.locations.list` / `os.locations.get` — the tenant's places (MAN-2185)
 
-The tenant's API key is used (configured in Settings → Workspace → Интеграции). Five providers supported: `openai`, `anthropic`, `gemini`, `deepseek`, `groq`.
+Resolve a `location_id` the tenant uses elsewhere (a shop, a warehouse) to a name. Read-only,
+`auth_mode: "app"`.
+
+- **`os.locations.list`** `{ "kind": "sales_point" | "warehouse" }` (optional) →
+  `{ "locations": [{ "id", "name", "kind" }], "count" }`. At most 500, no paging.
+- **`os.locations.get`** `{ "location_id": "<uuid>" }` → `{ "id", "name", "kind" }`.
+  `404 location_not_found` for one that does not exist **or** belongs to another tenant.
+
+---
+
+## The AI family — what all seven share
+
+`os.ai.complete`, `os.ai.embed`, `os.ai.transcribe`, `os.ai.image_submit`,
+`os.ai.image_poll`, `os.ai.providers` and `os.ocr.extract`:
+
+- **All are sensitive** (the `os.ai.` / `os.ocr.` prefixes). With strict grants switched on
+  they are not seeded at install and a tenant admin has to grant them.
+- **None works for a `runtime.mode: dev` app** — `403 capability_denied_in_dev_mode`.
+- **None has a daily quota**, so `429 quota_exceeded` cannot fire for them. The limit that
+  does fire is the shared-AI spend cap on `os.ai.complete` (below).
+- **Errors come in two shapes.** Some `detail`s are a bare string
+  (`"upstream_error:openai"`, `"audio_too_large"`, `"ai_provider_not_configured"`), some an
+  object (`{"error": "…", …}`). Handle both.
+- **A cost that cannot be priced is `null`**, never `0`; `cost_known` says which.
+- **Upstream timeouts are long** (180 s for completion, embedding and OCR), but a request a
+  browser makes to your app is cut at **30 s** by the gateway (`504 upstream_timeout`). A
+  slow completion inside a browser-initiated `/api/*` call fails there first. Run it as a
+  background job your page polls, or declare the route `"streaming": true` and stream (the
+  30 s cut applies to buffered routes; streams have their own limits, `v2-platform.md`).
+
+---
+
+## `os.ai.complete` — text completion
+
+**Which model answers depends on whether you name one.** Since MAN-2412:
+
+- **Name neither `provider` nor `model` (the default, and the recommended call).** The OS
+  uses the text backend Settings chose for **your app in this workspace**: the app's own
+  assignment if it has one, else the workspace default profile, else the workspace's older
+  agent configuration, else the company-funded
+  "ManAurum AI" model (MAN-1971). It does **not** read the tenant's BYOK keys in Settings →
+  Integrations. A workspace whose configured backend is broken fails closed
+  (`412 ai_backend_unavailable`); it never falls through to another account.
+- **Name `provider`.** The tenant's BYOK key for that provider (Settings → Integrations) is
+  used, with `model` or that provider's default. Missing key: `412 integration_not_configured`.
+- **Name only `model`.** The first configured BYOK provider (anthropic, openai, gemini,
+  deepseek, groq, in that order, with keys whose last Settings test failed moved to the
+  end) is used with your model.
+
+Exactly one backend is tried. There is no fall-through to a second provider any more.
+
+**Which workspace.** The completion is billed and governed per workspace. The gateway
+picks it from the `workspace_id` in the `X-Manaurum-User-Context` you forward, or, without
+one, from the workspaces your app is installed in. If that is more than one, send
+`X-Manaurum-Workspace-Id`; otherwise you get `412 workspace_context_required`. Forwarding
+the user context is the simple way to never think about this.
 
 **Input:**
 
 ```json
 {
-  "provider": "openai",
-  "model":    "gpt-4o-mini",
   "messages": [
-    { "role": "system",  "content": "You are a helpful assistant." },
-    { "role": "user",    "content": "Hello." }
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user",   "content": "Hello." }
   ],
   "temperature": 0.2,
-  "max_tokens": 1024
+  "max_tokens": 1024,
+  "log_prompt": false
 }
 ```
 
-| Field | Required |
-|---|---|
-| `provider` | yes |
-| `model` | yes |
-| `messages` | yes (array of `{role, content}`) |
-| `temperature`, `max_tokens`, `top_p`, etc. | optional, passed through to provider |
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `messages` | array | **yes** | ≥ 1 item; each `{role, content}` with `role` `system`/`user`/`assistant` and `content` a **string** (no multimodal parts, no tool calls). |
+| `provider` | string | no | `anthropic`, `deepseek`, `gemini`, `groq`, `openai`. Pins BYOK — see above. |
+| `model` | string | no | 1–256 chars. |
+| `temperature` | number | no | 0–2. |
+| `max_tokens` | integer | no | 1–200000. Omitted: the model's known output ceiling, else 4096. |
+| `log_prompt` | boolean | no | Default `true`. `false` (MAN-2158) stores a length and a tenant-salted digest instead of the prompts and the answer; tokens, cost and attribution are recorded as usual. Use it for the user's private text. |
+
+`additionalProperties: false`: **there is no passthrough** — `top_p`, `stop`, `tools` or any
+other field is `422 input_schema_violation`.
 
 **Output:**
 
 ```json
 {
   "content": "Hi! How can I help?",
-  "model":   "gpt-4o-mini",
-  "usage":   { "input_tokens": 22, "output_tokens": 8 }
+  "tokens_used": { "input": 22, "output": 8, "total": 30 },
+  "cost_usd": 0.000041,
+  "cost_known": true,
+  "provider": "manaurum",
+  "model": "<the model that answered>"
 }
 ```
 
-**Errors:**
-- `412 missing_provider_credentials` — tenant hasn't set a key for this provider in Интеграции.
-- `400 unsupported_provider` — provider not in the allowed list.
-- `502 upstream_5xx` — provider returned 5xx; passed through.
+There is **no `usage` field** — code that reads `usage.input_tokens` raises on every
+successful call. `provider` is the one actually used; an unpinned call can report
+`manaurum`, `openrouter`, `custom` and others besides the five. An empty answer, or one whose
+whole budget went to reasoning, is never returned as success.
+
+**Errors** (beyond the gates at the top of this page):
+
+| HTTP | `detail` | When |
+|---|---|---|
+| 403 | `{"error":"app_installation_required"}` | Your app has no single active install in this tenant. |
+| 403 | `{"error":"workspace_context_mismatch"}` | The forwarded user context and `X-Manaurum-Workspace-Id` name different workspaces. |
+| 400 | `{"error":"workspace_context_required"}` | `X-Manaurum-Workspace-Id` sent but blank. |
+| 412 | `{"error":"workspace_context_required", …}` | More than one workspace qualifies and nothing chose one. |
+| 403 | `{"error":"workspace_context_unavailable", …}` | No non-ephemeral workspace with your app installed (and, with user context, that the user belongs to). |
+| 403 | `{"error":"ai_disabled", …}` | Text AI is switched off for your app in Settings. Applies to pinned calls too. |
+| 412 | `{"error":"ai_backend_unavailable","message":…}` | Unpinned call, and the workspace's backend is missing, broken, or unavailable. The message says which. |
+| 412 | `{"error":"integration_not_configured","provider":…}` | `provider` pinned, no BYOK key for it. |
+| 412 | `{"error":"no_ai_provider_configured"}` | Only `model` pinned, and the tenant has no BYOK key at all. |
+| 429 | `{"error":"ai_spend_cap","subject":"user"\|"tenant","window":"day"\|"month"}` | The shared ManAurum AI spending limit is reached. Managed backend only; BYOK is never capped here. |
+| 502 | `"<provider>_upstream_error:<status>"` / `"upstream_error:<provider>"` (string) | `provider` pinned and the provider failed. `deepseek` and `groq` report as `openai_upstream_error:<status>`. |
+| 502 | `{"error":"ai_upstream_error","attempts":[{provider, model, status, reason, detail}]}` | Unpinned (or only `model`) and the backend failed. `attempts` has exactly one entry. |
 
 ---
 
-## `os.ai.embed` — embedding (BYOK)
+## `os.ai.embed` — embeddings (BYOK)
 
-Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding-004).
+The tenant's own key, from Settings → Integrations. Not routed through the workspace
+backend, and `X-Manaurum-Workspace-Id` is ignored.
 
 **Input:**
 
@@ -397,32 +568,45 @@ Two providers: `openai` (text-embedding-3-small/large), `gemini` (text-embedding
 { "provider": "openai", "model": "text-embedding-3-small", "input": "text to embed" }
 ```
 
-`input` may also be an array of strings for batch embedding.
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `provider` | string | **yes** | `openai` or `gemini`. |
+| `model` | string | **yes** | 1–256 chars. No default. |
+| `input` | string or string[] | **yes** | Non-empty. Gemini embeds an array one string at a time, sequentially. |
+| `log_prompt` | boolean | no | As on `os.ai.complete`. |
 
 **Output:**
 
 ```json
 {
   "embeddings": [[0.012, -0.034, ...]],
-  "model": "text-embedding-3-small",
-  "usage": { "input_tokens": 4 }
+  "tokens_used": { "input": 4, "output": 0, "total": 4 },
+  "cost_usd": 0.0000001, "cost_known": true,
+  "provider": "openai", "model": "text-embedding-3-small"
 }
 ```
+
+`embeddings` is always a list of vectors, even for one string. No `usage` field. Gemini's
+token count is a whitespace word count, not a tokenizer count.
+
+**Errors:** `412 {"error":"integration_not_configured","provider":…}`;
+`502 "<provider>_upstream_error:<status>"` or `"upstream_error:<provider>"` (strings).
+
+To store vectors in your own Postgres you need the `vector` extension, which the manifest
+requests with `data.extensions` and a platform operator has to approve before it is
+created.
 
 ---
 
 ## `os.ai.transcribe` — speech-to-text (BYOK, OpenAI only)
 
-Base64 audio in → transcript text out (MAN-1316). BYOK with the tenant's
-**OpenAI** key specifically — an Anthropic key alone does not cover STT.
-This is the platform STT path: the tenant's key never reaches your
-container, so BYOK transcription goes through this capability only
-(`os.http.fetch` can carry binary but caps at ~5 MB and would need your
-own API key + an egress declaration).
+Base64 audio in → transcript text out (MAN-1316). BYOK with the tenant's **OpenAI** key
+specifically — an Anthropic key alone does not cover STT. This is the platform STT path:
+the tenant's key never reaches your container. `X-Manaurum-Workspace-Id` is ignored.
 
 To RECORD audio inside the OS shell iframe, the app must also declare
-`"permissions": ["microphone"]` in its manifest (see `v2-platform.md` § 1)
-— without it the browser blocks `getUserMedia` in the iframe.
+`"permissions": ["microphone"]` in its manifest (see `v2-platform.md` §1) — without it the
+browser blocks `getUserMedia` in the iframe.
 
 **Input:**
 
@@ -438,11 +622,13 @@ To RECORD audio inside the OS shell iframe, the app must also declare
 
 | Field | Required | Notes |
 |---|---|---|
-| `audio_base64` | yes | Max **25 MB decoded** (the upstream upload limit). |
+| `audio_base64` | yes | Max **25 MiB decoded**; the string itself is capped at 35,000,000 chars (`422` beyond). Decoding is strict: a `data:` prefix, spaces or line breaks make it `400 invalid_audio_base64`. |
 | `mime_type` | optional | Default `audio/webm`. Pass what you actually recorded — Chrome MediaRecorder emits `audio/webm`, iOS Safari `audio/mp4`. |
 | `model` | optional | Default `gpt-4o-transcribe`; `whisper-1` and `gpt-4o-mini-transcribe` also work. |
 | `language` | optional | ISO-639-1 hint, e.g. `"ru"`. |
 | `prompt` | optional | Vocabulary-biasing prompt (names, domain terms), ≤ 4000 chars. |
+
+There is no `provider` and no `log_prompt` field; sending either is a `422`.
 
 **Output:**
 
@@ -450,50 +636,164 @@ To RECORD audio inside the OS shell iframe, the app must also declare
 { "text": "…transcript…", "provider": "openai", "model": "gpt-4o-transcribe" }
 ```
 
-**Errors:**
-- `400 invalid_audio_base64` — undecodable or empty base64.
-- `400 audio_too_large` — decoded audio over the 25 MiB cap.
-- `412 integration_not_configured` (`provider: "openai"`) — tenant has no
-  OpenAI key in Settings → Workspace → Интеграции.
-- `502 upstream_error:openai` — EVERY upstream failure (non-2xx, timeout,
-  transport) surfaces as this; the capability never returns 504.
+No token or cost fields.
 
-Privacy note: the platform logs only the audio size + MIME for audit —
-never the audio or the transcript. Keep your own transcript record if you
-need one.
+**Errors:**
+- `400 invalid_audio_base64` — undecodable, non-strict or empty base64.
+- `400 audio_too_large` — decoded audio over 25 MiB.
+- `412 {"error":"integration_not_configured","provider":"openai"}` — no OpenAI key.
+- `502 upstream_error:openai` — EVERY upstream failure (non-2xx, timeout, transport); the
+  status is not included. Upstream timeout is 120 s.
+
+Privacy note: the platform logs only the audio size + MIME — never the audio or the
+transcript. Keep your own transcript record if you need one.
 
 ---
 
-## `os.ocr.extract` — OCR via vision LLM (BYOK)
+## `os.ai.image_submit` / `os.ai.image_poll` — generate an image (BYOK, two calls)
 
-Two providers: `anthropic-vision` (claude-3-5-sonnet), `openai-vision` (gpt-4o).
+Image generation is a **background job**, not a request that returns a picture: one image
+takes tens of seconds (46–48 s measured for 1536×1024 `medium`), longer than the 30 s the
+gateway gives a browser request. So it is two capabilities — submit hands back a `job_id`,
+and you poll until the state is terminal. Both need the tenant flag **`platform.ai_image`**
+(off by default) and the tenant's **OpenAI** BYOK key. `os.ai.providers` tells you up front
+whether both are in place. Neither prompt nor image is ever logged.
+
+**`os.ai.image_submit` input:**
+
+```json
+{ "prompt": "a paper crane on a slate background, studio light",
+  "size": "1024x1024", "quality": "low", "format": "webp" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `prompt` | string | **yes** | 1–4000 chars. Passed through verbatim. |
+| `size` | string | no | `1024x1024` (default), `1536x1024`, `1024x1536`. |
+| `quality` | string | no | `low`, `medium` (default), `high`. Moves cost and time a lot. |
+| `format` | string | no | `webp` (default), `png`, `jpeg`. |
+| `compression` | integer | no | 0–100, default 80; ignored for `png`. |
+
+**There is no input image** — the capability generates a picture and cannot edit one you
+already hold.
+
+**Submit output:** `{ "job_id": "…", "provider": "openai", "driver_model": "gpt-5.1", "state": "pending" }`
+
+**`os.ai.image_poll` input:** `{ "job_id": "…" }`
+
+**Poll output — always HTTP 200; branch on `state`:**
+
+```json
+{ "state": "pending" }
+{ "state": "failed", "error": "<≤300 chars>" }
+{ "state": "done", "image_base64": "…", "mime_type": "image/webp",
+  "driver_model": "gpt-5.1-2025-11-13", "image_model": "gpt-image-2",
+  "tokens_used": { "driver": { "input": 42, "output": 9 }, "image": { "input": 0, "output": 1120 } },
+  "cost_usd": 0.0112, "cost_known": true }
+```
+
+`cost_usd` is a number only when both halves are priced. The platform sets no polling
+interval; every poll is one upstream request, so poll every few seconds, not in a tight
+loop. A job nobody polls to the end has its cost accounted by a sweeper 15–25 minutes
+in; polling it still works after that.
+
+**Storing the result is your job.** Decode the base64 and put the bytes in
+`os.files.upload`, whose `size_hint` must be the exact **decoded** length (MAN-2117: a
+drawing that was ready on the first poll was reported as a five-minute timeout because of
+that).
+
+**Errors:**
+
+| HTTP | `detail` | When |
+|---|---|---|
+| 403 | `{"error":"image_generation_not_enabled", …}` | `platform.ai_image` is off for the tenant (checked on submit **and** on every poll). |
+| 412 | `{"error":"integration_not_configured","provider":"openai"}` | No OpenAI key. |
+| 404 | `{"error":"image_job_not_found"}` | Poll: unknown id, or a job of another app. |
+| 502 | `{"error":"image_submit_failed" \| "image_poll_failed", "upstream_status":…, "detail":…}` | The provider refused or answered garbage. |
+| 500 | `handler_exception` | A network failure or timeout towards the provider. Treat as retryable. |
+
+---
+
+## `os.ai.providers` — what AI this app can use here
+
+Read-only discovery. Input `{}` (any field is a `422`). Uses the same workspace resolution
+as `os.ai.complete`, so its workspace errors apply; it needs `os.ai.providers` itself in the
+grants. Advisory only: nothing is reserved, and things can change before the real call.
+
+**Output:**
+
+```json
+{
+  "providers": [ { "provider": "openai", "last_test_ok": true,
+                   "serves": ["complete", "embed", "transcribe", "image"] } ],
+  "platform_fallback": true,
+  "completion": { "available": true, "selection_source": "managed_default",
+                  "display_name": "ManAurum AI", "unavailable_reason": null },
+  "image_generation_enabled": false
+}
+```
+
+- `providers` — the tenant's BYOK keys, never the keys themselves. `serves` is what each can
+  answer *here*: `complete` for all five, `embed` for openai and gemini, `transcribe` for
+  openai, `image` for openai only when the flag is on.
+- `completion` — whether an **unpinned** `os.ai.complete` will work, and with what.
+  `unavailable_reason` is `capability_not_granted`, `ai_disabled` or
+  `ai_backend_unavailable` when it will not.
+- `platform_fallback` — `true` when that default is the company-funded model.
+
+Use it to hide a button rather than fail at the click.
+
+---
+
+## `os.ocr.extract` — read a stored image or PDF (BYOK vision)
+
+The tenant's own key: **Anthropic** if configured (`claude-sonnet-4-6`), else **OpenAI**
+(`gpt-4o`). You cannot choose the provider or the model. PDFs work on Anthropic only.
 
 **Input:**
 
 ```json
 {
-  "provider": "anthropic-vision",
-  "object_key": "user-uploads/invoice.pdf",
+  "file_key": "user-uploads/invoice.png",
   "schema": { "type": "object", "properties": { "total": { "type": "number" } } }
 }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `provider` | yes | |
-| `object_key` | yes | Key in your R2 namespace (the platform fetches it). |
-| `schema` | yes | JSON Schema the extracted output is validated against. |
+| `file_key` | **yes** | A key you wrote with `os.files.upload`, **under the same `X-Manaurum-App-Id` form** (the slug). No leading `/`, no `\`, no `..`. |
+| `schema` | no | A JSON Schema the result must satisfy. Without it you get whatever the model returned. |
+
+`additionalProperties: false` — `provider`, `object_key` or `model` is a `422`.
 
 **Output:**
 
 ```json
-{ "data": { "total": 142.50 }, "model": "claude-3-5-sonnet" }
+{
+  "extracted": { "total": 142.50 },
+  "confidence": 0.92,
+  "model_used": "claude-sonnet-4-6",
+  "tokens_used": { "prompt": 1200, "completion": 40, "total": 1240 },
+  "cost_usd": 0.0042
+}
 ```
 
+- `extracted` — with `schema`, the validated object. Without it, the parsed JSON if the
+  model returned JSON (a non-object comes back as `{"value": …}`), else `{"text": "<raw>"}`.
+- `confidence` is a fixed per-provider number (0.92 Anthropic, 0.85 OpenAI), not a measure
+  of this result.
+- Note the token keys: `prompt`/`completion` here, `input`/`output` on `os.ai.*`. There is
+  no `cost_known`.
+
 **Errors:**
-- `404 object_not_found` — `object_key` doesn't exist in your namespace.
-- `422 schema_violation` — VLM output didn't match `schema`.
-- `412 missing_provider_credentials`.
+
+| HTTP | `detail` (string) | When |
+|---|---|---|
+| 400 | `invalid_file_key_…` | Empty key, leading slash, backslash, or `..`. |
+| 404 | `file_not_found` | Nothing stored under that key for this app-id form and tenant. |
+| 412 | `ai_provider_not_configured` | Neither an Anthropic nor an OpenAI key. (Not `integration_not_configured`.) |
+| 422 | `vlm_output_not_json` / `vlm_output_schema_violation` | `schema` given and the model's answer is not JSON / does not match. |
+| 500 | `handler_exception` | Any provider failure, including a PDF on OpenAI. OCR has no 502; treat a 500 here as "the provider failed". |
 
 ---
 
@@ -518,15 +818,15 @@ Three channels: `in_app` (the Notification Center on the user's desktop, free),
 |---|---|---|
 | `to_user_id` | yes | A member of your tenant. |
 | `channel` | yes | `in_app` / `email` / `sms` |
-| `body` | yes | 1–4096 chars; in-app keeps the first 2000. |
-| `title` | no | ≤ 200 chars. In-app uses the start of `body` when omitted. |
+| `body` | yes | 1–4096 chars, stored in full. SMS sends the first 1600. Email sends it **as HTML**, so escape anything a user typed. |
+| `title` | no | ≤ 200 chars. In-app uses the first 200 chars of `body` when omitted; email uses it as the subject, or "Notification" without one. |
 | `link` | no | In-app only, ≤ 1024 chars. Opaque to the platform; handed back to **your** app when the user clicks the notification (below). |
 | `data` | no | Any object. Accepted and not stored. |
 
-There is **no `user_id` and no `deep_link` field**. The input schema forbids unknown
-fields, so either one is `422 input_schema_violation`. (Up to 2.11.0 this page
-documented `deep_link: {app_id, path}`; that request never worked. A notification can
-only ever open the app that sent it.)
+There is **no `user_id` and no `deep_link` field**; either one is
+`422 input_schema_violation`. A notification can only ever open the app that sent it.
+In-app notifications expire after **7 days**. An app installed in a tenant other than the
+one it was deployed into finds no live install of itself there, so every send is a `412`.
 
 **Output — read `delivered`, not the HTTP status:**
 
@@ -549,17 +849,17 @@ A `200 {"delivered": false}` with **no** `reason` comes from a platform older th
 MAN-2516, which answered that way for every in-app send from a hosted app: nothing was
 delivered.
 
-**Errors** — anything the platform or the provider could not do is non-200. The body
-is `{"detail": {"error": …, …}}`, or `{"detail": "<code>"}` for the two string codes.
+**Errors** — anything the platform or the provider could not do is non-200.
 
 | HTTP | `detail` / `detail.error` | Meaning | Retry? |
 |---|---|---|---|
-| 403 | `capability_not_granted` | The install is not granted this capability (gateway gate, above). A redeploy never widens an existing install's grant, so a capability you added in a later version is missing; with strict grants switched on, this **sensitive** capability is withheld even at first install. A grant screen is not yet available to tenant admins (MAN-1112); ask the platform operator. | no |
+| 403 | `capability_not_granted` | The install is not granted this **sensitive** capability. See the gates at the top. A grant screen is not yet available to tenant admins (MAN-1112); ask the platform operator. | no |
 | 404 | `user_not_in_tenant` | `to_user_id` is not a member of your tenant. | no |
-| 412 | `in_app_unavailable`, `reason: app_not_live` | The platform found no live install of your app in this tenant (not deployed, disabled, or uninstalled), so it cannot deliver **any** in-app notification. | no — fix the install |
+| 412 | `in_app_unavailable`, `reason: app_not_live` | No live install of your app in this tenant (not deployed, disabled, or uninstalled), so **no** in-app notification can be delivered. | no — fix the install |
 | 412 | `in_app_unavailable`, `reason: app_slug_conflict` | Your `app_id` is also a built-in's or a catalogue app's, so the desktop could not tell your notifications from that app's. | no — redeploy under another `app_id` |
+| 412 | `app_not_live` | The same, for `email` / `sms`. | no — fix the install |
 | 412 | `integration_not_configured` | `email` / `sms` without the tenant's Resend / Twilio keys. | after the admin connects them |
-| 429 | `notification_rate_limited` (+ `window`: `hour`/`day`, `limit`) | In-app only: your app has already sent this recipient 10 notifications in the last hour or 50 in the last day. Muted or refused sends do not count. | later — batch or summarise instead |
+| 429 | `notification_rate_limited` (+ `window`: `hour`/`day`, `limit`) | In-app only: your app has already sent this recipient 10 notifications in the last hour or 50 in the last day. Muted or refused sends do not count. Email and SMS have no rate limit. | later — batch or summarise instead |
 | 501 | `sms_unavailable` | The platform stores no phone numbers, so no SMS can be delivered. | no |
 | 502 | `provider_rejected` (+ `provider_status`) | The provider refused; nothing was sent. | no |
 | 502 | `provider_unreachable` | The provider could not be reached; nothing was sent. | yes, later |
@@ -571,38 +871,49 @@ to your iframe — `payload` is `{}` when you sent no `link`. It arrives inside
 `manaurum:init` as `payload.deepLink` when the click opened your window, and as a
 `manaurum:deep-link` message when the window was already open. The platform does not
 navigate your iframe; route to `link` yourself. The v2 SDK does not surface either
-message (`sdk-api.md`), so add your own `message` listener — and attach it synchronously
-at startup: the shell sends the link once and then forgets it, so a listener registered
-later (in a React effect, after a fetch) may miss it.
+message (`sdk-api.md`), so add your own `message` listener — attach it synchronously at
+startup, after the shell-sender check: the shell sends the link once and then forgets it,
+so a listener registered later (in a React effect, after a fetch) may miss it.
 
 ---
 
-## `os.events.emit` — publish an inter-app event
+## `os.events.emit` — publish an event (emit only)
 
-Writes to `events_outbox` in the caller's transaction. The dispatcher picks it up and delivers to subscribers (other apps that registered for this event type) at-least-once with backoff: 1m / 5m / 15m / 1h / 4h / DLQ-24h.
+Writes the event to the platform's outbox. **App id: the UUID.**
+
+**No hosted v2 app can receive events today.** Declaring them under `consumes.events`
+does nothing, and the dispatcher has no subscribers
+to deliver to (MAN-133). Emitting is harmless, but do not build a feature on another app,
+or your own, hearing it.
 
 **Input:**
 
 ```json
 {
-  "event_name": "invoice.created",
-  "payload":    { "invoice_id": "...", "total": 100 }
+  "event_name":      "invoice.created",
+  "payload":         { "invoice_id": "...", "total": 100 },
+  "idempotency_key": "invoice-123-created"
 }
 ```
 
-| Field | Required |
-|---|---|
-| `event_name` | yes — `<group>.<verb>` form, e.g. `invoice.created`, `user.signed_up` |
-| `payload` | yes — any JSON |
+| Field | Required | Notes |
+|---|---|---|
+| `event_name` | yes | 1–256 chars, `<group>.<verb>`, e.g. `invoice.created`. Not namespaced to your app. |
+| `payload` | yes | A JSON **object** (not a list or a scalar). |
+| `idempotency_key` | no | ≤ 256 chars. A repeat returns the first event's id, and the first payload wins. |
 
 **Output:** `{ "event_id": "<uuid>", "queued_at": "<iso>" }`
+
+**Errors:** `412 app_id_must_be_uuid`. There is no rate limit.
 
 ---
 
 ## `os.http.fetch` — external HTTP (egress allow-list)
 
-Hosts must appear in `manifest.runtime.egress_allowed_hosts`. Default-deny.
-HTTPS only.
+The host must appear in `manifest.runtime.egress_allowed_hosts` of your **current
+version**: an exact, case-insensitive host match, no wildcards, port ignored. Default-deny,
+HTTPS only. This is the only egress the platform checks — your container's own outbound
+connections are not filtered — so route through it whatever must be auditable.
 
 **Input:**
 
@@ -620,16 +931,16 @@ HTTPS only.
 |---|---|---|
 | `url` | yes | `https://` only. |
 | `method` | optional | `GET` (default) / `POST` / `PUT` / `DELETE`. |
-| `headers` | optional | Plain object. |
+| `headers` | optional | Plain object, sent as is. |
 | `body` | optional | **String** body — for text/JSON payloads. |
-| `body_base64` | optional | **Binary** request body, base64-encoded (MAN-1316). Mutually exclusive with `body` — sending both is an error. Max ~5 MB decoded. |
+| `body_base64` | optional | **Binary** request body, base64-encoded (MAN-1316). Mutually exclusive with `body`. ≤ 7,000,000 chars (~5 MB decoded). |
 | `response_format` | optional | `"text"` (default — response `body` is UTF-8 with replacement, LOSSY for binary) or `"base64"` (lossless — exact bytes in `body_base64`, `body` comes back empty). |
 | `timeout_ms` | optional | 1–30000, default 10000. (Milliseconds — there is no `timeout_seconds` field.) |
 
-**Binary payloads — the rule:** the default `text` wire corrupts binary
-data in BOTH directions. To send raw bytes (file uploads, audio), base64
-them into `body_base64`; to receive raw bytes (file downloads), pass
-`response_format: "base64"` and read `body_base64` from the output.
+**Binary payloads — the rule:** the default `text` wire corrupts binary data in BOTH
+directions. To send raw bytes (file uploads, audio), base64 them into `body_base64`; to
+receive raw bytes (file downloads), pass `response_format: "base64"` and read
+`body_base64` from the output.
 
 **Output:**
 
@@ -644,33 +955,37 @@ them into `body_base64`; to receive raw bytes (file downloads), pass
 }
 ```
 
-Upstream 4xx/5xx are NOT errors — they come back in `status` and your app
-handles them. Redirects are not followed; handle `Location` yourself with
-a second call (it re-passes the allow-list checks, so the redirect's host has to be
-in `egress_allowed_hosts` too). Your `headers` are sent verbatim on every call, so
-when the `Location` host differs from the one you called, drop `Authorization`
-and any other credential before following it — Jira answers attachment downloads
-with a `303` to a CDN, and following it with the headers unchanged hands your
-Jira token to the CDN.
+Upstream 4xx/5xx are NOT errors — they come back in `status` and your app handles them.
+Redirects are not followed; handle `Location` yourself with a second call (it re-passes the
+allow-list checks, so the redirect's host has to be in `egress_allowed_hosts` too). Your
+`headers` are sent verbatim on every call, so when the `Location` host differs from the
+one you called, drop `Authorization` and any other credential before following it — Jira
+answers attachment downloads with a `303` to a CDN, and following it with the headers
+unchanged hands your Jira token to the CDN.
 
 **Errors:**
-- `412 egress_not_declared` — manifest declares no egress hosts at all.
+- `412 egress_not_declared` — your current version declares no egress hosts.
 - `412 host_not_in_allow_list` — URL host isn't in the declared list.
-- `400 unsafe_url` — non-https scheme, loopback / private-range target, or
-  a hostname resolving to one.
-- `422 input_schema_violation` — both body fields sent (rejected at schema
-  validation; older platforms surface it as the handler's
+- `400 unsafe_url` — non-https scheme, a local name, a private-range IP, or a hostname that
+  resolves to one.
+- `422 input_schema_violation` — both body fields sent (older platforms:
   `400 body_and_body_base64_exclusive`).
 - `400 invalid_body_base64` — `body_base64` undecodable.
 - `502 upstream_unreachable` — DNS / connect / TLS failure.
-- `502 upstream_response_too_large` — response over the 5 MB cap.
+- `502 upstream_response_too_large` — response over the 5 MiB cap.
 - `504 upstream_timeout` — upstream didn't answer within `timeout_ms`.
+
+**Installed in another tenant?** The allow-list is looked up in the calling tenant, so an
+app deployed by one tenant and installed in another gets `412 egress_not_declared` there.
 
 ---
 
-## `os.compliance.audit_query` — read your audit trail
+## `os.compliance.audit_query` — read the capability audit trail
 
-Reader-only over `capability_audit_log`, scoped to the calling tenant + app.
+Reader over the capability audit log. **It is scoped to the tenant, not to your app:**
+without `app_filter` it returns every app's calls in the tenant (MAN-2253 tracks narrowing
+it). Pass `app_filter` yourself, and do not show its output to users as "your app's
+activity" without filtering.
 
 **Input:**
 
@@ -679,17 +994,18 @@ Reader-only over `capability_audit_log`, scoped to the calling tenant + app.
   "since":              "2026-05-01T00:00:00Z",
   "until":              "2026-05-08T00:00:00Z",
   "capability_filter":  "os.kv.set",
+  "app_filter":         "my-app",
   "limit":              100
 }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `since` | yes | ISO8601. |
+| `since` | yes | ISO8601. A malformed value is `500 handler_exception`. |
 | `until` | optional | ISO8601. |
-| `capability_filter` | optional | exact-match on capability name. |
-| `app_filter` | optional | exact-match on app_id. |
-| `limit` | optional | 1..1000, clamped. |
+| `capability_filter` | optional | exact match on capability name. |
+| `app_filter` | optional | exact match on the app id **as it was sent** by the calling app. |
+| `limit` | optional | 1–1000, default 100. |
 
 **Output:**
 
@@ -699,6 +1015,7 @@ Reader-only over `capability_audit_log`, scoped to the calling tenant + app.
     {
       "event_id": "...",
       "correlation_id": "...",
+      "app_id": "my-app",
       "capability_name": "os.kv.set",
       "capability_version": 1,
       "actor_developer_user_id": "...",
@@ -708,52 +1025,80 @@ Reader-only over `capability_audit_log`, scoped to the calling tenant + app.
       "started_at": "..."
     }
   ],
-  "total":     2,
+  "total":     1,
   "has_more":  false
 }
 ```
 
+Entries are newest first. `total` is the number returned, not the number matching, and
+`has_more` is only `entries.length == limit`. A failure your handler raised is recorded as
+`error_code: "handler_http_error"`, not with its own code.
+
 ---
 
-## `os.apps.call` — RPC to another app
+## `os.apps.call` — call a built-in app's method
 
-Synchronous in-process call (today; hosted-runtime dispatch deferred). The other app must be installed in the same tenant.
+Synchronous, in-process. **Only four methods of two built-in apps can be called, and a
+hosted v2 app cannot be a target** — there is no RPC between v2 apps. Each target is
+switched on per tenant, and an unflagged tenant gets a bare `404`.
+
+| `target_app_id` | `method` | Returns |
+|---|---|---|
+| `receptions` | `stock.levels` | stock per item |
+| `menu-profitability` | `recipes.ingredients` | recipes with their ingredients |
+| `menu-profitability` | `sales.daily_totals` | units and revenue per day |
+| `menu-profitability` | `sales.dish_totals` | units and revenue per dish |
 
 **Input:**
 
 ```json
-{
-  "app_id":  "other-app",
-  "method":  "invoices.get",
-  "version": "1",
-  "args":    { "id": "..." },
-  "timeout_seconds": 10
-}
+{ "target_app_id": "receptions", "method": "stock.levels", "args": { "limit": 200 },
+  "version": 1, "timeout_ms": 10000 }
 ```
 
-**Output:** Whatever the target method returns. Wrapped in `{ "output": ... }` like every other capability.
+| Field | Required | Notes |
+|---|---|---|
+| `target_app_id` | yes | From the table. |
+| `method` | yes | From the table. |
+| `args` | yes | An object; validated against the method's own schema. |
+| `version` | no | Integer ≥ 1, default 1. |
+| `timeout_ms` | no | 1–30000, default 10000. |
 
-**Errors:**
-- `404 method_not_found` — other app didn't register `(method, version)`.
-- `503 timeout` — exceeded `timeout_seconds` (max 30s).
+**Output:** `{ "result": <the method's answer>, "latency_ms": 12, "target_version": "1" }`
+
+All four are behind flags only the burgeris tenant has today.
+
+**Errors:** `404 rpc_target_not_found` (or a bare `404` for an unflagged tenant),
+`422 rpc_args_invalid` from the method itself,
+`422 rpc_args_schema_violation`, `503 rpc_target_timeout`, `503 rpc_target_unavailable`.
 
 ---
 
-## `os.apps.bulk_export` — streaming export
+## `os.apps.bulk_export` — streaming export (not usable today)
 
-NDJSON streaming response. 100 MB hard cap; if reached, the last line is `{"_error": "size_limit"}`.
-
-**Input:** `{ "dataset_name": "invoices.history", "version": "1", "args": {} }`
-
-**Output:** `application/x-ndjson` — one JSON object per line.
+Declared, but **no dataset is registered on the platform**, so every call answers
+`404 target_app_not_found`. Do not build on it. For the record, the input is
+`{ "target_app_id", "dataset", "since"?, "until"?, "limit"? }`; the output would be an
+`application/x-ndjson` stream capped at 100 MiB, ending with
+`{"_error":"bulk_export_size_cap_exceeded"}` when cut.
 
 ---
 
-## Quotas
+## Quotas and rate limits
 
-Daily quotas per `(app, capability)` are tracked in `capability_quota_daily`. Default limits TBD (currently `null` = unlimited; will be set per-tenant config). When tripped: `429 quota_exceeded`.
+**No capability declares a daily quota**, so `429 quota_exceeded` does not happen today.
+The limits that do fire are per capability:
 
-For local dev / heavy testing, ask the platform team or use a separate test tenant.
+| Limit | Where | Answer |
+|---|---|---|
+| 20 upload URLs a minute, 200 an hour, per (app, tenant) | `os.files.upload` | `429 upload_rate_limited` + `Retry-After: 60` |
+| 1 GiB per (app, tenant) | `os.files.upload` | `413 namespace_quota_exceeded` |
+| 50 MiB per object | `os.files.upload` (`size_hint`) | `422 input_schema_violation` |
+| 20 saves a minute, 200 an hour, per user | `os.drive.publish` / `.write` | `429 publish_rate_limited` |
+| 10 a hour, 50 a day, per (app, recipient) | `os.notifications.send_to_user`, in-app | `429 notification_rate_limited` |
+| Shared ManAurum AI spend, per user and per tenant, day and month | `os.ai.complete` on the managed backend | `429 ai_spend_cap` |
+
+The manifest key `quota_per_tenant_per_day` is accepted and has no effect.
 
 ---
 
@@ -762,11 +1107,12 @@ For local dev / heavy testing, ask the platform team or use a separate test tena
 The registry is the source of truth: `backend/app/services/capabilities/` in the monorepo —
 `grep -rn 'name="os\.' backend/app/services/capabilities/` enumerates every capability that
 exists, and each `CapabilityDefinition` carries the `auth_mode` and input schema this page
-describes.
+describes. This page was last checked against Core `main` 8fe6f5d (2026-10-02),
+capability by capability.
 
 When a capability is added or changed in the monorepo, the checklist that must be walked is
-`docs/standards/ADDING_A_V2_CAPABILITY.md` (active standard since 2026-07-19). Its § 9
-covers this plugin explicitly — this file, `manaurum-app/SKILL.md`, `v2-platform.md` § 1 and
-`manaurum-setup/SKILL.md` all have to move with the code, because a stale skill actively
-generates broken apps. There is **no** automated parity check between the registry and any
-documentation surface (this one included); the checklist is the mechanism.
+`docs/standards/ADDING_A_V2_CAPABILITY.md`. Its § 9 covers this plugin explicitly — this
+file, `manaurum-app/SKILL.md`, `v2-platform.md` § 1 and `manaurum-setup/SKILL.md` all have
+to move with the code, because a stale skill actively generates broken apps. There is
+**no** automated parity check between the registry and any documentation surface (this
+one included); the checklist is the mechanism.

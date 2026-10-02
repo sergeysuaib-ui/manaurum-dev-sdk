@@ -95,18 +95,18 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 | `requires_capabilities` | array | `[{name, version, quota_per_tenant_per_day?}]` — the capabilities your app cannot work without. |
 | `optional_capabilities` | array | Same shape as `requires_capabilities`, for capabilities you use if granted but don't require. App Store v2 reads this to compute the optional grant set the tenant admin sees at install time. |
 | `agent_capabilities` | array | Tools this app exposes to the **OS Assistant** — see the subsection below. Each entry `{name, description, input_schema, …}`; `name` is snake_case `^[a-z][a-z0-9_]*$`, ≤64 chars. |
-| `provides` | object | Inter-app contracts you expose: `{rpc: [...], events: [...]}`. Another app calling you via `os.apps.call` must find the method here. |
-| `consumes` | object | Inter-app contracts you depend on: `{rpc: [...], events: [...]}`. **Declare every RPC you call with `os.apps.call` and every event you subscribe to.** |
+| `provides` | object | Inter-app contracts you expose: `{rpc: [...], events: [...]}`. Informational today: `os.apps.call` reaches only built-in apps, so no other app can call a method you list here. |
+| `consumes` | object | Inter-app contracts you depend on: `{rpc: [...], events: [...]}`. Nothing reads it today: listing an event here subscribes you to nothing, because no hosted app can receive events (MAN-133). |
 | `webhooks` | array | `[{name, path, signature}]`. **Validated for shape; Core does nothing with it in v2.x** — the platform webhook gateway is deferred. Expose your own handler via `runtime.api_routes` with `auth: "anonymous"` and verify the signature yourself. |
 | `schedules` | array | `[{name, cron, handler_path, timezone?}]`. **Validated for shape; Core does not invoke the handler in v2.x** — platform cron is deferred. Run an in-container scheduler and keep the declaration as documentation of intent. |
 | `tenant_config` | object | `{schema, required_at_install}` — per-tenant config collected at install time. Note: install-time values land in `v2_app_installs.config`, which the `os.tenant_config.get` capability does **not** currently read. Don't build on the round-trip yet. |
 | `offline` | object | Manaurum Edge declaration: `features` (operations that stay usable during a WAN outage), `reference_data` (cloud-owned datasets replicated read-only to the on-site box), `streams` (`[{name, type: "ledger" \| "state"}]`). |
-| `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `["microphone"]` (MAN-1316). Required to record audio inside the shell iframe; the user still sees the browser's own mic prompt. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
+| `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `microphone` (MAN-1316) and `camera` (MAN-1920); `uniqueItems`. Required for a LIVE `getUserMedia` stream inside the shell iframe; a still photo through `<input type="file" capture>` is not gated and needs no declaration. The user still sees the browser's own prompt. Refused when `runtime.mode` is `byo` (MAN-1922), and the shell delegates nothing to a frame whose address the manifest chose. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
 | `migrate_command` | string[] | In the schema, but **Core never executes it** — there is no call site (`production.py:40-43`, "reserved"). An app whose schema depends on it deploys green with no tables. Use `migrations/*.sql` instead — see § 7. |
 | `migration` | object | `{breaking, reason, rollback_strategy}`. `breaking: true` lets the DDL validator through *destructive* statements (and only those — see § 7). Default `false`. |
 | `metadata` | object | App Store rendering: `category`, `tags`, `description`, `homepage`, `support_email`, `source_url`. **This is where a root-level `description` belongs.** |
 
-Grant enforcement is **unconditional**, not aspirational: every hosted-app capability call is checked against the install's `granted_capabilities` before quota, dispatch and audit. A capability absent from the list — **or an install whose list is empty** — is `403 capability_not_granted`. Wildcard `"*"` grants everything. Only dev-mode apps and active BYO hosts short-circuit the check. Operational consequence: adding a capability to your manifest and redeploying is **not** enough — the tenant's install grant set has to be extended too, or every call 403s.
+Grant enforcement applies to every capability call from an app with an install row in the calling tenant (every deployed hosted app, in its own tenant): the call is checked against the install's `granted_capabilities` before dispatch and audit. An app id with no install row there skips the check today (MAN-2199). A capability absent from the list — **or an install whose list is empty** — is `403 capability_not_granted`. There is no wildcard grant (MAN-1585). Only dev-mode apps and active BYO hosts short-circuit the check. Operational consequence: adding a capability to your manifest and redeploying is **not** enough — the tenant's install grant set has to be extended too, or every call 403s.
 
 ### `agent_capabilities[]` — expose your app to the OS Assistant
 
@@ -324,7 +324,7 @@ Your endpoint must implement the BYO health-check contract (`GET /.well-known/ma
 
 > **No editor ships for this mode.** It was driven by an in-browser Monaco editor called *App Builder*, removed from the product on 2026-08-07 — Aurum Studio is the only builder Manaurum ships, and it publishes straight to `hosted`. The mode, its tables and its routes still exist, so the description below stays accurate, but you cannot reach it from the OS and **you should not target it**. Use `hosted`.
 
-Files live in `dev_apps` / `dev_app_files` tables; output served via `/api/dev/v2/dev-apps/<id>/serve/...`. Limited capability allow-list (no `os.payments.*`, no `os.http.fetch`, no `os.notifications.send_to_user`, no `os.cron.*`, no `os.events.emit`, no `os.apps.call`).
+Files live in `dev_apps` / `dev_app_files` tables; output served via `/api/dev/v2/dev-apps/<id>/serve/...`. Capability allow-list: `os.kv.*`, `os.files.*`, `os.tenant_config.*`, `os.secrets.*` and `os.compliance.audit_query`; everything else is `403 capability_denied_in_dev_mode`.
 
 ### `egress_allowed_hosts`
 
@@ -338,49 +338,19 @@ The schema declares it, as an array of strings; a host there is not checked for 
 
 ## 3. Capabilities — the contract
 
-Every capability call is:
+Every capability call is a `POST ${MANAURUM_CORE_URL}/api/capability/<name>` from your
+container, with `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}`, `X-Manaurum-Tenant-Id`
+and `X-Manaurum-App-Id` (the UUID for `os.kv.*` and `os.events.emit`, your slug for
+everything else), the user's `X-Manaurum-User-Context` when you act for them, and the
+capability's input as the JSON body. Success is `{ "output": …, "correlation_id": … }`.
 
-```
-POST https://manaurum.com/api/capability/<name>
-Authorization: Bearer mna_<keyid>_<secret>
-X-Manaurum-Tenant-Id: <uuid>
-X-Manaurum-App-Id:    <uuid>
-Content-Type: application/json
-
-<body matching the capability's input schema>
-```
-
-Successful response shape:
-
-```json
-{
-  "output": { /* capability-specific */ },
-  "correlation_id": "<uuid>"
-}
-```
-
-Streaming capabilities (`os.apps.bulk_export`) return `application/x-ndjson` instead.
-
-### Universal error codes
-
-| HTTP | `detail` | Why |
-|---|---|---|
-| 401 | `invalid_credential` | Bad/expired/revoked `mna_*`. |
-| 401 | `missing_authorization` | No `Authorization` header. |
-| 403 | `app_id_out_of_scope` | Token's `apps` array doesn't include the requested `X-Manaurum-App-Id`. Wildcard `*` is honored. |
-| 404 | (none) | Capability name not registered. |
-| 412 | `missing_tenant_id_header` | `X-Manaurum-Tenant-Id` not set. |
-| 412 | `missing_app_id_header` | `X-Manaurum-App-Id` not set. |
-| 412 | `app_id_must_be_uuid` | App-id header is a slug, not a UUID. Use `MANAURUM_APP_ID` env var. |
-| 412 | `egress_not_declared` | (`os.http.fetch` only) host not in manifest egress. |
-| 422 | `input_schema_violation` | Body fails the capability's JSON Schema. Read `path` + `message`. |
-| 429 | `quota_exceeded` | Per-(app, capability) daily quota tripped. |
-| 500 | `handler_exception` | Server-side failure. Logged with `correlation_id`. |
-| 502 | `upstream_5xx` | (BYOK / external) provider returned 5xx. |
+The full contract — the header rules, every gate the gateway runs before your capability
+and its error code, and each capability's input, output and errors — is in
+`references/capabilities-reference.md`, and lives only there.
 
 ### Audit + quota
 
-Every call (success or failure) lands in `capability_audit_log` (FORCE-RLS by tenant). Read your own via `os.compliance.audit_query`. Daily counts in `capability_quota_daily`.
+Every call (success or failure) lands in `capability_audit_log` (FORCE-RLS by tenant). Read it via `os.compliance.audit_query` — the whole tenant's, unless you pass `app_filter`. Daily counts in `capability_quota_daily`.
 
 ---
 
