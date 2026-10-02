@@ -208,9 +208,20 @@ class HookTimedOut:
     stderr = "timed out - hooks.json gives this hook 5 seconds"
 
 
-def run_hook(plugin_root: Path):
-    """version_check.py as the harness runs it: CLAUDE_PLUGIN_ROOT, no args."""
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plugin_root))
+def run_hook(plugin_root: Path, latest: str = ""):
+    """version_check.py as the harness runs it: CLAUDE_PLUGIN_ROOT, no args.
+
+    Hermetic: no network, and no marketplace clone from the machine running
+    the smoke. `latest` stands in for the version GitHub would report.
+    """
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plugin_root),
+               MANAURUM_SDK_MARKETPLACE_DIR=str(plugin_root / "no-marketplace-here"))
+    env.pop("MANAURUM_SDK_LATEST_VERSION", None)
+    env.pop("MANAURUM_SDK_NO_UPDATE_CHECK", None)
+    if latest:
+        env["MANAURUM_SDK_LATEST_VERSION"] = latest
+    else:
+        env["MANAURUM_SDK_NO_UPDATE_CHECK"] = "1"
     try:
         return subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "version_check.py")],
@@ -239,6 +250,23 @@ def smoke_version_check(problems: list) -> None:
 
 def _smoke_version_check(cache: Path, problems: list) -> None:
     current = plugin_cache(cache, "2.9.0")
+
+    # Alone in its cache, but a newer release exists: the 2.7.2 machine. The
+    # hook must say so, name the version, and say how to update.
+    result = run_hook(current, latest="99.0.0")
+    context = ""
+    try:
+        context = json.loads(result.stdout.strip() or "{}").get(
+            "hookSpecificOutput", {}).get("additionalContext", "")
+    except ValueError:
+        pass
+    if "99.0.0" not in context or "claude plugin update" not in context:
+        problems.append("scripts/version_check.py: a released version newer than every "
+                        "copy on disk was not reported with how to update (got %r)"
+                        % result.stdout.strip()[:160])
+    if result.returncode != 0:
+        problems.append("scripts/version_check.py: exit %d when a newer release exists"
+                        % result.returncode)
 
     result = run_hook(current)
     if result.returncode != 0:

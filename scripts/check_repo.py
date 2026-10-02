@@ -34,6 +34,7 @@ verified, and CI prints the list every run so a human can re-check it.
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import sys
 from datetime import date
@@ -185,6 +186,55 @@ PAIRED_CLAIMS = [
      "must state the ~500px headless layout-viewport floor, or a reader will "
      "shrink the window instead of using ?width="),
 ]
+
+# ── Facts that were true once ───────────────────────────────────────────────
+# Each was taught here, in up to twelve places at once, and kept being taught
+# for weeks after Core changed (the 2026-10-02 audit, docs/audits/). Once a
+# sentence like this has been wrong, it is not allowed back: the regex names
+# the claim, the second string what is true now.
+STALE_FACTS = [
+    (re.compile(r"(?i)there is no readiness probe|no readiness probe (?:on|in|anywhere)"),
+     "the deploy has a readiness probe (MAN-1369): a container that does not answer "
+     "fails the deploy and is rolled back"),
+    (re.compile(r"(?i)(?:green deploy|deploys? green)[^.\n]{0,60}502|every request 502s|"
+                r"502s? on every (?:single )?request"),
+     "a wrong port fails the readiness probe; it does not deploy green and 502"),
+    (re.compile(r"(?i)\*not\* strict|`?runtime`?[^.\n]{0,30}\bnot strict"),
+     "`runtime` is strict (additionalProperties: false) since MAN-1899"),
+    (re.compile(r"(?i)/agent[^\n]{0,80}public internet|public internet[^\n]{0,80}/agent|"
+                r"Traefik straight to (?:your|the|this) container"),
+     "the gateway refuses /agent/* on the public host (MAN-1432); the reason to verify "
+     "the JWT is the shared container network"),
+    (re.compile(r"(?i)version still activates|migration[^.\n]{0,80}still activates"),
+     "a failed migration stops the version from going live (MAN-2510)"),
+    (re.compile(r"(?i)validated (?:only )?inside the job|only three things fail synchronously"),
+     "POST /deploy refuses a bad manifest, slug, owner, version or archive synchronously"),
+    (re.compile(r'"apps"\s*:\s*\[\s*"\*"\s*\]'),
+     "a wildcard token scope is refused (MAN-1585); a new app needs an owner token"),
+    (re.compile(r"(?i)gateway rejects (?:it|the user[_ ]?context)"),
+     "the capability gateway requires the user context for os.drive.* and os.calendar.*"),
+    (re.compile(r"DROP\[s\] everything else|(?i:egress[^.\n]{0,80}drops? everything else)"),
+     "egress_allowed_hosts is enforced by os.http.fetch only"),
+    (re.compile(r"(?i)(?:does not|doesn't) remove (?:a copy|one|the copy|the one) the client sent|"
+                r"gateway adds its own copy;|client's header is passed through|"
+                r"passes the request's headers through"),
+     "the gateway drops a client-sent X-Manaurum-User-Context (MAN-3214)"),
+    (re.compile(r"(?i)(?:first slice )?returns a stub"),
+     "the logs endpoint returns a real tail"),
+]
+REPORTED_SPEECH = re.compile(r"(?i)\b(said|used to|earlier version|until \d|was wrong|"
+                             r"is wrong|stale|no longer)\b")
+# Text files under templates/ teach as much as the skills do, and the stale
+# facts above lived in the starter's docstrings and README too.
+TEMPLATE_TEXT = {".md", ".py", ".html", ".css", ".txt", ""}
+CAPABILITY_NAME = re.compile(r"`(os\.[a-z_]+\.[a-z_]+)`")
+SAYS_IT_DOES_NOT_EXIST = re.compile(r"(?i)\b(there is no|is no|nothing else exists|"
+                                    r"does not exist|do not exist|no `)")
+PERMISSIONS_ENUM = re.compile(r"(?i)\benum\b[^\n]*\bmicrophone\b")
+CAPABILITY_COUNT = re.compile(r"All \*\*(\d+)\*\*")
+CONTRACT = "templates/platform-contract.json"
+SCHEMA = "templates/manifest_v2.schema.json"
+REFERENCE = "skills/manaurum-app/references/capabilities-reference.md"
 
 # ── Artifacts that have to carry their own correction ───────────────────────
 STARTER = "templates/v2-starter"
@@ -620,6 +670,112 @@ def check_documented_invocations(problems: list) -> None:
                            tool, flag))
 
 
+def teaching_files() -> list:
+    """Live documents plus every text file a reader copies from templates/."""
+    paths = list(live_docs())
+    for path in sorted((ROOT / "templates").rglob("*")):
+        if not path.is_file() or any(part in SKIP_DIRS for part in path.parts):
+            continue
+        if path.name in ("platform-contract.json", "manifest_v2.schema.json"):
+            continue
+        if path.suffix in TEMPLATE_TEXT or path.name == "Dockerfile":
+            paths.append(path)
+    return paths
+
+
+def check_stale_facts(problems: list) -> None:
+    """A fact that has been wrong once does not come back."""
+    for path in teaching_files():
+        text = read(path)
+        for pattern, now in STALE_FACTS:
+            for match in pattern.finditer(text):
+                # The sentence, not the line: a Markdown paragraph is one line,
+                # and one "earlier version" in it must not excuse the rest.
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                line_end = text.find("\n", match.end())
+                line_end = len(text) if line_end == -1 else line_end
+                start = max(line_start, text.rfind(". ", line_start, match.start()) + 2)
+                end = text.find(". ", match.end(), line_end)
+                if REPORTED_SPEECH.search(text[start:line_end if end == -1 else end]):
+                    continue        # "an earlier version said ..." is history
+                problems.append("%s:%d: %r - %s" % (rel(path), line_of(text, match.start()),
+                                                     match.group(0), now))
+
+
+def load_contract():
+    try:
+        return (json.loads(read(ROOT / SCHEMA)), json.loads(read(ROOT / CONTRACT)))
+    except (OSError, ValueError):
+        return None, None
+
+
+def check_contract(problems: list) -> None:
+    """The documents and the linter against the copy of Core's contract.
+
+    `scripts/sync_contract.py` refreshes the copy from the monorepo; this is
+    what makes a refresh show every sentence it turned false. What it holds
+    the repository to:
+
+    * every registered capability is documented in the reference, and the
+      reference's own count is the registry's;
+    * every capability a document names in backticks is registered, unless
+      the sentence says it does not exist;
+    * every statement of the `permissions` enum lists the schema's values;
+    * `check_app.py`'s fallback copy of the `runtime` keys is the schema's.
+    """
+    schema, contract = load_contract()
+    if schema is None:
+        problems.append("%s / %s: missing or not JSON - run scripts/sync_contract.py"
+                        % (SCHEMA, CONTRACT))
+        return
+    names = set(contract.get("capabilities", []))
+    reference = read(ROOT / REFERENCE)
+    for name in sorted(names):
+        if "`%s`" % name not in reference and "**`%s`**" % name not in reference:
+            problems.append("%s:1: %s is registered on Core and documented nowhere here"
+                            % (REFERENCE, name))
+    for match in CAPABILITY_COUNT.finditer(reference):
+        if int(match.group(1)) != len(names):
+            problems.append("%s:%d: says All %s capabilities; Core registers %d"
+                            % (REFERENCE, line_of(reference, match.start()),
+                               match.group(1), len(names)))
+
+    for path in live_docs():
+        text = read(path)
+        for number, line in enumerate(text.splitlines(), 1):
+            if SAYS_IT_DOES_NOT_EXIST.search(line):
+                continue
+            for name in CAPABILITY_NAME.findall(line):
+                if name not in names:
+                    problems.append("%s:%d: `%s` is not a capability Core registers"
+                                    % (rel(path), number, name))
+
+    enum = (schema.get("properties", {}).get("permissions", {})
+            .get("items", {}).get("enum", []))
+    for path in live_docs():
+        text = read(path)
+        for number, line in enumerate(text.splitlines(), 1):
+            if PERMISSIONS_ENUM.search(line):
+                missing = [value for value in enum if value not in line]
+                if missing:
+                    problems.append("%s:%d: states the permissions enum without %s"
+                                    % (rel(path), number, ", ".join(missing)))
+
+    runtime = set(schema.get("properties", {}).get("runtime", {}).get("properties", {}))
+    linter = read(ROOT / "templates" / "check_app.py")
+    match = re.search(r"RUNTIME_KEYS = \{([^}]*)\}", linter)
+    if not match:
+        # Renamed or reshaped: say so, rather than compare nothing and pass.
+        problems.append("templates/check_app.py:1: no `RUNTIME_KEYS = {...}` to hold "
+                        "to the schema - update check_contract with it")
+    else:
+        copy = set(re.findall(r'"([a-z_]+)"', match.group(1)))
+        if copy != runtime:
+            problems.append("templates/check_app.py:1: RUNTIME_KEYS differs from the "
+                            "schema's runtime keys (%s)"
+                            % ", ".join(sorted(copy ^ runtime)))
+
+
 def check_paired_claims(problems: list) -> None:
     """A measured fact written down twice has to say the same thing twice.
 
@@ -785,6 +941,8 @@ CHECKS = (
     check_documented_invocations,
     check_paired_claims,
     check_tickets,
+    check_stale_facts,
+    check_contract,
 )
 
 

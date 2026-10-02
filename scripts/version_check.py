@@ -16,13 +16,33 @@ directories that differ only by a hidden marker are indistinguishable.
 
 Every failure path here is a silent success: a hook that breaks a session is
 worse than a session that misses a version bump.
+
+Sibling directories are not enough on their own. On 2026-10-02 a machine was
+still running 2.7.2, six weeks and a major version behind, with nothing newer
+in its cache to compare against and a marketplace clone that had stopped
+updating at 2.7.3 - so this hook, which only looked at siblings, never said a
+word. It now also reads the marketplace clone's version, and at most once a
+day asks GitHub for the released one (2 s timeout, nothing sent but the GET;
+set MANAURUM_SDK_NO_UPDATE_CHECK=1 to switch that off).
 """
 
 import json
 import os
 import re
 import sys
+import threading
+import time
+import urllib.request
 from pathlib import Path
+
+RELEASED_MANIFEST = ("https://raw.githubusercontent.com/sergeysuaib-ui/"
+                     "manaurum-dev-sdk/main/.claude-plugin/plugin.json")
+CHECK_EVERY_SECONDS = 24 * 3600
+FETCH_DEADLINE_SECONDS = 2
+UPDATE_HOW = ("Update it: in Claude Code run `/plugin`, update the `manaurum-sdk` "
+              "marketplace and then the `manaurum-dev-sdk` plugin (or `claude plugin "
+              "marketplace update manaurum-sdk` followed by `claude plugin update "
+              "manaurum-dev-sdk@manaurum-sdk`), and start a new session. To stop falling behind, turn on auto-update for the marketplace: `/plugin` → Marketplaces → manaurum-sdk → Enable auto-update.")
 
 VERSION_DIR = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -54,6 +74,59 @@ def declared_version(root):
         return ""
 
 
+def semver(text):
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", str(text or "").strip())
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def marketplace_version():
+    """The version in the local marketplace clone, if there is one."""
+    base = os.environ.get("MANAURUM_SDK_MARKETPLACE_DIR")
+    path = Path(base) if base else Path.home() / ".claude" / "plugins" / "marketplaces" / "manaurum-sdk"
+    return declared_version(path)
+
+
+def released_version(cache_dir):
+    """The version on GitHub's main, asked at most once a day.
+
+    `MANAURUM_SDK_LATEST_VERSION` stands in for the network in tests; the
+    opt-out wins over everything.
+    """
+    if os.environ.get("MANAURUM_SDK_NO_UPDATE_CHECK"):
+        return ""
+    if os.environ.get("MANAURUM_SDK_LATEST_VERSION"):
+        return os.environ["MANAURUM_SDK_LATEST_VERSION"]
+    stamp = cache_dir / ".released-version.json"
+    known = ""
+    try:
+        cached = json.loads(stamp.read_text(encoding="utf-8"))
+        known = str(cached.get("version") or "")
+        if time.time() - float(cached.get("checked_at", 0)) < CHECK_EVERY_SECONDS:
+            return known
+    except Exception:
+        pass
+    # In a daemon thread with one deadline for all of it: `urlopen`'s timeout
+    # covers the socket, not the DNS lookup before it, and this runs on every
+    # session start. A failure is stamped too, with the last version we knew,
+    # or an unreachable network would pay the wait on every start, not daily.
+    result = {}
+
+    def fetch():
+        try:
+            with urllib.request.urlopen(RELEASED_MANIFEST, timeout=2) as response:
+                result["version"] = str(
+                    json.loads(response.read().decode("utf-8")).get("version") or "")
+        except Exception:
+            pass
+
+    worker = threading.Thread(target=fetch, daemon=True)
+    worker.start()
+    worker.join(FETCH_DEADLINE_SECONDS)
+    version = result.get("version", known)
+    write_if_changed(stamp, json.dumps({"checked_at": time.time(), "version": version}))
+    return version
+
+
 def write_if_changed(path, text):
     try:
         if path.exists() and path.read_text(encoding="utf-8") == text:
@@ -81,6 +154,19 @@ def main():
     stale = version_key(newest_name) > mine_key or orphaned
 
     if not stale:
+        # Nothing newer on disk. Is there something newer anywhere else?
+        newest_seen = max(
+            (v for v in (marketplace_version(), released_version(parent)) if semver(v)),
+            key=semver, default="")
+        if newest_seen and semver(newest_seen) > max(mine_key, version_key(newest_name)):
+            message = (
+                "manaurum-dev-sdk: this session runs version {mine} of the plugin, and "
+                "{newest} has been released. The skill files already in your context "
+                "may teach things the platform no longer does. {how}"
+            ).format(mine=declared_version(root) or root.name, newest=newest_seen,
+                     how=UPDATE_HOW)
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "SessionStart", "additionalContext": message}}))
         # We are the current copy: leave a pointer for anyone resolving the
         # plugin root by hand, and mark the copies that are not.
         write_if_changed(parent / "current", newest_name + "\n")

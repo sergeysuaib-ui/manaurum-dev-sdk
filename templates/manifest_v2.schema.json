@@ -1,0 +1,657 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://manaurum.com/standards/manifest_v2.schema.json",
+  "title": "Manaurum Application Manifest v2",
+  "description": "Canonical schema for Manaurum tenant application manifests, version 2 (Platform v2). This file is the source of truth: the CLI and the deploy pipeline both validate against it. Developer guide: https://manaurum.com/developers.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "manaurum_sdk_version",
+    "app_id",
+    "name",
+    "version",
+    "runtime"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "$comment": "`runtime.entrypoint` is meaningful in byo mode only — hosted and dev URLs are platform-derived. Forbid the key outside byo so a future consumer that trusts a validated manifest cannot be handed a hosted app with an attacker-authored entrypoint riding along.",
+      "if": {
+        "required": ["runtime"],
+        "properties": {
+          "runtime": {
+            "required": ["mode"],
+            "properties": {
+              "mode": {
+                "enum": ["hosted", "dev"]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "entrypoint": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "$comment": "`permissions[]` is refused (must be absent or empty) when `runtime.mode` is `byo`. A BYO app's iframe src is `runtime.entrypoint`, which is pattern-checked for `https://` but not host-checked, so the declaration would delegate a browser device to whatever HTTPS origin the manifest names. This is a stopgap: lift the conditional once the entrypoint's host is validated too.",
+      "if": {
+        "required": ["runtime"],
+        "properties": {
+          "runtime": {
+            "required": ["mode"],
+            "properties": {
+              "mode": {
+                "const": "byo"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "permissions": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": "2",
+      "description": "Manifest schema version. Pinned at \"2\" for the lifetime of v2."
+    },
+    "manaurum_sdk_version": {
+      "const": "2",
+      "description": "Major SDK version the application is built against."
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Globally unique application identifier."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name shown in shell UI."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver MAJOR.MINOR.PATCH (no pre-release/build metadata)."
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Hosting mode + mode-specific config. additionalProperties is false: every key the platform reads is declared below, and the two app-controlled keys that previously rode through undeclared (`sandbox`, `entrypoint`) are now declared WITH their constraints. Prod and in-tree manifests were inventoried before the lock (2026-08-23): the observed key set is exactly what is declared here.",
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "hosted",
+            "byo",
+            "dev"
+          ],
+          "description": "Hosting mode. One of hosted | byo | dev."
+        },
+        "health_path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Path the platform polls after a deploy to decide whether the container actually serves. Default `/healthz`. The probe hits the container directly over the internal network at `runtime.port`, so this path does NOT need an `api_routes` entry and is never reachable from outside. Declaring it explicitly makes the check strict: the deploy fails if the path answers 5xx. Leave it out and the platform only requires that something answers HTTP on the port the gateway proxies to. A deploy whose container never answers is rolled back to the previous version and reported as failed.",
+          "examples": ["/healthz", "/_health"]
+        },
+        "resources": {
+          "type": "object",
+          "description": "Per-container resource limits enforced by Swarm on every deploy. Omit the block to get the platform defaults: 512 MiB memory, 500 millicores CPU. Values above the self-service ceiling below are REJECTED here at validate time rather than clamped at deploy, so a manifest never runs with a quieter budget than it asked for; raising the ceiling is an operator decision. A container over its memory limit is OOM-killed and restarted by Swarm; over its CPU limit it is throttled, not killed.",
+          "additionalProperties": false,
+          "properties": {
+            "memory_mb": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 2048,
+              "description": "Hard memory limit in MiB. Default 512, self-service ceiling 2048."
+            },
+            "cpu_millicores": {
+              "type": "integer",
+              "minimum": 50,
+              "maximum": 2000,
+              "description": "CPU limit in millicores; 1000 = one full core. Default 500, self-service ceiling 2000."
+            }
+          }        },
+        "api_routes": {
+          "type": "array",
+          "description": "API-route declaration table consumed by the Core gateway proxy. Each item declares one path glob + the auth mode the gateway must apply when proxying requests that match it. Default-deny: a route that is not declared here is not served (gateway returns 404). Static / non-API routes (HTML, JS, CSS, /healthz) are NOT declared here \u2014 they are always anonymous on `<slug>.apps.manaurum.com`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "auth"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^/",
+                "description": "Path glob the Core gateway matches inbound requests against. Must start with `/`. Supports trailing `*` wildcard (e.g. `/api/orders/*`). Exact paths (e.g. `/api/kiosk/menu`) match only that path."
+              },
+              "streaming": {
+                "type": "boolean",
+                "description": "When true, the Core gateway proxies this route in streaming mode (Server-Sent Events / chunked passthrough) instead of buffering the whole upstream response before replying. Use for `text/event-stream` endpoints. Orthogonal to `auth` (a streaming route may be `user` or `anonymous`). Default false. The gateway applies per-(app, tenant) and global concurrency caps plus a maximum stream lifetime to streaming routes; the app MUST emit SSE heartbeats, honour `Last-Event-ID` on reconnect, and MUST NOT hold a DB connection for the stream lifetime (use pub/sub)."
+              },
+              "auth": {
+                "enum": [
+                  "user",
+                  "anonymous",
+                  "optional"
+                ],
+                "description": "How the Core gateway authenticates requests matching `path`. `user`: gateway mints a 60s user_context JWT signed by Core and injects it as `X-Manaurum-User-Context`; the container verifies via Core public key. The user bearer is NEVER forwarded to the container. `anonymous`: gateway proxies the request with no user_context (kiosk/public endpoints \u2014 explicit declaration required, no implicit anonymous fallback). `optional`: a signed-in member of the app's tenant is treated as on `user` and also gets the person pass `X-Manaurum-Person` (verify it with `aud` = your `MANAURUM_APP_ID`); anyone else, including a member of another tenant, is proxied as on `anonymous` and never gets a 401. Use it for pages that guests and members both open (share links, voting rooms, invites)."
+              }
+            }
+          }
+        },
+        "public_paths": {
+          "type": "array",
+          "description": "Page paths the Core gateway serves WITHOUT a session. Applies to top-level document navigations only; it never affects `api_routes`, which stay default-deny and are governed solely by their own `auth` field. Entries are bare path globs in the same syntax as `api_routes.path`: an exact string matches itself, a trailing `/*` matches anything strictly BELOW that prefix. GOTCHA: `/*` does NOT match the bare root, so a fully public app must declare BOTH, i.e. `[\"/\", \"/*\"]`; declaring only `/*` leaves the landing page redirecting to login. Omit the key (or leave it empty) for a fully private app, which is the default. Declaring a page public does not make the app's data public: an anonymous visitor still gets 401 from any `auth: \"user\"` api_route.",
+          "items": {
+            "type": "string",
+            "pattern": "^/"
+          }
+        },
+        "sandbox": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "allow-scripts",
+              "allow-forms",
+              "allow-same-origin"
+            ]
+          },
+          "description": "Iframe sandbox tokens the shell applies to the app window. The enum is the platform allow-list — the same triple as `SANDBOX_ALLOWED_TOKENS` in the shell (`frontend/src/components/window/iframeHostPolicy.ts`). Declared and enforced: the key previously passed validation undeclared and the shell applied it verbatim, so a manifest could hand itself allow-top-navigation / allow-popups / allow-downloads. The shell additionally intersects whatever reaches it with this list and drops unknown tokens (belt-and-braces, fail-closed). Omit the key for the default triple. Note: dropping allow-same-origin gives the iframe an opaque origin where delegated device permissions (permissions[]) can never be granted."
+        },
+        "entrypoint": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "BYO mode only: the HTTPS URL the shell loads as the app window's iframe src. Declared and validated — previously undeclared, so any scheme or host passed validation; that hole is why the schema bans byo + permissions[] as a stopgap. HTTPS is required by pattern; the shell independently refuses a non-HTTPS value and falls back to the platform-derived origin (belt-and-braces). Hosted and dev apps omit this key — their URL is platform-derived from the apps domain."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Container port the Core gateway proxies to and the deploy readiness probe hits. Default 80 when omitted. Formally declared now that `runtime` is additionalProperties:false."
+        },
+        "egress_allowed_hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Outbound-network allow-list for the app container (default-deny): hosts `os.http.fetch` may reach. Read by the deploy pipeline and surfaced on the App Store privacy panel. Formally declared (read by code long before, never declared)."
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Declared replica count. Currently accepted and NOT acted on by the deploy runner — the Swarm service replica count is operator-controlled. Declared for compatibility with live manifests that already set it; treat as informational until the runner honours it."
+        },
+        "image": {
+          "type": "string",
+          "description": "Legacy/informational image reference from early manifests. The platform derives the real image tag from (registry, app_id, version) at deploy and ignores this key. Declared for compatibility; do not set it in new manifests."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "Storage-mode declaration. Omit this block to get the default managed mode: the deploy pipeline provisions one Postgres schema + a scoped login role per (app, tenant) and injects DATABASE_URL into the container. Set `none` or `byo` to opt OUT of the managed schema so the deploy needs no DDL-capable DSN (MANAURUM_DDL_DSN) on Core. At most one of none/byo/shared should be set; if more than one is true the pipeline treats the app as not needing a managed schema.",
+      "additionalProperties": false,
+      "properties": {
+        "none": {
+          "type": "boolean",
+          "description": "Stateless app: no managed Postgres schema is provisioned and no DATABASE_URL is injected. Persist via the os.files / os.kv capabilities only. The deploy skips CREATE SCHEMA / CREATE ROLE, so no MANAURUM_DDL_DSN is required on Core to deploy this app."
+        },
+        "byo": {
+          "type": "boolean",
+          "description": "Bring-your-own database: the platform provisions no managed schema and guarantees nothing about tenant isolation. The developer supplies and scopes their own connection string. Like `none`, the deploy skips schema/role provisioning and needs no MANAURUM_DDL_DSN."
+        },
+        "shared": {
+          "type": "boolean",
+          "description": "Single shared schema across all tenants with a tenant_id column the developer filters on every query. Use only for genuine cross-tenant analytics; tenant admins see an isolation warning at install. Still a managed schema, so MANAURUM_DDL_DSN is required at deploy."
+        },
+        "connection_cap": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Max Postgres connections per app process for the managed schema. Default 20; values above 20 require operator justification."
+        },
+        "extensions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "vector",
+              "pg_trgm"
+            ]
+          },
+          "description": "REQUEST for curated Postgres extensions in the managed schema. This is a request, not an authorisation: a platform operator must approve each extension for this app before the deploy pipeline provisions access (USAGE on the ext_<name> schema + search_path for the app's scoped roles). Until granted, deploys succeed but migrations referencing the extension's types fail with Postgres' own 'type does not exist'. CREATE EXTENSION remains forbidden in migrations regardless of this field. Only managed-schema modes (default / shared) can use it; meaningless with none/byo."
+        }
+      }
+    },
+    "migrate_command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Migration command argv invoked by the deploy pipeline once per (app, tenant)."
+    },
+    "migration": {
+      "type": "object",
+      "description": "Migration metadata. ``breaking: true`` widens the migration validator to accept destructive DDL — it is NOT a consent step: the migration runs against every tenant with the app installed, on the deploy that ships it. ``reason`` and ``rollback_strategy`` are recorded and read by nothing today.",
+      "properties": {
+        "breaking": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rollback_strategy": {
+          "type": "string"
+        }
+      }
+    },
+    "visibility": {
+      "type": "object",
+      "description": "Publication scope. Default if omitted: {mode: private}.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "private",
+            "public",
+            "allow_list"
+          ]
+        },
+        "tenants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "platforms": {
+      "type": "object",
+      "description": "Platform support declarations. Both desktop and mobile should be explicitly declared.",
+      "properties": {
+        "desktop": {
+          "type": "object",
+          "properties": {
+            "supported": { "type": "boolean", "default": true, "description": "Whether the app supports desktop." }
+          }
+        },
+        "mobile": {
+          "type": "object",
+          "properties": {
+            "supported": { "type": "boolean", "default": false, "description": "Whether the app supports mobile." },
+            "optimized": { "type": "boolean", "default": false, "description": "Whether the app has mobile-optimized UI." },
+            "entrypoint": { "type": "string", "format": "uri", "pattern": "^https://", "description": "Optional separate HTTPS entrypoint for mobile. `^https://` enforced by pattern — this key becomes the iframe src on phones, the same trust class as `runtime.entrypoint` (format alone is inert in the pinned validator). The shell applies the identical https-only gate at render as belt-and-braces. Prod inventory 2026-08-23: zero manifests set it." },
+            "supportLevel": {
+              "type": "string",
+              "enum": ["full", "adaptive", "fallback", "none"],
+              "default": "none",
+              "description": "full = dedicated mobile UI, adaptive = responsive, fallback = desktop UI with warning, none = blocked."
+            },
+            "navigationPattern": {
+              "type": "string",
+              "enum": ["stack", "tabs", "list-detail", "single-view", "composer-first"],
+              "description": "Primary navigation pattern the app uses on mobile."
+            }
+          }
+        }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Browser permissions the app's iframe needs delegated via the iframe `allow` attribute (Permissions-Policy). The shell only delegates features declared here; undeclared features stay blocked by the browser's default cross-origin policy. Enum is deliberately narrow \u2014 widen only with a shell-side review. Both values are delegated by the shell's allow-map and accepted by the CLI. Delegation additionally requires that the platform chose the iframe's origin: a manifest-named src \u2014 `runtime.entrypoint` in `byo` mode, or `platforms.mobile.entrypoint` on a v1 manifest \u2014 receives nothing at render. Refused (non-empty) at deploy when `runtime.mode` is `byo` \u2014 see the top-level `allOf` conditional.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "microphone",
+          "camera"
+        ]
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "description": "Frontend bundle / entry-point declaration.",
+      "properties": {
+        "entry_point": {
+          "type": "string"
+        },
+        "bundle_path": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        },
+        "window": {
+          "type": "object",
+          "properties": {
+            "default_width": {
+              "type": "integer",
+              "minimum": 320
+            },
+            "default_height": {
+              "type": "integer",
+              "minimum": 240
+            }
+          }
+        }
+      }
+    },
+    "requires_capabilities": {
+      "type": "array",
+      "description": "Capabilities the app needs from Core.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "quota_per_tenant_per_day": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "optional_capabilities": {
+      "type": "array",
+      "description": "Capabilities the app can use when the tenant grant permits them, but does not require to function. Public auto-approval grants both required and optional declarations; an existing tenant approval can grant a subset. The App Store shows effective grants in consent and identifies declared capabilities that remain ungranted. Shape mirrors requires_capabilities so both arrays can be read with the same accessor.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "quota_per_tenant_per_day": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "agent_capabilities": {
+      "type": "array",
+      "description": "Agent tools this app exposes to the OS Assistant. Each entry registers one capability the assistant can call to read from or write to the app on the user's behalf, for apps the user has installed. Calls are dispatched server-to-server: the agent runtime reaches your container on the internal network and POSTs `/agent/<name>` directly rather than through the Core gateway. Your `/agent/*` handlers therefore do NOT get the gateway's session check and MUST verify the injected `user_context` JWT themselves before acting.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "input_schema"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Capability identifier \u2014 snake_case verb_noun (e.g. `add_diary_entry`). Lowercase letters / digits / underscore, must start with a letter. Used to build the agent tool name and the `/agent/<name>` route the agent runtime POSTs directly to your container. Your handler MUST verify the `user_context` JWT on every call."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400,
+            "description": "What the capability does, written for the LLM (include positive + negative usage examples). Hard-capped at 400 chars to match the agent runtime's Tool validator; over-long is a 422 at deploy, so keep the routing guidance inside the limit instead of at the end of a longer text. Measured: descriptions are ~35% of the tool payload the assistant carries on every turn."
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "JSON Schema for the capability input. Must be `type: object`. Validated against the model's tool-call arguments at dispatch time."
+          },
+          "is_write": {
+            "type": "boolean",
+            "description": "True if the capability mutates tenant state. READ BY THE RUNTIME: it gates the user-approval step, the undoable AgentAction journal entry, and idempotency dedup. Omitting the key is NOT the same as false - an undeclared capability falls back to the transport default, which is true for every hosted app. Write `\"is_write\": false` explicitly to declare a reader."
+          },
+          "routing_hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional keyword hints to help the assistant decide when to use this capability. Informational."
+          },
+          "example": {
+            "type": "object",
+            "description": "Optional example input payload, surfaced to the model as a usage hint."
+          }
+        }
+      }
+    },
+    "provides": {
+      "type": "object",
+      "description": "Inter-app contracts the app exposes.",
+      "properties": {
+        "rpc": {
+          "type": "array"
+        },
+        "events": {
+          "type": "array"
+        }
+      }
+    },
+    "consumes": {
+      "type": "object",
+      "description": "Inter-app contracts the app depends on.",
+      "properties": {
+        "rpc": {
+          "type": "array"
+        },
+        "events": {
+          "type": "array"
+        }
+      }
+    },
+    "webhooks": {
+      "type": "array",
+      "description": "Inbound webhooks from external systems. NOTE (v2.x): platform webhook gateway is DEFERRED \u2014 this field is parsed and validated for shape but Core does NOT yet expose `POST /apps/<app_id>/webhooks/<name>` and does NOT forward to the app's `path`. For v2.x, expose your own public webhook handler from the v2 app container (declared via `runtime.api_routes` with `auth: \"anonymous\"`) and verify the signature inside the app. The platform-gateway behaviour lands in v2.next once the per-tenant URL routing strategy is finalised; manifests authored today are forward-compatible.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "signature"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "description": "Webhook identifier \u2014 used in the public Core URL `/apps/<app_id>/webhooks/<name>`. Lowercase letters / digits / underscore / hyphen, must start with a letter."
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "App-side handler path the gateway forwards verified webhook payloads to. Must start with `/`. The gateway calls the container with `Caller-System: webhook-gateway`."
+          },
+          "signature": {
+            "type": "object",
+            "required": [
+              "method",
+              "header",
+              "secret_ref"
+            ],
+            "additionalProperties": false,
+            "description": "Required signature-verification block. Anonymous webhooks are not supported \u2014 every external system that posts to a Manaurum webhook URL must sign the payload.",
+            "properties": {
+              "method": {
+                "enum": [
+                  "hmac-sha256"
+                ],
+                "description": "Signature algorithm. v2 supports `hmac-sha256` only; additional algorithms require a contract change."
+              },
+              "header": {
+                "type": "string",
+                "minLength": 1,
+                "description": "HTTP header name the upstream system uses to carry the signature (e.g. `X-Iiko-Signature`)."
+              },
+              "secret_ref": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Name of the per-(app, tenant) secret (set via `os.secrets.set` / `manaurum app set-secret`) holding the shared key. The gateway reads it through `os.secrets.get` at verification time; the app never sees it."
+              }
+            }
+          }
+        }
+      }
+    },
+    "schedules": {
+      "type": "array",
+      "description": "Cron schedules. NOTE (v2.x): platform cron is DEFERRED \u2014 this field is parsed and validated for shape but Core does NOT yet invoke the handler. For v2.x, run an in-container scheduler (APScheduler / cron-style library) and reference this field as documentation of intended schedules. The platform-cron behaviour lands in v2.next; manifests authored today are forward-compatible.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "cron",
+          "handler_path"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "description": "Schedule identifier \u2014 used in the Core URL `/apps/<app_id>/cron/<name>`. Lowercase letters / digits / underscore / hyphen, must start with a letter."
+          },
+          "cron": {
+            "type": "string",
+            "minLength": 9,
+            "description": "Standard 5-field cron expression (`minute hour dom month dow`). Validated for syntactic shape at deploy time."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "description": "IANA timezone name (e.g. `Europe/Moscow`). Defaults to `UTC` when omitted."
+          },
+          "handler_path": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "App-side handler path the scheduler POSTs to. Must start with `/`. Called with `Caller-System: cron-scheduler` and the body carries `tenant_id`."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "description": "Per-firing handler timeout. Core kills the request past this; the scheduler records the firing as failed but does not retry. Default 60s when omitted; max 1h."
+          }
+        }
+      }
+    },
+    "tenant_config": {
+      "type": "object",
+      "description": "Per-tenant configuration.",
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "required_at_install": {
+          "type": "boolean"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Informational metadata.",
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": {
+          "type": "string"
+        },
+        "homepage": {
+          "type": "string"
+        },
+        "support_email": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        }
+      }
+    },
+    "offline": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Offline-capability declaration (Manaurum Edge). Features that stay live during a WAN outage, cloud-owned reference data replicated read-only to the on-site box, and append-only streams the site owns.",
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Operation identifiers that remain usable while the WAN is down; everything else greys out via app.offline.can()."
+        },
+        "reference_data": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Cloud-owned datasets replicated read-only to the box (never edited offline)."
+        },
+        "streams": {
+          "type": "array",
+          "description": "Append-only event streams the site owns offline.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": {
+                "enum": ["ledger", "state"],
+                "description": "ledger = pure append (every event kept; order-independent). state = latest-event-per-key wins on fold."
+              },
+              "key": {
+                "type": "string",
+                "description": "Entity key for state streams (latest event per key wins on reconnect)."
+              },
+              "entity_type": {
+                "type": "string",
+                "description": "Optional. The app_records entity_type this state stream's key references; when set, the cloud verifies on reconnect that the referenced entity still exists and records a deleted_entity_ref anomaly (dropping the event) if it was deleted. Only meaningful for type:\"state\"; omit it to skip the check (current behaviour)."
+              },
+              "conflict_policy": {
+                "enum": ["grey_out", "optimistic_reconcile"],
+                "description": "Resolution for ops touching a cross-partition shared pool: grey_out (disabled offline) or optimistic_reconcile (sell optimistically, resolve on reconnect)."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py\" || python \"${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py\" || py -3 \"${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py\"",
             "timeout": 5
           }
         ]

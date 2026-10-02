@@ -211,6 +211,331 @@ def a_tenant_token_in_source(app: Path) -> None:
          'DRIVE_TOKEN = "mnu_prod_Hk3-Pq8_vB2nM5xL0wZ7rT4yC1eD6gJ9"\n\napp = FastAPI(')
 
 
+# ── 3.7.0: the gateway's own matching, routers, the contract ────────────────
+
+
+def a_rule_with_a_parameter(app: Path) -> None:
+    # The gateway matches a rule literally: `{note_id}` is not a parameter.
+    edit(app / "src" / "main.py", '@app.get("/api/me")',
+         '@app.get("/api/notes/{note_id}")\nasync def one_note(note_id: str) -> dict:\n'
+         '    return {}\n\n\n@app.get("/api/me")')
+    patch_manifest(app, lambda data: data["runtime"]["api_routes"].append(
+        {"path": "/api/notes/{note_id}", "auth": "user"}))
+
+
+def a_rule_with_a_bare_star(app: Path) -> None:
+    def mutate(data):
+        for entry in data["runtime"]["api_routes"]:
+            if entry["path"] == "/api/notes":
+                entry["path"] = "/api/notes*"
+    patch_manifest(app, mutate)
+
+
+def a_router_mounted_with_a_prefix(app: Path) -> None:
+    # Served at /api/extra/items: the router's prefix plus the route's path.
+    (app / "src" / "extra.py").write_text(
+        "from fastapi import APIRouter\n\nrouter: APIRouter = APIRouter(prefix=\"/api/extra\")\n\n\n"
+        "@router.get(\"/items\")\nasync def items() -> dict:\n    return {}\n",
+        encoding="utf-8")
+    edit(app / "src" / "main.py", "from src import agent_routes",
+         "from src import agent_routes, extra")
+    edit(app / "src" / "main.py", "app.include_router(agent_routes.router)",
+         "app.include_router(agent_routes.router)\napp.include_router(extra.router)")
+
+
+def a_router_mounted_and_declared(app: Path) -> None:
+    a_router_mounted_with_a_prefix(app)
+    patch_manifest(app, lambda data: data["runtime"]["api_routes"].append(
+        {"path": "/api/extra/items", "auth": "user"}))
+
+
+def an_auth_check_only_in_a_comment(app: Path) -> None:
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note() -> dict:  # auth_claims, verify_user_context\n'
+         '    claims = None')
+
+
+def an_optional_claims_parameter(app: Path) -> None:
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note(claims: UserContextClaims | None = None) -> dict:')
+
+
+def auth_on_the_router(app: Path) -> None:
+    # The idiomatic FastAPI form: one dependency on the router covers all.
+    edit(app / "src" / "agent_routes.py",
+         'router = APIRouter(prefix="/agent", tags=["agent"])',
+         'router = APIRouter(prefix="/agent", tags=["agent"], '
+         'dependencies=[Depends(auth_claims)])')
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note() -> dict:\n    claims = None')
+
+
+def a_capability_that_does_not_exist(app: Path) -> None:
+    def mutate(data):
+        data["requires_capabilities"].append({"name": "os.kv.list", "version": "1"})
+    patch_manifest(app, mutate)
+    edit(app / "src" / "capability.py", "def note_key(user_id: str) -> str:",
+         'LIST = "os.kv.list"\n\n\ndef note_key(user_id: str) -> str:')
+
+
+def a_capability_called_by_url(app: Path) -> None:
+    edit(app / "src" / "capability.py", "def note_key(user_id: str) -> str:",
+         'def list_files(base: str) -> str:\n'
+         '    return f"{base}/api/capability/os.files.list"\n\n\n'
+         'def note_key(user_id: str) -> str:')
+
+
+def an_optional_capability_that_is_called(app: Path) -> None:
+    def mutate(data):
+        data["optional_capabilities"] = [
+            entry for entry in data["requires_capabilities"]
+            if entry.get("name") == "os.kv.get"]
+        data["requires_capabilities"] = [
+            entry for entry in data["requires_capabilities"]
+            if entry.get("name") != "os.kv.get"]
+    patch_manifest(app, mutate)
+
+
+def a_capability_named_in_the_readme(app: Path) -> None:
+    readme = app / "README.md"
+    readme.write_text(readme.read_text(encoding="utf-8")
+                      + "\nLater this may call `\"os.files.upload\"`.\n", encoding="utf-8")
+
+
+def a_root_key_typo(app: Path) -> None:
+    patch_manifest(app, lambda data: data.update(description="Notes"))
+
+
+def a_reserved_slug(app: Path) -> None:
+    patch_manifest(app, lambda data: data.update(app_id="api"))
+
+
+def a_slug_the_deploy_refuses(app: Path) -> None:
+    patch_manifest(app, lambda data: data.update(app_id="My_App"))
+
+
+def a_write_verb_declared_read(app: Path) -> None:
+    def mutate(data):
+        for entry in data["agent_capabilities"]:
+            if entry["name"] == "save_my_note":
+                entry["is_write"] = False
+    patch_manifest(app, mutate)
+
+
+def a_tool_name_too_long(app: Path) -> None:
+    def mutate(data):
+        for entry in data["agent_capabilities"]:
+            if entry["name"] == "read_my_note":
+                entry["name"] = "read_my_note_with_every_detail_the_user_ever_wrote_x"
+    patch_manifest(app, mutate)
+
+
+def an_entrypoint_on_a_hosted_app(app: Path) -> None:
+    patch_manifest(app, lambda data: data["runtime"].update(
+        entrypoint="https://example.com/"))
+
+
+def a_transaction_in_a_migration(app: Path) -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / "0001_init.sql").write_text(
+        "BEGIN;\nCREATE TABLE note (id text primary key);\nCOMMIT;\n", encoding="utf-8")
+
+
+def an_extension_in_a_migration(app: Path) -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / "0001_init.sql").write_text(
+        "CREATE EXTENSION IF NOT EXISTS vector;\n", encoding="utf-8")
+
+
+def an_uppercase_sql_suffix(app: Path) -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / "0001_init.SQL").write_text(
+        "CREATE TABLE note (id text primary key);\n", encoding="utf-8")
+
+
+def migrations_over_64_kib(app: Path) -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    rows = "".join("INSERT INTO note VALUES ('%06d');\n" % i for i in range(2500))
+    (directory / "0001_init.sql").write_text(
+        "CREATE TABLE note (id text primary key);\n" + rows, encoding="utf-8")
+
+
+def a_migration(app: Path, sql: str, name: str = "0001_init.sql") -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / name).write_text(sql, encoding="utf-8")
+
+
+def a_set_in_a_migration(app: Path) -> None:
+    a_migration(app, "CREATE TABLE note (id text primary key);\nSET search_path = public;\n")
+
+
+def a_copy_in_a_migration(app: Path) -> None:
+    a_migration(app, "CREATE TABLE note (id text primary key);\nCOPY note FROM stdin;\n")
+
+
+def a_rename_in_a_migration(app: Path) -> None:
+    a_migration(app, "CREATE TABLE note (id text primary key);\nALTER TABLE note RENAME TO notes;\n")
+
+
+def a_drop_index_in_a_migration(app: Path) -> None:
+    a_migration(app, "CREATE TABLE note (id text primary key);\nDROP INDEX note_idx;\n")
+
+
+def a_plpgsql_trigger_function(app: Path) -> None:
+    # MUST STAY GREEN. The `updated_at` trigger every CRUD app has. Split on
+    # `;`, its `END IF;` and `END;` read as transaction control; the deploy
+    # parses the body as one CREATE FUNCTION in a trusted language and accepts.
+    a_migration(app, (
+        "CREATE TABLE note (id text primary key, updated_at timestamptz);\n"
+        "CREATE OR REPLACE FUNCTION touch() RETURNS trigger AS $$\n"
+        "BEGIN\n  IF NEW.updated_at IS NULL THEN\n    NEW.updated_at := now();\n"
+        "  END IF;\n  RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql;\n"
+        "CREATE TRIGGER note_touch BEFORE UPDATE ON note\n"
+        "  FOR EACH ROW EXECUTE FUNCTION touch();\n"))
+
+
+def a_string_that_says_rename(app: Path) -> None:
+    # MUST STAY GREEN. Words in a string literal are data, not statements.
+    a_migration(app, "CREATE TABLE note (id text primary key, body text);\n"
+                     "INSERT INTO note VALUES ('1', 'Rename it, truncate it, revoke it');\n")
+
+
+def a_drop_extension_marked_breaking(app: Path) -> None:
+    # MUST STAY GREEN. A DropStmt, so destructive, which `breaking` allows -
+    # not forbidden like CREATE/ALTER EXTENSION.
+    a_migration(app, "DROP EXTENSION IF EXISTS vector;\n")
+    patch_manifest(app, lambda data: data.update(migration={"breaking": True}))
+
+
+def a_subdirectory_under_migrations(app: Path) -> None:
+    # MUST STAY GREEN. The deploy skips subdirectories; a note, not a failure.
+    a_migration(app, "CREATE TABLE note (id text primary key);\n")
+    (app / "migrations" / "archive").mkdir()
+    (app / "migrations" / "archive" / "0000_old.sql").write_text(
+        "CREATE TABLE old (id text);\n", encoding="utf-8")
+
+
+def a_byo_app_with_permissions(app: Path) -> None:
+    def mutate(data):
+        data["runtime"].update(mode="byo", entrypoint="https://example.com/")
+        data["permissions"] = ["camera"]
+    patch_manifest(app, mutate)
+
+
+def a_typo_under_data(app: Path) -> None:
+    patch_manifest(app, lambda data: data["data"].update(shard=True))
+
+
+def a_typo_under_offline(app: Path) -> None:
+    patch_manifest(app, lambda data: data.update(offline={"featrues": ["save"]}))
+
+
+def a_uuid_for_a_slug(app: Path) -> None:
+    # Starts with a letter and fits the slug pattern: only the UUID rule sees it.
+    patch_manifest(app, lambda data: data.update(app_id="a0b6f6d2-1c1a-4c9e-9a7e-3f0e9d5b2a11"))
+
+
+def a_prefix_on_the_include(app: Path) -> None:
+    # Served at /api/extra/items: the prefix is on include_router, not the router.
+    (app / "src" / "extra.py").write_text(
+        "from fastapi import APIRouter\n\nrouter: APIRouter = APIRouter()\n\n\n"
+        "@router.get(\"/items\")\nasync def items() -> dict:\n    return {}\n",
+        encoding="utf-8")
+    edit(app / "src" / "main.py", "from src import agent_routes",
+         "from src import agent_routes, extra")
+    edit(app / "src" / "main.py", "app.include_router(agent_routes.router)",
+         "app.include_router(agent_routes.router)\n"
+         "app.include_router(extra.router, prefix=\"/api/extra\")")
+
+
+def auth_on_the_decorator(app: Path) -> None:
+    # MUST STAY GREEN. `dependencies=` on the route decorator.
+    edit(app / "src" / "agent_routes.py", '@router.post("/read_my_note")',
+         '@router.post("/read_my_note", dependencies=[Depends(auth_claims)])')
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note() -> dict:\n    claims = None')
+
+
+def auth_on_the_include(app: Path) -> None:
+    # MUST STAY GREEN. `dependencies=` on the include_router that mounts it.
+    edit(app / "src" / "main.py", "from src import agent_routes",
+         "from fastapi import Depends\nfrom src.auth import auth_claims\n"
+         "from src import agent_routes")
+    edit(app / "src" / "main.py", "app.include_router(agent_routes.router)",
+         "app.include_router(agent_routes.router, dependencies=[Depends(auth_claims)])")
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note() -> dict:\n    claims = None')
+
+
+def an_auth_mode_that_does_not_exist(app: Path) -> None:
+    patch_manifest(app, lambda data: data["runtime"]["api_routes"][0].update(auth="maybe"))
+
+
+def an_optional_route(app: Path) -> None:
+    # MUST STAY GREEN. MAN-3200's third mode: the enum comes from the contract.
+    patch_manifest(app, lambda data: data["runtime"]["api_routes"][0].update(auth="optional"))
+
+
+def an_oauth2_scheme_on_an_agent_handler(app: Path) -> None:
+    # It has "auth" in its name and verifies nothing: it reads Authorization,
+    # which the gateway strips and the runtime never sends to /agent/*.
+    edit(app / "src" / "agent_routes.py",
+         'router = APIRouter(prefix="/agent", tags=["agent"])',
+         'router = APIRouter(prefix="/agent", tags=["agent"])\n'
+         'from fastapi.security import OAuth2PasswordBearer\n'
+         'oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")')
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note(token: str = Depends(oauth2_scheme)) -> dict:\n'
+         '    claims = None')
+
+
+def a_begin_atomic_function(app: Path) -> None:
+    # MUST STAY GREEN. A SQL-standard body: its `;` and END are inside one
+    # CreateFunctionStmt, not transaction control.
+    a_migration(app, "CREATE TABLE note (id text primary key);\n"
+                     "CREATE FUNCTION note_count() RETURNS bigint LANGUAGE sql\n"
+                     "BEGIN ATOMIC\n  SELECT count(*) FROM note;\nEND;\n")
+
+
+def a_migration_with_a_bom(app: Path) -> None:
+    directory = app / "migrations"
+    directory.mkdir(exist_ok=True)
+    (directory / "0001_init.sql").write_bytes(
+        b"\xef\xbb\xbfCREATE TABLE note (id text primary key);\n")
+
+
+def a_drop_extension_not_marked_breaking(app: Path) -> None:
+    a_migration(app, "DROP EXTENSION IF EXISTS vector;\n")
+
+
+def an_annotated_oauth2_scheme(app: Path) -> None:
+    # Annotated, in a try, and imported under a name that says "auth": still a
+    # scheme, still verifies nothing on /agent/*.
+    (app / "src" / "security.py").write_text(
+        "from fastapi.security import OAuth2PasswordBearer\n\ntry:\n"
+        "    oauth2_scheme: OAuth2PasswordBearer = OAuth2PasswordBearer(tokenUrl=\"t\")\n"
+        "except Exception:\n    raise\n", encoding="utf-8")
+    edit(app / "src" / "agent_routes.py",
+         'router = APIRouter(prefix="/agent", tags=["agent"])',
+         'router = APIRouter(prefix="/agent", tags=["agent"])\n'
+         'from src.security import oauth2_scheme as auth_scheme')
+    edit(app / "src" / "agent_routes.py",
+         'async def read_my_note(claims: UserContextClaims = Depends(auth_claims)) -> dict:',
+         'async def read_my_note(token: str = Depends(auth_scheme)) -> dict:\n'
+         '    claims = None')
+
+
 APP_MUTATIONS = [
     ("routes: a path the manifest does not declare", undeclared_route,
      "no runtime.api_routes rule covers it"),
@@ -239,7 +564,7 @@ APP_MUTATIONS = [
     ("migrations: destructive DDL, no migration.breaking", destructive_migration,
      ("DROP without manifest.migration.breaking", "destructive - DROP")),
     ("migrations: an anonymous DO $$ block", anonymous_do_block,
-     "DO $$"),
+     "a DO block"),
     # The fourth element: this rule cannot be decided from the text - the word
     # appears in comments, string literals and quoted identifiers, and every
     # text test gets at least one of those wrong in both directions (the
@@ -266,6 +591,79 @@ APP_MUTATIONS = [
      "live mna_3f9c... token"),
     ("secrets: a tenant token in the source", a_tenant_token_in_source,
      "live mnu_prod... token"),
+    ("routes: a {param} in a rule is matched literally", a_rule_with_a_parameter,
+     "matches it literally"),
+    ("routes: a bare trailing * is not a wildcard", a_rule_with_a_bare_star,
+     "matches it literally"),
+    ("routes: a router mounted with a prefix", a_router_mounted_with_a_prefix,
+     "GET /api/extra/items is served but no runtime.api_routes rule covers it"),
+    ("routes: a router mounted with a prefix, declared", a_router_mounted_and_declared,
+     None),
+    ("agent: the auth name only in a comment", an_auth_check_only_in_a_comment,
+     "no user-context verification"),
+    ("agent: an Optional claims parameter with no Depends", an_optional_claims_parameter,
+     "no user-context verification"),
+    ("agent: auth on the router stays green", auth_on_the_router, None),
+    ("capabilities: a name the platform does not register",
+     a_capability_that_does_not_exist, "not a capability the platform registers"),
+    ("capabilities: called through a URL", a_capability_called_by_url,
+     "calls os.files.list but"),
+    ("capabilities: an optional capability that is called",
+     an_optional_capability_that_is_called, None),
+    ("capabilities: a name in the README is not a call",
+     a_capability_named_in_the_readme, None),
+    ("manifest: a key that is not a root key", a_root_key_typo,
+     "description is not a root key"),
+    ("manifest: a reserved slug", a_reserved_slug, "is reserved for the platform"),
+    ("manifest: a slug the deploy refuses", a_slug_the_deploy_refuses,
+     "not a slug the deploy accepts"),
+    ("manifest: a write verb declared is_write false", a_write_verb_declared_read,
+     "write verb in its name"),
+    ("manifest: an Assistant tool name too long", a_tool_name_too_long,
+     "silently drops it"),
+    ("manifest: runtime.entrypoint on a hosted app", an_entrypoint_on_a_hosted_app,
+     "runtime.entrypoint on a hosted app"),
+    ("migrations: BEGIN/COMMIT in a file", a_transaction_in_a_migration,
+     ("transaction control - forbidden", "BEGIN/COMMIT/SAVEPOINT")),
+    ("migrations: CREATE EXTENSION", an_extension_in_a_migration,
+     ("an extension (use data.extensions) - forbidden", "CREATE EXTENSION —")),
+    ("migrations: an uppercase .SQL suffix", an_uppercase_sql_suffix,
+     "case-sensitive"),
+    ("migrations: more than 64 KiB in all", migrations_over_64_kib, "64 KiB"),
+    ("migrations: SET", a_set_in_a_migration, ("SET - forbidden", "SET — session")),
+    ("migrations: COPY", a_copy_in_a_migration, ("COPY - forbidden", "COPY — file")),
+    ("migrations: ALTER TABLE ... RENAME", a_rename_in_a_migration,
+     ("RENAME without manifest.migration.breaking", "destructive - RENAME")),
+    ("migrations: DROP INDEX", a_drop_index_in_a_migration,
+     ("DROP without manifest.migration.breaking", "destructive - DROP")),
+    ("migrations: a plpgsql trigger function stays green", a_plpgsql_trigger_function, None),
+    ("migrations: RENAME inside a string stays green", a_string_that_says_rename, None),
+    ("migrations: DROP EXTENSION with breaking stays green",
+     a_drop_extension_marked_breaking, None),
+    ("migrations: a subdirectory stays green", a_subdirectory_under_migrations, None),
+    ("manifest: permissions on a byo app", a_byo_app_with_permissions,
+     "permissions on a byo app"),
+    ("manifest: a key data does not have", a_typo_under_data,
+     "data.shard is not a key the schema allows"),
+    ("manifest: a key offline does not have", a_typo_under_offline,
+     "offline.featrues is not a key the schema allows"),
+    ("manifest: a UUID for a slug", a_uuid_for_a_slug, "not a slug the deploy accepts"),
+    ("routes: a prefix on include_router", a_prefix_on_the_include,
+     "GET /api/extra/items is served but no runtime.api_routes rule covers it"),
+    ("agent: auth on the decorator stays green", auth_on_the_decorator, None),
+    ("agent: auth on the include stays green", auth_on_the_include, None),
+    ("agent: an OAuth2 scheme is not a user-context check",
+     an_oauth2_scheme_on_an_agent_handler, "no user-context verification"),
+    ("manifest: an auth mode the schema does not have", an_auth_mode_that_does_not_exist,
+     "runtime.api_routes[0].auth is 'maybe'"),
+    ("manifest: auth optional stays green", an_optional_route, None),
+    ("migrations: a BEGIN ATOMIC body stays green", a_begin_atomic_function, None),
+    ("migrations: a UTF-8 BOM", a_migration_with_a_bom, "starts with a UTF-8 BOM"),
+    ("migrations: DROP EXTENSION, no migration.breaking",
+     a_drop_extension_not_marked_breaking,
+     ("DROP without manifest.migration.breaking", "DROP EXTENSION")),
+    ("agent: an annotated scheme imported under another name",
+     an_annotated_oauth2_scheme, "no user-context verification"),
 ]
 
 
@@ -347,6 +745,91 @@ def a_body_that_centres(app: Path) -> None:
         encoding="utf-8")
 
 
+def a_colour_set_from_script(app: Path) -> None:
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<script>document.body.style.color = 'red';</script></body>")
+
+
+def a_width_set_from_script(app: Path) -> None:
+    # A progress bar: geometry, not colour. Must stay green.
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<script>const bar = document.body; bar.style.width = 42 + '%';"
+         " bar.style.setProperty('--progress', '42%');</script></body>")
+
+
+def an_in_app_confirm(app: Path) -> None:
+    # The fix the skill teaches: an in-app dialog called confirm. Must stay green.
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<p>Ask before deleting: a prompt (in the page) is fine.</p>"
+         "<script>const ui = { confirm: async () => true };"
+         " async function remove() { await ui.confirm('Delete?'); }</script></body>")
+
+
+def the_shell_appearance_never_applied(app: Path) -> None:
+    # The function stays; nothing calls it. The old substring check passed this.
+    path = app / "src" / "static" / "index.html"
+    text = path.read_text(encoding="utf-8")
+    if "applyShellTheme(payload);" not in text:
+        raise AssertionError("anchor not found in index.html: applyShellTheme(payload);")
+    path.write_text(text.replace("applyShellTheme(payload);", ""), encoding="utf-8")
+
+
+def an_inline_onclick_confirm(app: Path) -> None:
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<button onclick=\"return confirm('Delete?')\">Delete</button></body>")
+
+
+def the_appearance_destructured(app: Path) -> None:
+    # MUST STAY GREEN. The value read off the payload first, then written.
+    edit(app / "src" / "static" / "index.html",
+         "if (payload.appearance) root.dataset.appearance = payload.appearance;",
+         "const { appearance } = payload;\n"
+         "      if (appearance) root.dataset.appearance = appearance;")
+
+
+def the_theme_function_passed_by_name(app: Path) -> None:
+    # MUST STAY GREEN. Passed, not called, as a message handler would be.
+    path = app / "src" / "static" / "index.html"
+    text = path.read_text(encoding="utf-8")
+    if "applyShellTheme(payload);" not in text:
+        raise AssertionError("anchor not found in index.html: applyShellTheme(payload);")
+    path.write_text(text.replace("applyShellTheme(payload);",
+                                 "[payload].forEach(applyShellTheme);"), encoding="utf-8")
+
+
+def a_fallback_that_reads_itself(app: Path) -> None:
+    # The shell's value never applied; the fallback reads the document's own
+    # `dataset.appearance`, which is not the payload's.
+    the_shell_appearance_never_applied(app)
+    edit(app / "src" / "static" / "index.html",
+         "root.dataset.appearance = media.matches ? 'dark' : 'light';",
+         "if (!root.dataset.appearance || root.dataset.appearance === 'auto')"
+         " root.dataset.appearance = media.matches ? 'dark' : 'light';")
+
+
+def the_appearance_as_a_destructured_parameter(app: Path) -> None:
+    # MUST STAY GREEN.
+    edit(app / "src" / "static" / "index.html",
+         "function applyShellTheme(payload) {\n"
+         "      if (payload.appearance) root.dataset.appearance = payload.appearance;",
+         "function applyShellTheme(payload) { applyLook(payload); applyAccent(payload); }\n"
+         "    function applyLook({ appearance }) {\n"
+         "      if (appearance) root.dataset.appearance = appearance;\n"
+         "    }\n"
+         "    function applyAccent(payload) {")
+
+
+def a_named_handler_written_in_place(app: Path) -> None:
+    # MUST STAY GREEN. A named function expression passed where it is
+    # written: its only "use" is its definition.
+    the_shell_appearance_never_applied(app)
+    edit(app / "src" / "static" / "index.html", "</body>",
+         "<script>window.addEventListener('message', function onShellMessage(e) {"
+         " var p = (e.data || {}).payload || {};"
+         " if (p.appearance) document.documentElement.dataset.appearance = p.appearance;"
+         " });</script></body>")
+
+
 UI_MUTATIONS = [
     ("ui: a width cap nothing centres", a_cap_nothing_centres,
      "caps its width"),
@@ -362,6 +845,24 @@ UI_MUTATIONS = [
     ("ui: confirm()", a_native_modal, "alert/confirm/prompt"),
     ("ui: @media max-width", a_media_query, "@media max-width"),
     ("ui: no manaurum:ready", the_handshake, "no manaurum:ready"),
+    ("ui: a colour set through element.style", a_colour_set_from_script,
+     "a colour set through element.style"),
+    ("ui: a width set through element.style stays green", a_width_set_from_script,
+     None),
+    ("ui: an in-app confirm stays green", an_in_app_confirm, None),
+    ("ui: the shell's appearance never applied", the_shell_appearance_never_applied,
+     "appearance from manaurum:init is never written"),
+    ("ui: confirm() in an inline onclick", an_inline_onclick_confirm,
+     "alert/confirm/prompt"),
+    ("ui: the appearance destructured stays green", the_appearance_destructured, None),
+    ("ui: the theme function passed by name stays green",
+     the_theme_function_passed_by_name, None),
+    ("ui: a fallback that reads its own value", a_fallback_that_reads_itself,
+     "appearance from manaurum:init is never written"),
+    ("ui: the appearance as a destructured parameter stays green",
+     the_appearance_as_a_destructured_parameter, None),
+    ("ui: a named handler written in place stays green",
+     a_named_handler_written_in_place, None),
 ]
 
 
@@ -469,6 +970,75 @@ def a_binary_file(repo: Path) -> None:
     (repo / "templates" / "sample.bin").write_bytes(b"PK\x03\x04\x00\x01\x02\x03rest")
 
 
+def a_stale_fact_comes_back(repo: Path) -> None:
+    append(repo, "README.md", "There is no readiness probe on the hosted path.")
+
+
+def a_stale_fact_reported_as_history(repo: Path) -> None:
+    append(repo, "README.md",
+           "An earlier version of this page said there is no readiness probe.")
+
+
+def a_stale_fact_in_the_starter(repo: Path) -> None:
+    append(repo, "templates/v2-starter/README.md",
+           "Get the port wrong and every request 502s.")
+
+
+def a_capability_that_is_not_registered(repo: Path) -> None:
+    append(repo, "README.md", "Enumerate keys with `os.kv.list`.")
+
+
+def a_capability_said_not_to_exist(repo: Path) -> None:
+    append(repo, "README.md", "There is no `os.kv.list`; keep an index key.")
+
+
+def a_permissions_enum_without_camera(repo: Path) -> None:
+    append(repo, "README.md", 'The permissions enum is `["microphone"]`.')
+
+
+def a_wrong_capability_count(repo: Path) -> None:
+    path = repo / "skills" / "manaurum-app" / "references" / "capabilities-reference.md"
+    text = path.read_text(encoding="utf-8")
+    if "All **32**" not in text:
+        raise AssertionError("anchor not found: All **32**")
+    path.write_text(text.replace("All **32**", "All **31**", 1), encoding="utf-8")
+
+
+def runtime_keys_drift(repo: Path) -> None:
+    path = repo / "templates" / "check_app.py"
+    text = path.read_text(encoding="utf-8")
+    if '"replicas", "image"}' not in text:
+        raise AssertionError("anchor not found: RUNTIME_KEYS tail")
+    path.write_text(text.replace('"replicas", "image"}', '"replicas"}', 1),
+                    encoding="utf-8")
+
+
+def the_gateway_forwards_the_clients_copy(repo: Path) -> None:
+    append(repo, README, "The gateway adds its own copy but does not remove one the "
+                         "client sent.")
+
+
+def the_old_gateway_reported_as_history(repo: Path) -> None:
+    append(repo, README, "An earlier version said the gateway does not remove a copy "
+                         "the client sent.")
+
+
+def a_stale_fact_beside_some_history(repo: Path) -> None:
+    # One paragraph (one line): history in one sentence, the stale claim in
+    # the next. The history must not excuse the claim.
+    append(repo, README, "An earlier version had no probe at all. There is no readiness "
+                         "probe on the hosted path.")
+
+
+def runtime_keys_renamed(repo: Path) -> None:
+    path = repo / "templates" / "check_app.py"
+    text = path.read_text(encoding="utf-8")
+    if "RUNTIME_KEYS = {" not in text:
+        raise AssertionError("anchor not found: RUNTIME_KEYS = {")
+    path.write_text(text.replace("RUNTIME_KEYS = {", "RUNTIME_KEY_SET = {", 1)
+                    .replace("or RUNTIME_KEYS", "or RUNTIME_KEY_SET"), encoding="utf-8")
+
+
 REPO_MUTATIONS = [
     ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
     ("repo: a documented path that is not there", a_path_that_is_not_there,
@@ -495,6 +1065,29 @@ REPO_MUTATIONS = [
     ("repo-green: a ticket that is Done", a_ticket_that_is_done, None),
     ("repo-green: a path in the reader's project", a_path_in_the_readers_project, None),
     ("repo-green: a binary file", a_binary_file, None),
+    ("repo: a stale fact comes back", a_stale_fact_comes_back,
+     "has a readiness probe (MAN-1369)"),
+    ("repo-green: a stale fact reported as history", a_stale_fact_reported_as_history,
+     None),
+    ("repo: a stale fact in the starter's README", a_stale_fact_in_the_starter,
+     "fails the readiness probe"),
+    ("repo: a capability Core does not register", a_capability_that_is_not_registered,
+     "is not a capability Core registers"),
+    ("repo-green: a capability said not to exist", a_capability_said_not_to_exist, None),
+    ("repo: the permissions enum without camera", a_permissions_enum_without_camera,
+     "states the permissions enum without camera"),
+    ("repo: the reference's capability count", a_wrong_capability_count,
+     "Core registers 32"),
+    ("repo: RUNTIME_KEYS drifts from the schema", runtime_keys_drift,
+     "RUNTIME_KEYS differs from the schema"),
+    ("repo: the gateway said to forward the client's copy",
+     the_gateway_forwards_the_clients_copy, "drops a client-sent X-Manaurum-User-Context"),
+    ("repo-green: the old gateway reported as history",
+     the_old_gateway_reported_as_history, None),
+    ("repo: a stale fact beside some history", a_stale_fact_beside_some_history,
+     "has a readiness probe (MAN-1369)"),
+    ("repo: RUNTIME_KEYS renamed", runtime_keys_renamed,
+     "no `RUNTIME_KEYS = {...}` to hold"),
 ]
 
 

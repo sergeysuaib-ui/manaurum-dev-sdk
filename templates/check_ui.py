@@ -50,8 +50,39 @@ VAR_DECL = re.compile(r"(--[a-z0-9-]+)\s*:")
 # `style="color:#333"` is the rule being broken. Only the second is a finding.
 STYLE_ATTR_COLOUR = re.compile(
     r"""\sstyle\s*=\s*(?P<q>["'])(?P<body>[^"']*)(?P=q)""")
-STYLE_PROP = re.compile(r"\.style\.[a-zA-Z]")
-MODALS = re.compile(r"\b(alert|confirm|prompt)\s*\(")
+# A colour set from script is the same finding as one in style=. Geometry is
+# not: `el.style.width = pct + "%"` on a progress bar cannot be a token, and
+# `style.setProperty("--x", ...)` sets a token. Only colour properties count.
+STYLE_PROP = re.compile(
+    r"\.style\.(color|background(?:Color|Image)?|border\w*Color|fill|stroke|"
+    r"boxShadow|outlineColor|textShadow|cssText)\b"
+    r"|\.style\.setProperty\(\s*['\"](?!--)(color|background[\w-]*|border[\w-]*color|"
+    r"fill|stroke|box-shadow)")
+# The global functions, not a method that happens to share the name:
+# `ui.confirm(...)` is the in-app dialog the skill tells you to use instead.
+MODALS = re.compile(r"(?:(?<![\w.$])|\b(?:window|globalThis|self)\.)(alert|confirm|prompt)\s*\(")
+SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S | re.I)
+# Inline handlers are script too: <button onclick="return confirm('Delete?')">.
+INLINE_HANDLER = re.compile(r"""\son[a-z]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", re.I)
+# The shell's appearance written onto the document...
+APPEARANCE_WRITE = re.compile(
+    r"(?:dataset\.appearance\s*=(?!=)|setAttribute\(\s*['\"]data-appearance['\"]\s*,)"
+    r"[^;\n]*")
+# ...from a value read off the payload: `payload.appearance`, or destructured,
+# `const { appearance } = payload`. The write's own `dataset.appearance =` is
+# not a read, which is what keeps the `prefers-color-scheme` fallback out.
+# `dataset.appearance` is the document's own value, not the payload's: a
+# fallback that reads it (`if (!root.dataset.appearance) ...`) applies nothing.
+APPEARANCE_READ = re.compile(r"(?<!dataset)\.appearance\b(?!\s*=(?!=))|"
+                             r"\{[^{}]*\bappearance\b[^{}]*\}\s*(?:=|\)|,)")
+# A function: declared by name, bound to a name, or anonymous. An anonymous
+# one, or a named one written where an argument goes (`addEventListener(
+# 'message', function onMessage(e) {...})`), runs when it is passed.
+FUNCTION_DEF = re.compile(
+    r"function\s+([A-Za-z_$][\w$]*)\s*\(|"
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?"
+    r"(?:function\b|\([^()]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)|"
+    r"function\s*\(|(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>")
 BANNED_CLASS = re.compile(r'class="[^"]*\b(tabs?|sidebar)\b')
 MEDIA_WIDTH = re.compile(r"@media[^{]*max-width")
 BUTTON_ROW = re.compile(r'<button[^>]*class="[^"]*\brow\b')
@@ -245,6 +276,34 @@ def uncentred_cap(static_dir: Path, html: str) -> list:
             "on the right. Add `margin-inline: auto`" % (name, hook, value)]
 
 
+def applies_shell_appearance(html: str) -> bool:
+    """Is `payload.appearance` written onto the document, by code that runs?
+
+    The substring `dataset.appearance` was the whole check until 3.7.0, and
+    the starter's standalone fallback (`prefers-color-scheme`) always
+    contains it: deleting every call that applies the shell's value left the
+    check green. So: a write whose function (or the write itself) reads
+    `.appearance` off something, and, when it sits in a named function, that
+    function used somewhere else - called, or passed by name, as in
+    `addEventListener('message', onShellMessage)`.
+    """
+    for match in APPEARANCE_WRITE.finditer(html):
+        definitions = list(FUNCTION_DEF.finditer(html, 0, match.start()))
+        start = definitions[-1].start() if definitions else 0
+        if not APPEARANCE_READ.search(html, start, match.end()):
+            continue
+        if not definitions:
+            return True
+        name = definitions[-1].group(1) or definitions[-1].group(2)
+        before = html[:definitions[-1].start()].rstrip()[-1:]
+        if not name or before in ("(", ","):
+            return True                   # passed where it is written
+        uses = len(re.findall(r"(?<![\w$.])%s\b" % re.escape(name), html))
+        if uses > 1:                      # the definition itself is one
+            return True
+    return False
+
+
 def check(static_dir: Path) -> list:
     problems = []
     declared = declared_tokens(static_dir)
@@ -295,9 +354,13 @@ def check(static_dir: Path) -> list:
             problems.append("%s: a colour in a style= attribute - an inline colour "
                             "cannot follow an appearance change" % name)
         if STYLE_PROP.search(text):
-            problems.append("%s: element.style.* assignment - same as style=; toggle a "
-                            "class instead" % name)
-        if MODALS.search(text):
+            problems.append("%s: a colour set through element.style - same as style=; "
+                            "toggle a class or set a token instead" % name)
+        code = text
+        if path.suffix == ".html":
+            code = "\n".join(SCRIPT_BLOCK.findall(text) + [
+                "".join(m.groups(default="")) for m in INLINE_HANDLER.finditer(text)])
+        if MODALS.search(code):
             problems.append("%s: alert/confirm/prompt - the shell's iframe has no "
                             "allow-modals, so they return silently" % name)
         if BANNED_CLASS.search(text):
@@ -331,7 +394,7 @@ def check(static_dir: Path) -> list:
     if "manaurum:ready" not in html:
         problems.append("index.html: no manaurum:ready - after 10s the shell covers the "
                         'app with "App is not responding"')
-    if "data-appearance" not in html and "dataset.appearance" not in html:
+    if not applies_shell_appearance(html):
         problems.append("index.html: appearance from manaurum:init is never written onto "
                         "<html> - the app will sit in its own palette inside a dark desktop")
     if "dataset.device" not in html and "data-device" not in html:
