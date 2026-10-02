@@ -59,7 +59,8 @@ The payload as actually posted today (`sendInit`):
 
 - `theme` is **always** `"smoothie"` inside an iframe — the XP easter egg stops at the window frame (MAN-235). Style off `appearance` (`light` / `dark`) and `accent` instead.
 - `granted_capabilities` is sent **only to v2 apps** — the install's admin-approved grant list. `permissions` carries the manifest's `permissions[]` array (browser features such as `microphone`).
-- `offline` appears only when the manifest declares an `offline` block; `deepLink` only when the window was opened from a notification.
+- `offline` appears only when the manifest declares an `offline` block; `deepLink` when the window was opened from a notification, an `?open=` link, or another app's "open in source".
+- `locale` (`"en"`, `"ru"` or `"he"`) and `dir` (`"ltr"` / `"rtl"`) are the language the OS speaks (MAN-2289). The shell posts `manaurum:locale-change` with `{locale, dir}` once when the window becomes ready and again whenever the person switches language. SDK 2.3.0 reads neither, so take them from your own listener (behind the sender check) and set `<html lang dir>` from them.
 
 **Platform fields** (in `manaurum:init`; `manaurum:device-change` repeats all but `shell`):
 
@@ -238,7 +239,7 @@ const res = await app.fetch('/api/orders', {
 });
 ```
 
-- `path` must be a `/`-rooted relative path (stays same-origin, so Traefik routes it to Core → your container) **or** an absolute `https://` URL (passes through unchanged; external hosts are still subject to the gateway's egress rules). Anything else throws `TypeError`.
+- `path` must be a `/`-rooted relative path (stays same-origin, so Traefik routes it to Core → your container) **or** an absolute URL (passes through unchanged, straight from the browser: the gateway, `egress_allowed_hosts` and your session play no part, and the other host's CORS decides). It still defaults to `credentials: 'include'`, so an API that answers `Access-Control-Allow-Origin: *` fails unless you pass `{ credentials: 'omit' }`. Anything else throws `TypeError`.
 - Defaults applied: `credentials: 'include'` so the Manaurum session cookie reaches Core, and `Accept: application/json` unless you set it. Pass `{ credentials: 'omit' }` for an explicit anonymous probe.
 - **Your relative path must be declared in `manifest.runtime.api_routes`** or the gateway answers `404 route_not_declared` and your container never sees the request. Routes declared `auth: "user"` get a 60s `user_context` JWT minted by Core and injected as `X-Manaurum-User-Context`; `auth: "anonymous"` routes are proxied with none. The end user's own bearer is never forwarded to your container.
 - **Retries are off by default.** Opt in per call with an SDK-specific `retry` key, which is stripped before the init dict reaches `window.fetch`:
@@ -259,6 +260,8 @@ The `manaurum_session` cookie on `.manaurum.com` is good for 15 minutes from whe
 - `EventSource` and `XMLHttpRequest` — only `fetch` is wrapped. Read an authenticated stream with `fetch` and a body reader.
 - `auth: "anonymous"` routes — the gateway never answers them with the session `401`, so there is nothing to renew. An app that carries its own pass on such routes owns that pass's expiry.
 - A call with `credentials: 'omit'`, an `Authorization` header of your own, a streaming request body, or a cross-origin URL. These go out untouched.
+
+And three answers the wrapper itself can give. A `401 {"detail": "authentication_required"}` with no request sent, when the tab has no session to renew (a guest). A thrown `Error('Manaurum session renewal is temporarily unavailable. Try again.')` when Core could not be asked, before or after the first attempt. And a thrown `Error('Manaurum session changed. Reopen this app.')` when the person signed in as someone else. Handle all three where you handle a `401`.
 
 ### `app.pickFromDrive({ accept? })`
 

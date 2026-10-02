@@ -3,11 +3,11 @@
 `test_auth.py` proves the verifier rejects a bad token; `test_agent.py`
 calls the handlers directly. Neither one proves the handlers are actually
 WIRED to that verifier — delete `Depends(auth_claims)` and both suites
-stay green while the route goes open to the internet.
+stay green while the route goes open to every other app's container.
 
-That is not hypothetical. `/agent/*` is served on your public hostname
-(the dispatch skips the gateway, not the network), so the dependency in
-each handler is the only thing standing between a stranger and your data.
+That is not hypothetical. The dispatch skips the gateway, and every app's
+container shares one network, so the dependency in each handler is the
+only thing standing between another app and your data.
 A test suite that stays green when you remove it is teaching you that the
 code is covered when it is not.
 
@@ -30,8 +30,8 @@ _AGENT_ROUTES = ("/agent/read_my_note", "/agent/save_my_note")
 
 @pytest.mark.parametrize("path", _AGENT_ROUTES)
 def test_agent_route_refuses_a_caller_with_no_user_context(path):
-    """The agent surface is on the public hostname. `Depends(auth_claims)`
-    is the only thing between a stranger and this handler."""
+    """No gateway sits in front of the agent surface. `Depends(auth_claims)`
+    is the only thing between another app's container and this handler."""
     response = client.post(path, json={"text": "x"})
     assert response.status_code == 401
     assert response.json()["detail"] == "missing_user_context"

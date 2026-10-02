@@ -21,7 +21,7 @@ The manifest is one JSON object. Top-level required fields: `manifest_version`, 
 
 > **The root object is strict.** `"additionalProperties": false` at the top level — the 23 keys below are the complete set. Anything else fails manifest validation; there is no forward-compatible ignore. In particular `description`, `icon` and `category` are **not** root keys: they live at `metadata.description`, `frontend.icon` and `metadata.category`.
 >
-> The `runtime` and `metadata` **sub**-objects are *not* strict. Unknown keys there validate silently — which is how `runtime.port` and `runtime.egress_allowed_hosts` work (real, read by Core, just undeclared) and also how a typo like `runtime.byo_endpoint_url` passes validation and does nothing.
+> `runtime` is strict too (MAN-1899): a key outside the eleven in § 2 is a `422`. So are `data`, `offline`, and each entry of `agent_capabilities`, `webhooks` and `schedules`. The other objects (`frontend`, `platforms`, `visibility`, `migration`, `metadata`, …) accept keys they do not declare, which is how a typo there passes and does nothing.
 
 ```json
 {
@@ -77,7 +77,7 @@ Validate before every deploy — `manaurum app validate` uses a byte-identical c
 |---|---|---|
 | `manifest_version` | string `"2"` | Pinned. |
 | `manaurum_sdk_version` | string `"2"` | Pinned. |
-| `app_id` | string | Schema only enforces `minLength: 1` — but it becomes your DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name, so keep it `^[a-z][a-z0-9-]*[a-z0-9]$` and under ~40 chars in practice. Also `v2_apps.app_slug`. |
+| `app_id` | string | Your slug: the DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name. The deploy refuses anything but 3–40 chars of `a-z`, `0-9` and `-`, starting with a letter and not ending with `-` (`422 app_id_invalid`), anything shaped like a UUID, and the reserved names `app`, `apps`, `www`, `landing`, `staging`, `mcp`, `api`, `registry`, `library`, `turn`, `burgerlab`, `wildcard-anchor`, `dokploy`, `traefik` (`422 manifest_validation_failed`). |
 | `name` | string | Human-readable. Used in App Store + windowing. |
 | `version` | string | Semver `MAJOR.MINOR.PATCH`. Bump on every redeploy. No pre-release / build metadata. |
 | `runtime` | object | See § 2. |
@@ -88,19 +88,19 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 
 | Field | Type | Notes |
 |---|---|---|
-| `data` | object | Storage mode. **Omit it and you get managed mode**, which provisions a Postgres schema + login role per (app, tenant) and needs `MANAURUM_DDL_DSN` on Core — a deploy that fails at `swarm_applying` if it isn't set. A stateless app (persists only via `os.kv` / `os.files`) must declare `{"none": true}`. Other modes: `{"byo": true}` (your own DSN, no isolation guarantees), `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`), `connection_cap`. `additionalProperties: false` on this sub-object. |
+| `data` | object | Storage mode. **Omit it and you get managed mode**, which provisions a Postgres schema + login role per (app, tenant) and needs `MANAURUM_DDL_DSN` on Core — a deploy that fails at `swarm_applying` if it isn't set. A stateless app (persists only via `os.kv` / `os.files`) must declare `{"none": true}`. Other modes: `{"byo": true}` (your own DSN, no isolation guarantees). `{"shared": true}` and `connection_cap` are accepted and do nothing today: `shared` provisions exactly what managed mode does (one schema per app and tenant), and nothing reads `connection_cap`: your container connects with its own DSN, so its pool is whatever your driver opens. `extensions` requests Postgres extensions (`vector`, `pg_trgm` only); each needs a platform operator's approval, and until it has one the deploy goes on without it and a migration that uses the type fails. `additionalProperties: false` on this sub-object. |
 | `frontend` | object | `entry_point` (the URL the desktop shell loads in the app's window — normally `/index.html`; without it your app has no desktop window), `icon`, `bundle_path`, `window: {default_width, default_height}`. `frontend.icon` is an unconstrained string: an emoji works, so does an absolute URL or `/api/catalog/media/...` path. A **relative** path (`icons/app.svg`) is painted as literal text in the tile. Omit it entirely and the launcher serves a generic placeholder. |
 | `visibility` | object | `mode: "private" \| "public" \| "allow_list"`, optional `tenants: [uuid…]`. Default `private`. |
-| `platforms` | object | `desktop: {supported}` and `mobile: {supported, optimized, entrypoint, supportLevel, navigationPattern}`. Declare both explicitly. `platforms.mobile.entrypoint` is a separate HTTPS URL the shell loads on mobile devices. |
+| `platforms` | object | `desktop: {supported}` and `mobile: {supported, optimized, entrypoint, supportLevel, navigationPattern}`. Declare both explicitly. On a phone, `mobile.supportLevel: "none"` blocks the app and a missing level shows it with a "best on desktop" banner. `platforms.mobile.entrypoint` is read only for v1 manifests: a hosted v2 app always loads its own `https://<app_id>.apps.manaurum.com/` on mobile too (a `byo` app loads `runtime.entrypoint`). |
 | `requires_capabilities` | array | `[{name, version, quota_per_tenant_per_day?}]` — the capabilities your app cannot work without. |
 | `optional_capabilities` | array | Same shape as `requires_capabilities`, for capabilities you use if granted but don't require. App Store v2 reads this to compute the optional grant set the tenant admin sees at install time. |
-| `agent_capabilities` | array | Tools this app exposes to the **OS Assistant** — see the subsection below. Each entry `{name, description, input_schema, …}`; `name` is snake_case `^[a-z][a-z0-9_]*$`, ≤64 chars. |
+| `agent_capabilities` | array | Tools this app exposes to the **OS Assistant** — see the subsection below. Each entry `{name, description, input_schema, …}`; `name` is snake_case `^[a-z][a-z0-9_]*$`. **Slug length plus name length must be at most 57** (the Assistant names the tool `sdk__<slug>__<name>`, capped at 64): a longer one deploys green and the tool silently never appears. A tool whose name starts with a write verb (`add_`, `create_`, `save_`, `update_`, `delete_`, `set_`, …) and declares `"is_write": false` is refused at deploy (MAN-2358). |
 | `provides` | object | Inter-app contracts you expose: `{rpc: [...], events: [...]}`. Informational today: `os.apps.call` reaches only built-in apps, so no other app can call a method you list here. |
 | `consumes` | object | Inter-app contracts you depend on: `{rpc: [...], events: [...]}`. Nothing reads it today: listing an event here subscribes you to nothing, because no hosted app can receive events (MAN-133). |
 | `webhooks` | array | `[{name, path, signature}]`. **Validated for shape; Core does nothing with it in v2.x** — the platform webhook gateway is deferred. Expose your own handler via `runtime.api_routes` with `auth: "anonymous"` and verify the signature yourself. |
 | `schedules` | array | `[{name, cron, handler_path, timezone?}]`. **Validated for shape; Core does not invoke the handler in v2.x** — platform cron is deferred. Run an in-container scheduler and keep the declaration as documentation of intent. |
 | `tenant_config` | object | `{schema, required_at_install}` — per-tenant config collected at install time. Note: install-time values land in `v2_app_installs.config`, which the `os.tenant_config.get` capability does **not** currently read. Don't build on the round-trip yet. |
-| `offline` | object | Manaurum Edge declaration: `features` (operations that stay usable during a WAN outage), `reference_data` (cloud-owned datasets replicated read-only to the on-site box), `streams` (`[{name, type: "ledger" \| "state"}]`). |
+| `offline` | object | Manaurum Edge declaration: `features`, `reference_data`, `streams`. **It does nothing for a v2 hosted app today:** the on-site box's configuration is built from v1 apps only. (The shell still copies the block into `manaurum:init`.) |
 | `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `microphone` (MAN-1316) and `camera` (MAN-1920); `uniqueItems`. Required for a LIVE `getUserMedia` stream inside the shell iframe; a still photo through `<input type="file" capture>` is not gated and needs no declaration. The user still sees the browser's own prompt. Refused when `runtime.mode` is `byo` (MAN-1922), and the shell delegates nothing to a frame whose address the manifest chose. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
 | `migrate_command` | string[] | In the schema, but **Core never executes it** — there is no call site (`production.py:40-43`, "reserved"). An app whose schema depends on it deploys green with no tables. Use `migrations/*.sql` instead — see § 7. |
 | `migration` | object | `{breaking, reason, rollback_strategy}`. `breaking: true` lets the DDL validator through *destructive* statements (and only those — see § 7). Default `false`. |
@@ -112,9 +112,9 @@ Grant enforcement applies to every capability call from an app with an install r
 
 Each entry registers one tool the OS Assistant can call on the user's behalf. On deploy, Core upserts one `agent_capabilities` row per entry; at request time the agent runtime builds a tool per row (for apps the user has installed) and dispatches **server-to-server** — `POST http://<container>/agent/<name>` with the tool arguments as the JSON body and a freshly minted `user_context` JWT in `X-Manaurum-User-Context`, the same header and the same key your `auth: "user"` routes already verify. Reply `{"ok": true, "output": …}` (a bare JSON object also works; `{"ok": false, "error": …}` surfaces as a failed tool call).
 
-This dispatch goes **straight to your container**, not through the `/apps/<slug>` gateway — so `/agent/<name>` does **not** need a `runtime.api_routes` entry, and declaring one there does nothing.
+This dispatch goes **straight to your container**, not through the gateway — so `/agent/<name>` does **not** need a `runtime.api_routes` entry, and declaring one there does nothing.
 
-> ⚠️ **`/agent/*` is not private. Verify the JWT in every handler.** Skipping `api_routes` removes the *gateway*, not the network: `https://<slug>.apps.manaurum.com` is Traefik straight to your container, so anyone on the internet can POST `/agent/<name>` and reach your code. Verified 2026-07-26 against a live deploy — an unauthenticated `POST /agent/<name>` on the public host is answered by the container, not the gateway. The user_context check is therefore the **only** thing standing between a stranger and your handler, and it must be load-bearing, not belt-and-braces.
+> ⚠️ **Verify the JWT in every `/agent/*` handler, and bind it.** On your public hostname the gateway refuses `/agent/*` (`404 route_not_declared`, MAN-1432 — before 2026-07-27 it did not). But every app's container sits on one network, so another app's container can call yours directly, and the token it presents may be one minted for some other app. The check in `templates/v2-starter/src/auth.py` — signature, then `app_id` and `tenant_id` — is what stands between that container and your data.
 
 **Declare at least one.** An app with no `agent_capabilities` is invisible to the Assistant — and the Assistant does not say "I can't see that app", it *guesses*, so the user gets confident answers about data it never read. This is the platform's differentiator; treat the field as required, not optional.
 
@@ -147,13 +147,17 @@ The three required keys are `name`, `description`, `input_schema`. What separate
 
 Note the shape of that description: a positive trigger ("use for household to-dos…"), an ordering constraint ("resolve the Space first — do NOT guess"), and a negative ("not for personal reminders"). A description like *"Creates an item."* parses fine and routes badly.
 
-`routing_hints` are informational keywords; `example` is surfaced to the model as a usage hint. Both are optional and both help.
+`routing_hints` are informational: today nothing matches against them. `example` is surfaced to the model as a usage hint. The model picks a tool by its `name`, `description` and `input_schema`, so **write the `description` with the words your user actually uses**, in their language as well as English: an app whose people type «сколько осталось» should say so in the description.
+
+**Shape a write's input for the approval card.** A write pauses on a card the user approves first. The card names the call by the record's id and title and shows the arguments, at most 10 keys per level. So an update takes **only the fields that change** (omitted means unchanged), the record's id is a **required, top-level** key named after the tool's noun (`update_order` → `order_id`), and every key is declared in `properties`.
+
+**Timeouts and retries.** The Assistant waits **30 seconds** for your handler, then reports the call as failed — but your handler keeps running. It does not pass you an idempotency key. So a write that can take longer than that must be idempotent on its own inputs (an upsert keyed by something in the request), or the user's retry writes twice. What the model sees of a failure is short: `{"ok": false, "error": …}` passes the first 300 characters of `error`, a non-2xx response the first 200 of its body, and the whole message is capped at 400.
 
 > **`is_write` is load-bearing, and omitting it is not the same as `false`.** Since MAN-1425/MAN-1872 (merged 2026-08-21) the manifest value is persisted on `agent_capabilities` and read at request time — but the column is nullable and **NULL is not `false`**: a capability that omits the key falls back to the dispatch-derived value, and every v2 hosted app dispatches `backend`, which means `is_write=True`. So a reader that says nothing is treated as a mutation — journalled as an AgentAction row, gated by the confirmation flow, deduped for idempotency, and excluded from cross-app insight (which filters on `not is_write`). **Write `"is_write": false` explicitly on every read-only capability.** The fallback errs toward "write" on purpose: over-protecting a reader beats letting a mutation through unannounced.
 
 #### The handler side
 
-`/agent/<name>` is dispatched **straight to your container** and is *not* a gateway route, so it needs no `runtime.api_routes` entry — but see the warning above: it is still exposed on your public hostname. Serve it with the same JWT verification your `auth: "user"` routes use:
+`/agent/<name>` is dispatched **straight to your container** and is *not* a gateway route, so it needs no `runtime.api_routes` entry. Serve it with the same JWT verification your `auth: "user"` routes use (see the warning above):
 
 ```python
 # src/agent_routes.py — one router, one handler per manifest entry.
@@ -228,6 +232,22 @@ It covers document navigations only. It never touches `api_routes`, and it never
 
 The path the platform polls after a deploy, straight to your container at `runtime.port` over the internal network. It needs no `api_routes` entry, and like every non-`/api` path it is also served publicly through the gateway, so keep it free of anything secret. Declared, it is strict: a `5xx` on it fails the deploy. Left out, the probe only needs something to answer HTTP on the port. Either way a container that never answers is rolled back to the previous version and the deploy is reported failed.
 
+### What else the gateway answers
+
+Besides `404 route_not_declared`, a request can come back from the gateway, not your container:
+
+| HTTP | `detail` | When |
+|---|---|---|
+| 404 | `app_not_found` | No such app; or it is not serving; or the caller is signed in to another tenant (on `auth: "user"` routes). |
+| 503 | `app_disabled` | The app was switched off (`/api/*` gets this code; a page gets an HTML 503). |
+| 400 | `path_traversal_rejected` | The path contains a `..` or `.` segment, or an encoding of one. |
+| 502 | `upstream_unreachable` | Nothing answered on your container's port (it crashed, or is restarting). |
+| 504 | `upstream_timeout` | Your container took longer than **30 s** to answer a non-streaming route. Long work goes in a background job the page polls, or on a `streaming: true` route. |
+
+Core answers `POST /__manaurum/runtime-errors` on your hostname; do not serve that path.
+
+**Your container may be made read-only.** Off by default, a platform operator can switch an app to a hardened runtime, applied from its next deploy: a read-only root filesystem, uid 10001 whatever your image's `USER` says, no Linux capabilities, and only `/tmp` writable (a 128 MiB tmpfs counted against your memory; `HOME` points inside it). Write temporary files under `/tmp`, and anything that must last through `os.files` or your database, and the switch will not break you.
+
 ### `runtime.resources`
 
 `{"memory_mb": 64–2048, "cpu_millicores": 50–2000}`, default 512 MiB and 500 millicores. A value above the ceiling is a `422`, not a quiet clamp. Over its memory the container is OOM-killed and restarted; over its CPU it is throttled.
@@ -261,14 +281,14 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 
 What the apps that have this shape do (zb-product-kb, planning-poker):
 
-1. One `auth: "user"` route — say `POST /api/pass` — verifies the `user_context` and answers a short-lived pass the app signs itself: HMAC over (user id, what it grants, expiry), with the key kept in `os.secrets`.
+1. One `auth: "user"` route — say `POST /api/pass` — verifies the `user_context` and answers a short-lived pass the app signs itself: HMAC-SHA256 over (user id, what it grants, expiry), with the key kept in `os.secrets` (declare `os.secrets.get`). Compare signatures in constant time (`hmac.compare_digest`), and rotate the key to revoke every pass at once.
 2. The page asks for it once. A guest gets `401` and carries on without one; a member keeps the pass.
 3. The routes both of them call are `anonymous` and read the pass from a header of the app's own (`X-App-Pass`). Not `Authorization` — the gateway strips it.
 4. Each such route decides on its own what a request **without** a pass may do. That is the guest's whole permission set, so make it deliberate: what the share link was for (see the board, cast a vote under a name the guest typed) and nothing a member's identity would unlock. Whatever needs to know *which member* needs a valid pass, and a missing or bad pass gets the guest answer, never an error that falls through to member behaviour.
 
-The pass is the only proof of membership on those routes, so bind it to what it grants (this room, this document), keep it short, and renew it through the `user` route. Platform session renewal does not cover it: it only acts on `user` routes (see `references/sdk-api.md` → "Sessions in a standalone tab").
+The pass is the only proof of membership on those routes, so bind it to what it grants (this room, this document), keep it short, and renew it through the `user` route. A person signed in to **another** tenant gets `404 app_not_found` from that route, not `401`; treat it as "no pass" too. Platform session renewal does not cover it: it only acts on `user` routes (see `references/sdk-api.md` → "Sessions in a standalone tab").
 
-**Names.** The `user_context` JWT carries ids: `sub`, `tenant_id`, `workspace_id`, `app_id` (the slug), `app_version`. No name and no email. Inside the desktop window `manaurum:init` carries `user.nickname`; in a standalone tab nothing does, so ask the person and store the answer against `sub`.
+**Names and roles.** The `user_context` JWT carries ids: `sub`, `tenant_id`, `workspace_id`, `app_id` (the slug), `app_version`. No name, no email, and **no role**: nothing tells your app who is a tenant admin. Keep your own list of admins (say, user ids in `os.secrets` or your schema) and check it. Inside the desktop window `manaurum:init` carries `user.nickname`; in a standalone tab nothing does, so ask the person and store the answer against `sub`.
 
 ### Streaming routes — the limits
 
@@ -314,7 +334,7 @@ Env vars the platform sets on every task:
 
 You host the app yourself; the platform proxies signed requests to your endpoint. Useful when you have legacy infra you can't move. Requires a `byo_hosts` row registered via Workspace Admin → Integrations.
 
-Manifest looks the same plus **`runtime.entrypoint`** — the absolute HTTPS URL of your endpoint. The shell honours it only for `mode: "byo"`; for `hosted` apps the URL is platform-derived (`https://<slug>.apps.manaurum.com/`) and any `entrypoint` you write is ignored.
+Manifest looks the same plus **`runtime.entrypoint`** — the absolute HTTPS URL of your endpoint. The shell honours it only for `mode: "byo"`; for `hosted` apps the URL is platform-derived (`https://<slug>.apps.manaurum.com/`), and a `hosted` manifest that sets `entrypoint` is a `422`.
 
 > Do **not** write `runtime.byo_endpoint_url`. That spelling appears nowhere in Core, and since `runtime` became strict it is a `422`. The field is `entrypoint`.
 
@@ -332,7 +352,7 @@ List of external hostnames your app may reach via the `os.http.fetch` capability
 
 The schema declares it, as an array of strings; a host there is not checked for shape until `os.http.fetch` compares it with a URL, and the comparison is an exact hostname match, case aside: write `api.example.com` — no scheme, no path, no wildcard — and list a redirect's host separately.
 
-> **Unresolved — current behaviour is not the intended behaviour.** The deploy also writes each declared host into the container's Swarm `Hosts` entries as `0.0.0.0 <host>`, which means a raw `fetch()` from inside the container to a host you **declared** resolves to `0.0.0.0` and fails, while an *undeclared* host resolves normally. That is the opposite of an allow-list, and it is a live monorepo bug rather than a designed boundary. Until it is resolved, do not write code that depends on either reading of container-level egress: route all external HTTP through `os.http.fetch`, which is enforced, audited, and unaffected.
+> **The list is enforced by `os.http.fetch` and nothing else.** Your container's own outbound connections are not filtered today: a raw `fetch()` reaches any host, declared or not (the `0.0.0.0` trick that used to break declared hosts was removed in MAN-2263). Route external HTTP through `os.http.fetch` anyway: it already enforces the list, it is audited, and it never follows a redirect for you. Nothing enforces the list at the container level yet.
 
 ---
 

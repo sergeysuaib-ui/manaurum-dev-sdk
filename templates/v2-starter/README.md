@@ -114,9 +114,9 @@ OS Assistant read and write your note on the user's behalf. Declare none
 and the Assistant cannot see the app at all — and rather than saying so it
 will answer from guesswork. Dispatch goes **straight to the container** at
 `POST /agent/<name>`, so those paths must **not** be listed in
-`runtime.api_routes`. That skips the *gateway*, not the network — the path is
-still served on your public hostname, so the JWT check in every handler is the
-only thing protecting it. And a valid JWT is authentication, not
+`runtime.api_routes`. That skips the *gateway*: the public hostname refuses
+`/agent/*`, but other apps' containers share the network and can call it
+directly, so the JWT check in every handler is the only thing protecting it. And a valid JWT is authentication, not
 authorization: every handler still scopes to `claims.user_id`.
 
 **6. The shell — not the browser — decides light or dark.** `manaurum:init`

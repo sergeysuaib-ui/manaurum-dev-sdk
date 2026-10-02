@@ -322,15 +322,16 @@ Manaurum's tokens and component catalogue are public and need no auth:
 - `https://manaurum.com/api/library/tokens.css` — the token file
 - `https://manaurum.com/library` — the component catalogue
 
-`app.css` deliberately uses **the same token names** as that file, so adopting
-it later is one `<link>` and no rule below it has to move.
+`app.css` uses **the same token names** as that file for everything the file
+defines, so adopting it later moves no rule (some values differ, so it changes
+the look a little). Three names are the starter's own
+and stay in `app.css` (`--app-bg`, `--surface-input`, `--font-mono`).
 
 It vendors the *values* rather than linking the file today because a stylesheet
 has no graceful degradation: a dynamically-imported SDK can fall back to
 `fetch()`, but a `<link>` that fails to load leaves your user looking at
-unstyled HTML. Two concrete gaps also argue for waiting — the token file
-documents a hostname that does not resolve, and it defines 6 of the 8 accents
-the OS actually offers, so `amber` and `green` silently fall back to blue.
+unstyled HTML. The file itself is in order now (MAN-2367): all nine accents the
+OS offers, `verdant` included, and the URL it documents resolves.
 
 **MAN-1401** is the open decision on how a v2 app should consume the shared
 system. When it lands, this section is what changes.

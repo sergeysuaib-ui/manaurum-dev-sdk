@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.4.0.** A plugin install caches one directory per
+> **This page is SDK 3.5.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -209,8 +209,8 @@ Validation rules (key ones):
 - `runtime.mode`: `hosted` (the platform runs the container — what this skill teaches), `byo` (you host your own and the platform proxies — advanced), or `dev` (platform-internal prototyping runtime — it had an in-browser Monaco editor called App Builder until 2026-08-07, when that surface was removed from the product; the mode and its routes remain, but nothing in the OS ships an editor for it).
 - `runtime.port`: the port your container listens on. Default **80**. This is the *only* thing that decides where the gateway sends traffic — see Step 2.
 - **`runtime.api_routes`: the default-deny declaration of every `/api/*` path your container serves.** Get this wrong and your app is broken in a way that looks like a backend bug. Details below.
-- `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`. Default-deny for everything else.
-- `data`: your storage mode. If your app has **no Postgres of its own** — which includes every app that persists only through `os.kv` / `os.files` — declare `"data": {"none": true}`. Omitting the block selects managed mode, which tries to provision a per-(app, tenant) schema + login role and needs a DDL-capable DSN on Core. Other modes: `{"byo": true}` (your own connection string, no isolation guarantees), `{"shared": true}` (one cross-tenant schema — you own every `WHERE tenant_id`, and tenant admins see an isolation warning at install).
+- `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`, which refuses every other host. (The container's own connections are not filtered.)
+- `data`: your storage mode. If your app has **no Postgres of its own** — which includes every app that persists only through `os.kv` / `os.files` — declare `"data": {"none": true}`. Omitting the block selects managed mode, which tries to provision a per-(app, tenant) schema + login role and needs a DDL-capable DSN on Core. Other modes: `{"byo": true}` (your own connection string, no isolation guarantees), `{"shared": true}` is accepted but behaves exactly like managed mode today. Postgres extensions: `data.extensions` (`vector`, `pg_trgm`), each approved by a platform operator.
 - `frontend.entry_point`: the URL the **desktop shell** loads in your app's window, normally `/index.html`. Without it your app has a live URL but no window on the desktop. Declaring it is also what makes the `manaurum:ready` handshake (Step 2.5) apply to you.
 - `frontend.icon`: an emoji (`"📋"`, and Libi ships `"🍼"`), a full URL, or an absolute `/api/catalog/media/...` path. Omit it and the launcher serves a generic placeholder. A **relative** path such as `"icons/app.svg"` is not resolved — it is painted into the tile as literal text.
 - `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
@@ -595,7 +595,7 @@ packs. Exit 0 or fix what it names.
 |---|---|
 | an `/api/*` route no `runtime.api_routes` rule covers — including the `/api/x/*`-does-not-cover-`/api/x` case | `404 route_not_declared` at the gateway. Your handler never runs, and your logs are silent, so it reads as a backend bug. |
 | a declared route nothing serves | the manifest describing an app you did not build |
-| an `/agent/*` handler with no user-context verification | nothing. An open endpoint on the public internet, indefinitely. |
+| an `/agent/*` handler with no user-context verification | nothing. An endpoint any other app's container can call, indefinitely. |
 | `runtime.port` disagreeing with what the container binds (and with `EXPOSE`) | a deploy that fails its readiness probe, a build and push later |
 | `frontend.entry_point` naming a file that is not there | the window opens on a 404 |
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
@@ -757,7 +757,7 @@ Your data is **automatically tenant-scoped** by the platform's RLS policies on `
 - **Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
 - **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql`, which the pipeline runs once per (app, tenant).
 - **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failed attempt raise, so the next request tries again. Never catch the failure into a "no database" mode: that app serves empty 200s behind a green `/healthz` until someone restarts it. The same goes for a secret or anything else you fetch from Core at startup. The pattern is ten lines, in `references/v2-platform.md` → "Your database can come up after your container".
-- **Don't expect side-channel network access.** `egress_allowed_hosts` controls outbound; DROP everything else. If you need a third-party API, declare it.
+- **Route outbound HTTP through `os.http.fetch`.** `egress_allowed_hosts` is enforced there and only there; the container's own connections are not filtered, which is not a licence to use them. Declare every third-party host.
 - **Don't try to deploy with an `mnu_*` token.** An `mnu_*` is a tenant token for MCP clients and Drive upload, not a deploy credential. Deploys use `mna_*` exclusively.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
 - **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on all of them but the sentence in a badge and the hover on something inert, so for five of the seven this is not a matter of remembering.
@@ -771,7 +771,7 @@ Everything here shares one property: it works when you open `https://<slug>.apps
 
 **No native dialogs.** The shell's iframe sandbox is `allow-scripts allow-forms allow-same-origin`. `allow-modals` is not granted anywhere on the platform, so `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` prompts are dead — Chrome returns `undefined` / `false` / `null` and logs a warning. A `confirm()`-gated delete button becomes a button that does nothing. Use an in-app modal for confirm, an in-app input for prompt, a toast for alert.
 
-**Don't set your own framing headers.** Core force-assigns the CSP `frame-ancestors` and deletes `X-Frame-Options` on every `/apps/*` response, so setting either is pointless. But only the *framing* directives are rewritten: the rest of your CSP survives verbatim, so a `connect-src 'self'` that forgets your API origin will still break your app inside the shell.
+**Don't set your own framing headers.** Core force-assigns the CSP `frame-ancestors` and deletes `X-Frame-Options` on every `/apps/*` response, so setting either is pointless. On a page it serves (a `GET` answered `200 text/html`) it also rewrites `script-src` / `script-src-elem` (adding a nonce for the session-renewal script it injects) and `frame-src`, in headers and `<meta>` tags alike, and serves it with `Cache-Control: no-store`. Everything else in your CSP is kept, so a `connect-src 'self'` that forgets your API origin will still break your app inside the shell.
 
 **`frontend.icon` takes an emoji, a full URL, or an absolute `/api/catalog/media/...` path.** A relative path like `icons/app.svg` is not resolved — it renders as that literal string in the tile. Omit the field entirely and you get a clean generic placeholder, which is better than a broken one.
 

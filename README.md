@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.4.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.5.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -37,7 +37,7 @@ the user's behalf; `os.drive.*` and `os.calendar.*` refuse a call without it.
 | `/api/*` is **default-deny**. Every API path must be listed in `manifest.runtime.api_routes`. | The gateway answers `404 route_not_declared` and the request never reaches your container. Looks like a backend bug with silent logs. |
 | The platform reaches your container on `manifest.runtime.port` (default **80**). `EXPOSE` is never parsed. | The deploy's readiness probe finds nobody listening, rolls back and fails the job. |
 | The desktop shell requires the `manaurum:ready` handshake within 10 s. | The standalone URL works fine, so you notice nothing — until someone opens the app on the desktop and gets "App is not responding". |
-| `/agent/*` bypasses the gateway but **not the network**. Verify the user-context JWT in every handler. | `<slug>.apps.manaurum.com` is Traefik straight to your container, so an unauthenticated POST to `/agent/<name>` reaches your code. Skipping the check because "only the runtime calls this" ships an open endpoint. |
+| `/agent/*` bypasses the gateway. Verify the user-context JWT in every handler, and that it names your app. | The public host refuses `/agent/*`, but every app's container shares one network, so another app can call yours directly. Skipping the check because "only the runtime calls this" ships an endpoint any app can reach. |
 
 **Who can install it** is `manifest.visibility.mode`: `private` (default), `public`, or
 `allow_list` (with `visibility.tenants`). It is enforced when a tenant installs, not by
