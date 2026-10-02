@@ -828,6 +828,135 @@ def check_platform_codes(problems: list) -> None:
                                 % (rel(path), line_of(text, start), code, sha))
 
 
+SECTION_HEADING = re.compile(r"^#{2,3} (.*)$", re.M)
+INPUT_MARK = re.compile(r"\*\*Input:\*\*|the input is\b")
+# What follows the mark: an inline `{ … }` on the same line, or the first
+# fenced block below it (any language tag - `jsonc` is JSON too).
+INLINE_EXAMPLE = re.compile(r"\A[^\n`]*\n?[^\n`]*`(\{[^`]*\})`")
+BLOCK_EXAMPLE = re.compile(r"\A[^\n]*\n(?:[^\n`][^\n]*\n|\n){0,3}```[a-z]*\n(.*?)```", re.S)
+FIELD_TABLE = re.compile(r"^\|\s*Field\s*\|(.*)\|[ \t]*\n\|[-| :]+\|[ \t]*\n"
+                         r"((?:\|.*\|[ \t]*\n?)+)", re.M)
+CELL_SPLIT = re.compile(r"(?<!\\)\|")
+
+
+def example_keys(example: str) -> set:
+    """Top-level keys of a JSON-ish example: `{ "key": "<anything>" }`, and
+    the key-only form `{ "target_app_id", "since"? }`. A string after a
+    colon is a value, whatever it looks like."""
+    keys, depth, index, last = set(), 0, 0, ""
+    while index < len(example):
+        char = example[index]
+        if char == '"':
+            end = index + 1
+            while end < len(example) and example[end] != '"':
+                end += 2 if example[end] == "\\" else 1
+            if end >= len(example):
+                break
+            if depth == 1 and last in ("{", ",") and \
+                    re.match(r"\s*\??\s*[:,}]", example[end + 1:]):
+                keys.add(example[index + 1:end])
+            index, last = end + 1, '"'
+            continue
+        if char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+        if not char.isspace():
+            last = char
+        index += 1
+    return keys
+
+
+def check_capability_inputs(problems: list) -> None:
+    """Each capability's documented input is the one its handler validates.
+
+    `capability_inputs` in the contract is every capability's input fields
+    and `required`, read from its registration on Core. In the reference,
+    under a heading that names one capability: the first **Input** example
+    may name only fields the schema has and must name every required one,
+    and a `| Field | … | Required |` table under it lists exactly the
+    schema's fields, required where the schema requires them. The wrong
+    field names of `os.files.upload` and `os.ocr.extract` (audit K2, K3)
+    shipped because nothing compared the two.
+    """
+    _, contract = load_contract()
+    inputs = (contract or {}).get("capability_inputs")
+    if not inputs:
+        problems.append("%s: no `capability_inputs` - run scripts/sync_contract.py" % CONTRACT)
+        return
+    text = read(ROOT / REFERENCE)
+    headings = list(SECTION_HEADING.finditer(text))
+    for index, heading in enumerate(headings):
+        names = re.findall(r"`(os\.[a-z_.]+)`", heading.group(1))
+        if len(names) != 1 or names[0] not in inputs:
+            continue
+        name = names[0]
+        properties = set(inputs[name]["properties"])
+        required = set(inputs[name]["required"])
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        body = text[heading.end():end]
+        at = heading.end()
+        mark = INPUT_MARK.search(body)
+        example = None
+        if mark:
+            rest = body[mark.end():]
+            example = INLINE_EXAMPLE.match(rest) or BLOCK_EXAMPLE.match(rest)
+            if example is None:
+                problems.append("%s:%d: the %s input example is in a shape this check "
+                                "cannot read - write it as `{ … }` on the **Input:** line "
+                                "or as the fenced block right below it"
+                                % (REFERENCE, line_of(text, at + mark.start()), name))
+        if example is not None:
+            keys = example_keys(example.group(1))
+            line = line_of(text, at + mark.start())
+            for key in sorted(keys - properties):
+                problems.append("%s:%d: the %s example sends `%s`, which its input "
+                                "schema does not have (422 input_schema_violation)"
+                                % (REFERENCE, line, name, key))
+            for key in sorted(required - keys):
+                problems.append("%s:%d: the %s example leaves out `%s`, which its "
+                                "input schema requires" % (REFERENCE, line, name, key))
+            alternatives = inputs[name].get("one_of_required") or []
+            if alternatives and sum(1 for alt in alternatives if set(alt) <= keys) != 1:
+                problems.append("%s:%d: the %s example must send exactly one of %s"
+                                % (REFERENCE, line, name,
+                                   " / ".join("+".join(alt) for alt in alternatives)))
+            together = set(inputs[name].get("not_all_of") or [])
+            if together and together <= keys:
+                problems.append("%s:%d: the %s example sends %s together, which its "
+                                "input schema refuses" % (REFERENCE, line, name,
+                                                          " and ".join(sorted(together))))
+        table = FIELD_TABLE.search(body)
+        if not table:
+            continue
+        header = [cell.strip() for cell in CELL_SPLIT.split("Field|" + table.group(1))]
+        if "Required" not in header:
+            continue
+        column = header.index("Required")
+        line = line_of(text, at + table.start())
+        documented = {}
+        for row in table.group(2).strip().splitlines():
+            cells = [cell.strip() for cell in CELL_SPLIT.split(row.strip().strip("|"))]
+            if len(cells) <= column:
+                continue
+            flag = cells[column].replace("*", "").lower().startswith("yes")
+            for field in re.findall(r"`([a-z_][a-z0-9_]*)`", cells[0]):
+                documented[field] = flag
+        for field in sorted(set(documented) - properties):
+            problems.append("%s:%d: the %s field table lists `%s`, which its input "
+                            "schema does not have" % (REFERENCE, line, name, field))
+        for field in sorted(properties - set(documented)):
+            problems.append("%s:%d: the %s field table leaves out `%s`, which its "
+                            "input schema accepts" % (REFERENCE, line, name, field))
+        for field in sorted(set(documented) & properties):
+            if documented[field] != (field in required):
+                problems.append("%s:%d: the %s field table calls `%s` %s; its input "
+                                "schema %s it" % (REFERENCE, line, name, field,
+                                                  "required" if documented[field] else "optional",
+                                                  "does not require" if documented[field]
+                                                  else "requires"))
+
+
 def check_shell_messages(problems: list) -> None:
     """The window protocol in the documents is the shell's.
 
@@ -1033,6 +1162,7 @@ CHECKS = (
     check_contract,
     check_platform_codes,
     check_shell_messages,
+    check_capability_inputs,
 )
 
 

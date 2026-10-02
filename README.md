@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.9.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.10.0.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -186,7 +186,8 @@ parts inlined. Reading one real app beats reading four pages about apps.
 * `templates/manifest_v2.schema.json` + `templates/platform-contract.json` +
   `scripts/platform-strings.json` — the copy of Core's contract the linters and
   `check_repo.py` read: the manifest schema, the 32 registered capabilities, the reserved
-  slugs, the slug pattern, the write-verb rule, the Assistant's tool-name limit, the
+  slugs, the slug pattern, the write-verb rule, the Assistant's tool-name limit, every
+  capability's input fields, the
   window's message types, and the snake_case words in the string literals of the Core
   code a developer's errors come from, with the Core
   SHA they came from. `python scripts/sync_contract.py --monorepo ../Manaurum` refreshes
@@ -198,7 +199,9 @@ parts inlined. Reading one real app beats reading four pages about apps.
   resolves, no hardcoded self-counts, no control byte, no fixed `/tmp` path, no
   documented flag the tool rejects) and to the contract (every registered capability
   documented, no capability named that Core lacks, the `permissions` enum as the schema
-  has it, no quoted error code that appears nowhere in Core's strings any more, no window
+  has it, each single-capability section's documented input equal to its schema, no
+  quoted error code
+  that appears nowhere in Core's strings any more, no window
   message the shell does
   not know and none it sends left undescribed, and none of the facts the 2026-10-02 audit
   found stale back in any document or template); `linter_mutations.py` breaks the starter once per
