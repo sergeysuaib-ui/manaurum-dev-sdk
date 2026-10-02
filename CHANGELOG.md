@@ -1,3 +1,95 @@
+# 3.2.0 - a token is checked for whose it is, and the window for who is talking (MAN-1307, MAN-3203)
+
+### Why
+
+The audit of 3.1.0 against Core's `main` (285c8a8, `docs/audits/`) found three
+places where the starter, and the text around it, taught something unsafe:
+
+* **`src/auth.py` accepted any app's `user_context`.** It checked signature,
+  issuer, audience and expiry, which every app's tokens pass: Core signs them
+  all with one key for one audience. It never compared `app_id` or
+  `tenant_id`, and it defaulted missing claims to `""`. So a token the gateway
+  minted for app A, which A's developer sees, opened app B for 60 seconds.
+  The gateway also does not remove an `X-Manaurum-User-Context` the client
+  sent, and adds its own under a different letter case, so a container can
+  receive two headers, with `headers.get()` returning the client's. MAN-1307
+  covers the binding on the platform side; the second header is not yet
+  ticketed.
+* **The handshake trusted the first sender.** The starter's `index.html`, the
+  snippet in `SKILL.md` and both in `sdk-api.md` acted on `manaurum:init`
+  from any window and answered it. Any page can frame a v2 app, every other
+  app included, and `manaurum-v2.mjs` 2.3.0 adopts whoever posts
+  `manaurum:init` as its shell, on every `init`, and sends that window the
+  app's Drive pick requests. The platform rule (MAN-2506) is
+  the parent window and the shell's two origins. `sdk-api.md` described the
+  first-sender behaviour as correct.
+* **`check_app.py` could not catch a real deploy token.** Its pattern wanted
+  16 letters or digits straight after `mna_`; Core mints
+  `mna_<12 hex>_<secret>` and `mnu_<env>_<secret>`, and the mutation that
+  "proved" the rule planted a shape no token has. Generated in the real
+  format, 400 tokens out of 400 passed the old rule. Meanwhile
+  `manaurum-setup` drew `.env.manaurum` inside the app directory, where the
+  CLI packager uploads it, while `manaurum-app` said one level up.
+
+The starter also said the capability gateway rejects a forwarded user
+context. It requires one for `os.drive.*` and `os.calendar.*`, and
+`call_capability()` had no way to send it.
+
+### What changed
+
+* **`templates/v2-starter/src/auth.py`** requires `sub`, `tenant_id`,
+  `app_id`, `app_version`, `exp` and `iat`; refuses a token whose `app_id` is
+  not `APP_SLUG` (`401 user_context_wrong_app`) or whose `tenant_id` is not
+  `MANAURUM_TENANT_ID` (`401 user_context_wrong_tenant`, and `503` when that
+  variable is missing); and refuses a request that carries the header twice
+  (`401 user_context_ambiguous`). `UserContextClaims` gains `workspace_id`,
+  which the gateway does mint, and `token`, for forwarding.
+* **`src/capability.py`**: `call_capability(..., user_context=claims.token)`.
+* **`src/static/index.html`** checks `event.source === window.parent` and the
+  origin against `https://manaurum.com` / `https://app.manaurum.com` in a
+  listener registered before the SDK's, which stops whatever it refuses, so
+  the SDK never sees it either. It lets `manaurum:session-*` through untouched:
+  Core injects a session-renewal script into every v2 page that talks to a
+  Core frame of its own and checks those messages itself. On loopback the
+  guard also admits the page's own origin, so `preview.py` can frame it.
+  Checked in a browser against `preview.py`: a sibling frame's `init` and
+  `theme-change` are dropped, its `session-response` reaches the next
+  listener, and the shell's messages work.
+* **Tests** in `test_auth.py`, `test_routes.py`, `test_capability.py` (new)
+  and `test_static.py`. The `user_context` fixture now mints the slug, the
+  tenant and a `workspace_id`, as the gateway does; it minted a UUID `app_id`
+  before. Each new check (the app and tenant binding, the required claims,
+  `exp`, `iat`, the duplicate header, the missing tenant, forwarding, and in
+  `index.html` the parent, self, origin and propagation checks, the loopback
+  exception and the session pass-through) was removed or widened in turn, and
+  the suite went red each time.
+* **`SKILL.md`, `references/v2-platform.md`, `references/sdk-api.md`,
+  `manaurum-setup`**: every handshake snippet carries the sender check and
+  replies to the checked origin instead of `'*'`. The four verification steps
+  for `X-Manaurum-User-Context` are written down once, in `v2-platform.md`.
+  Neither page says the SDK may be trusted to pick its shell.
+* **`templates/check_app.py`** matches the token shapes Core mints, exactly
+  enough that an identifier like `mna_token_from_the_environment` is not one.
+  `scripts/linter_mutations.py` plants a real-shaped `mna_*` and a new
+  `mnu_*` case; both survive the old pattern.
+* **`.env.manaurum` lives one level above the app, everywhere.** The setup
+  tree and the `.env.manaurum` section say so, and `deploy.sh` reads
+  `../.env.manaurum` and refuses to run with one inside the app directory.
+* **`templates/preview.py`** sends `locale` and `dir` in `manaurum:init`, as
+  the shell does, and its "NO manaurum:ready" badge names the origin rule.
+* **`docs/audits/`**: the audit report and its evidence.
+
+### Not in this release
+
+* The platform half: stripping a client's `x-manaurum-*` headers at the
+  gateway and minting one audience per app. Until that ships, the checks in
+  `auth.py` are the whole defence.
+* `manaurum-v2.mjs` 2.4.0 (MAN-2561) has not shipped; `https://manaurum.com/sdk/`
+  still serves 2.3.0, so the pages keep naming 2.3.0 and keep the inline
+  guard mandatory rather than optional.
+* The rest of the audit's findings: deploy, tokens, capabilities, `/agent/*`
+  wording and the linters' other gaps go in their own releases.
+
 # 3.1.0 - what the first app ported to v2 found missing (Planning Poker)
 
 ### Why

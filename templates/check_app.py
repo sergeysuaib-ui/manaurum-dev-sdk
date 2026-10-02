@@ -82,9 +82,20 @@ MIGRATION_NUMBER = re.compile(r"^(\d+)")
 RUNTIME_KEYS = {"mode", "port", "api_routes", "public_paths", "health_path",
                 "egress_allowed_hosts", "resources", "sandbox", "entrypoint",
                 "replicas", "image"}
-# Long enough not to match `mna_*`, `mna_<...>` or `mna_…` in a comment that is
-# telling you not to do this.
-TOKEN_LITERAL = re.compile(r"\bmn[au]_[A-Za-z0-9]{16,}")
+# The shapes Core mints. An `mna_*` is `mna_<12 hex>_<32 url-safe>`
+# (routes/developer/v2_credentials.py: token_hex(6), token_urlsafe(24)) and an
+# `mnu_*` is `mnu_<prod|staging|dev>_<32 url-safe>`
+# (services/tenant_developer_api_token.py). Both have an underscore after the
+# prefix part and may have `-`/`_` in the secret. Until 3.2.0 this pattern was
+# `mn[au]_[A-Za-z0-9]{16,}`, which matches neither, so the rule never fired on
+# a real token; it stays as the third branch. The first two are exact rather
+# than loose so an identifier like `mna_token_from_the_environment` is not a
+# "token". None of them matches `mna_*`, `mna_<keyid>_<secret>` or `mna_…` in
+# a comment that is telling you not to do this.
+TOKEN_LITERAL = re.compile(
+    r"\bmna_[0-9a-f]{12}_[A-Za-z0-9_-]{32}"
+    r"|\bmnu_(?:prod|staging|dev)_[A-Za-z0-9_-]{32}"
+    r"|\bmn[au]_[A-Za-z0-9]{16,}")
 SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
 DOLLAR_BLOCK = re.compile(r"(?i)\bDO\s*\$\$")
 DESTRUCTIVE = (

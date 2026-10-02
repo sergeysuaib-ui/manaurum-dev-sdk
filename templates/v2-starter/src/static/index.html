@@ -36,6 +36,19 @@
   Inline and dependency-free matters: for an SPA, `manaurum:init` can arrive
   before your bundle has parsed, and a slow CDN must never cost you the
   window or leave the app in the wrong appearance.
+
+  3. TRUST THE SHELL, NOT THE FIRST SENDER (MAN-2506). Any page can frame
+     this one — every v2 app may be framed from https://*.manaurum.com,
+     another app included — and post `manaurum:init` at it. So a message is
+     acted on only when it comes from the parent window AND from one of the
+     shell's origins. Anything else is dropped here before any later listener
+     sees it: manaurum-v2.mjs 2.3.0 has no such check of its own and adopts
+     whoever posts `manaurum:init`, on every init, so this script is also what
+     protects the SDK. That works because this listener is registered FIRST
+     (inline, before the module import below); keep it that way.
+     `manaurum:session-*` is let through untouched: Core injects a session
+     runtime into this page that talks to a Core-origin frame of its own and
+     checks that frame's origin and source itself.
 -->
 <script>
   (function () {
@@ -60,9 +73,26 @@
       if (payload.accent) root.dataset.accent = payload.accent;
     }
 
+    // The apex and app.manaurum.com (the shell is moving to app., MAN-385).
+    // Not www., and never a *.manaurum.com pattern: that would admit every
+    // app. Do not pin just one either — an app that did stopped hearing the
+    // shell when it moved, and never became ready.
+    var SHELL_ORIGINS = ['https://manaurum.com', 'https://app.manaurum.com'];
+    // templates/preview.py frames this page from its own loopback origin.
+    // No production app is ever served from loopback, so this admits
+    // nothing in the shell.
+    if (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)) {
+      SHELL_ORIGINS.push(location.origin);
+    }
+
     window.addEventListener('message', function (event) {
       var data = event.data;
-      if (!data || typeof data.type !== 'string') return;
+      if (!data || typeof data.type !== 'string' || data.type.indexOf('manaurum:') !== 0) return;
+      // Core's session renewal (session_runtime.js) - not ours to judge.
+      if (data.type.indexOf('manaurum:session-') === 0) return;
+      var trusted = event.source === window.parent && event.source !== window &&
+        SHELL_ORIGINS.indexOf(event.origin) !== -1;
+      if (!trusted) { event.stopImmediatePropagation(); return; }
       var payload = data.payload || {};
 
       if (data.type === 'manaurum:init') {
@@ -98,7 +128,7 @@
         window.__manaurum.device = payload.device;
         window.dispatchEvent(new CustomEvent('manaurum-device'));
       }
-    });
+    }, true);   // registered before the SDK's listener; that order is what matters
   })();
 </script>
 

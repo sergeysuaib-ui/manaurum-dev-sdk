@@ -54,6 +54,29 @@ def test_agent_route_accepts_a_minted_user_context(path, user_context, fake_kv):
     assert response.json()["ok"] is True
 
 
+def test_a_second_user_context_header_is_refused(user_context):
+    """The gateway adds its own `X-Manaurum-User-Context` and does not strip
+    one the client sent, so a request can reach the container carrying two -
+    and `headers.get()` returns the client's. One header, or a 401."""
+    response = client.get(
+        "/api/me",
+        headers=[
+            ("x-manaurum-user-context", user_context("u-attacker")),
+            ("X-Manaurum-User-Context", user_context("u-1")),
+        ],
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "user_context_ambiguous"
+
+
+def test_api_route_accepts_one_minted_user_context(user_context):
+    response = client.get(
+        "/api/me", headers={"X-Manaurum-User-Context": user_context("u-1")},
+    )
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "u-1"
+
+
 def test_storage_keys_are_namespaced_per_user():
     """`os.kv` is scoped per (app, tenant), NOT per user — namespacing is
     this app's job, and the `fake_kv` fixture cannot prove it does it,

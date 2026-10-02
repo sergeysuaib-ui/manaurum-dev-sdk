@@ -30,9 +30,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.capability import APP_SLUG  # noqa: E402
+
 # Must match src/auth.py — and src/auth.py must match Core.
 _ISSUER = "manaurum-core"
 _AUDIENCE = "manaurum-app"
+# The tenant the deploy injects as MANAURUM_TENANT_ID, and therefore the
+# only tenant src/auth.py accepts a token for.
+TENANT_ID = "11111111-1111-1111-1111-111111111111"
 
 
 @pytest.fixture(scope="session")
@@ -60,13 +65,15 @@ def keypair() -> tuple[str, str]:
 
 @pytest.fixture(autouse=True)
 def _core_public_key(keypair, monkeypatch):
-    """Point src.auth at the test public key for every test.
+    """Point src.auth at the test public key and tenant for every test.
 
-    autouse, because forgetting it produces a 503
-    `core_user_context_public_key_not_provisioned` that reads like a
-    bug in the app rather than a missing fixture.
+    autouse, because forgetting either produces a 503
+    (`core_user_context_public_key_not_provisioned` /
+    `manaurum_tenant_id_not_injected`) that reads like a bug in the app
+    rather than a missing fixture.
     """
     monkeypatch.setenv("CORE_USER_CONTEXT_PUBLIC_KEY_PEM", keypair[1])
+    monkeypatch.setenv("MANAURUM_TENANT_ID", TENANT_ID)
 
 
 @pytest.fixture
@@ -76,6 +83,11 @@ def user_context(keypair):
     The overrides are what make the negative tests possible: pass
     `iss="somebody-else"` or `exp=<past>` to prove the verifier actually
     rejects a token instead of merely decoding one.
+
+    The defaults are what the gateway really mints: `app_id` is the
+    manifest's slug, not the UUID, and `tenant_id` is the tenant the app
+    was deployed into. Mint a UUID here and a test of the app binding
+    passes against a token production never sends.
     """
     from jose import jwt
 
@@ -85,9 +97,10 @@ def user_context(keypair):
         now = datetime.now(timezone.utc)
         claims = {
             "sub": user_id,
-            "tenant_id": "11111111-1111-1111-1111-111111111111",
-            "app_id": "22222222-2222-2222-2222-222222222222",
+            "tenant_id": TENANT_ID,
+            "app_id": APP_SLUG,
             "app_version": "0.1.0",
+            "workspace_id": "33333333-3333-3333-3333-333333333333",
             "iss": _ISSUER,
             "aud": _AUDIENCE,
             "iat": now,
@@ -117,7 +130,7 @@ def fake_kv(monkeypatch):
     """
     store: dict[str, object] = {}
 
-    async def _call(name: str, payload: dict) -> dict:
+    async def _call(name: str, payload: dict, *, user_context: str | None = None) -> dict:
         if name == "os.kv.set":
             store[payload["key"]] = payload["value"]
             return {"ok": True}

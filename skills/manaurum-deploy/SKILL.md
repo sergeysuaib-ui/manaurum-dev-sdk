@@ -17,7 +17,7 @@ description: Deploy a ManAurum OS app on Platform v2 (containerized — `manauru
 
 ### Prereqs
 
-- An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`. Mint one in Dev Hub → Credentials → Create token. Shown ONCE, save immediately.
+- An `mna_*` token in `.env.manaurum` as `MANAURUM_V2_TOKEN=...`, in the directory **above** the app (beside it, never inside it: the packager does not exclude `.env*`). Mint one in Dev Hub → Credentials → Create token. Shown ONCE, save immediately.
 - **The token decides the tenant, not the manifest.** An `mna_*` is bound to one tenant: the tenant of the workspace that was active in Dev Hub when it was minted. Every deploy with it lands in that tenant, and nothing in `manifest.json` chooses it. The deploy response does not name the tenant and no endpoint answers "which tenant is this token", so check before the first deploy. The Create dialog names the tenant it is about to bind to (and refuses with `409 tenant_changed` if another tab switched it meanwhile). Dev Hub → Credentials lists your tokens for the current tenant only, each with its `key_prefix`: if your token's prefix is not in the list, it belongs to another tenant. zb-analytics was deployed into a personal tenant this way.
 - A project directory containing `manifest.json` + `Dockerfile` + your source files. See `manaurum-app/SKILL.md` for the full manifest reference.
 
@@ -369,13 +369,21 @@ set -euo pipefail
 BASE_URL="${MANAURUM_BASE_URL:-https://manaurum.com}"
 APP_URL="${APP_URL:-}"   # optional: set to https://<slug>.apps.manaurum.com for the health check
 
+# The token file lives one level up, beside the app directory. Inside it,
+# `manaurum app deploy` would upload it with the source: the packager does not
+# exclude .env*. This script excludes it from its own tar, but refuses anyway,
+# so the layout that is safe for one tool is the only layout.
 if [ -f .env.manaurum ]; then
-  set -a; . ./.env.manaurum; set +a
+  echo "Error: .env.manaurum is inside the app directory. Move it one level up: mv .env.manaurum .."
+  exit 1
+fi
+if [ -f ../.env.manaurum ]; then
+  set -a; . ../.env.manaurum; set +a
 fi
 
 if [ -z "${MANAURUM_V2_TOKEN:-}" ]; then
   echo "Error: MANAURUM_V2_TOKEN not set. Mint one at https://app.manaurum.com (Dev Hub → Credentials)."
-  echo "Save as MANAURUM_V2_TOKEN=mna_<...> in .env.manaurum"
+  echo "Save as MANAURUM_V2_TOKEN=mna_<...> in ../.env.manaurum (beside the app directory)"
   exit 1
 fi
 

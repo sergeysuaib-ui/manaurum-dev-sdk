@@ -225,7 +225,13 @@ SHELL_PAGE = """<!doctype html>
       checkLayout();
       if (ready) return;
       badge.className = 'pill pill-bad';
-      badge.textContent = 'NO manaurum:ready - the shell would cover this app';
+      // This shell posts from its own loopback origin, not from manaurum.com.
+      // An app that checks the sender against the shell's origins (MAN-2506,
+      // as it should) never answers it unless it also admits its own origin
+      // on loopback, as the starter's index.html does.
+      badge.textContent = 'NO manaurum:ready - the shell would cover this app ' +
+                          '(if it checks the sender origin, it must also accept ' +
+                          location.origin + ' on loopback - see the starter)';
     }, 3000);
   });
 </script>
@@ -256,6 +262,10 @@ def build_init(appearance, accent, device):
         "navigationMode": "stack" if mobile else "window",
         "shell": {"hasTabBar": False, "hasBackButton": mobile, "tabBarHeight": 0},
         "user": {"nickname": "Preview"},
+        # 'en' | 'ru' | 'he' and its direction, as the shell sends them
+        # (IframeAppHost.tsx, MAN-2289).
+        "locale": "en",
+        "dir": "ltr",
         "permissions": [],
         "appId": "preview-app",
         "offline_token": "",

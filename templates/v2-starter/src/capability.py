@@ -69,14 +69,24 @@ def _gateway(name: str) -> tuple[str, dict[str, str]]:
     }
 
 
-async def call_capability(name: str, payload: dict[str, Any]) -> Any:
+async def call_capability(
+    name: str, payload: dict[str, Any], *, user_context: str | None = None,
+) -> Any:
     """POST one capability call and return its ``output``.
 
     Every capability goes through this one door:
-    ``POST {MANAURUM_CORE_URL}/api/capability/{name}``. Do NOT forward
-    the user_context header here — the gateway rejects it on this path.
+    ``POST {MANAURUM_CORE_URL}/api/capability/{name}``.
+
+    ``user_context`` is the caller's raw JWT (``claims.token`` from
+    ``auth_claims``). Pass it to act on that user's behalf. ``os.drive.*``
+    and ``os.calendar.*`` require it and answer ``403 user_context_required``
+    without it; for the rest it is optional. The gateway verifies it and
+    refuses one minted for another app or tenant, so only ever forward the
+    token of the request you are handling.
     """
     base, headers = _gateway(name)
+    if user_context:
+        headers["X-Manaurum-User-Context"] = user_context
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             response = await client.post(

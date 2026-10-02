@@ -246,6 +246,15 @@ There is no `method` field — one rule covers every verb. Static assets (HTML/J
 
 The gateway strips `Cookie` and `Authorization` from every request it proxies, `/api/*` or not. Whatever identity you need arrives as `X-Manaurum-User-Context`, or in a header of your own.
 
+**Verifying `X-Manaurum-User-Context`, all of it.** Check, in this order:
+
+1. The signature: RS256 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, issuer `manaurum-core`, audience `manaurum-app`, `exp` and `iat` present and `exp` in the future. A missing key is a `503`, never "trusted".
+2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`. A token without one was not minted by the gateway.
+3. **That it is yours.** `app_id` must equal your manifest's slug, and `tenant_id` must equal `MANAURUM_TENANT_ID`. Core signs every app's tokens with the same key and the same audience, so step 1 accepts a token minted for any app, and the developer of any app a user opens sees that user's tokens. Without step 3 they have 60 seconds to present one to you. The capability gateway makes this check on its own surface (`401 invalid_user_context`, "app mismatch"); in your container it is yours to make.
+4. **Exactly one header.** The gateway adds its own copy under a different letter case and does not remove a copy the client sent, so a request can reach your container with two. Starlette's `headers.get()` returns the client's; Node joins the two with `", "`, which then fails JWT parsing, so it fails closed, but count the raw headers anyway. One header, or `401`.
+
+Never read the header on an `anonymous` route. Nothing is minted there, and the client's header is passed through as it is. `templates/v2-starter/src/auth.py` implements all four steps (it reads your slug as `APP_SLUG` from `src/capability.py`; copy both, or set it where you keep it) and `tests/test_auth.py` tests each one. `MANAURUM_TENANT_ID` is injected into `hosted` containers; on a `byo` host, set it yourself to the tenant you deploy into.
+
 ### Pages that guests and members both open
 
 A share link, a voting room, an invite page: the same page, opened by people with a Manaurum session and by people without one. The gateway has no mode for it. A `user` route answers the guest `401 authentication_required`; an `anonymous` route — and every page under `public_paths` — tells you nothing even when a member is the one asking.

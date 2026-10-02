@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.1.0.** A plugin install caches one directory per
+> **This page is SDK 3.2.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -232,6 +232,7 @@ Each entry is `{ "path": …, "auth": … }`:
 - `path` must start with `/`. A trailing `/*` matches anything **below** that prefix.
 - `auth` is `"user"` or `"anonymous"` — both required, both explicit.
   - `"user"`: the gateway mints a 60-second RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`. The end user's own bearer token is **never** forwarded to you.
+    **A good signature is not enough.** Every app's tokens are signed with one key for one audience (`manaurum-app`), so a token minted for another app, which that app's developer sees, verifies in yours too. Accept it only if `app_id` is your manifest's slug and `tenant_id` equals `MANAURUM_TENANT_ID`. Refuse a request that carries the header twice: the gateway adds its own copy but does not remove one the client sent. Never read the header on an `anonymous` route, where nothing is minted and whatever arrives came from the client. `templates/v2-starter/src/auth.py` does all of this; copy it.
   - `"anonymous"`: proxied with no user context. This is how you expose a kiosk/public endpoint, and it must be declared — a route you forget is unreachable, not open.
   - **There is no third mode.** No "the user if signed in, nobody otherwise": a `user` route answers a guest `401`, an `anonymous` route tells you nothing even about a member, and the gateway strips `Cookie` and `Authorization` from everything it proxies. An app whose pages both guests and members open (a share link, a voting room) needs its own pass — `references/v2-platform.md` → "Pages that guests and members both open".
 - Optional `"streaming": true` for `text/event-stream` routes, so the gateway passes chunks through instead of buffering the response. A stream is closed after 15 minutes, and after 60 seconds in which your container sent nothing; a 51st concurrent stream for one (app, tenant) is `429`. Limits and the reconnect contract: `references/v2-platform.md` → "Streaming routes — the limits".
@@ -301,14 +302,26 @@ When the desktop opens your app it loads your URL in an iframe and posts `manaur
 
 **The trap:** opening `https://<slug>.apps.manaurum.com` directly works perfectly without the handshake. There is no parent frame, so nothing times out. Your app looks fine in every browser tab you test it in and is unusable in the only place your users open it. This is not hypothetical — the first-party app *Libi* shipped exactly this way and needed a follow-up release (MAN-1321: "Libi's SPA never replied, making the app unusable as a desktop window or from the mobile home screen").
 
-Minimal correct answer, inline in `<head>` of your entry point. It does two
-things, because `manaurum:init` carries two things — the handshake **and** the
-appearance the user is in:
+Minimal correct answer, inline in `<head>` of your entry point. It does three
+things: it checks who is talking, answers the handshake, and applies the
+appearance the user is in, because `manaurum:init` carries both:
 
 ```html
 <script>
+  // Trust the shell, not the first sender (MAN-2506). Any page can frame
+  // yours (every v2 app may be framed from https://*.manaurum.com, another
+  // app included) and post manaurum:init at it.
+  var SHELL_ORIGINS = ['https://manaurum.com', 'https://app.manaurum.com'];
+  // templates/preview.py frames the page from its own loopback origin; no
+  // deployed app is ever served from loopback.
+  if (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)) SHELL_ORIGINS.push(location.origin);
   window.addEventListener('message', function (e) {
-    if (!e.data || typeof e.data.type !== 'string') return;
+    if (!e.data || typeof e.data.type !== 'string' || e.data.type.indexOf('manaurum:') !== 0) return;
+    // Core's injected session renewal checks its own messages; leave them be.
+    if (e.data.type.indexOf('manaurum:session-') === 0) return;
+    var trusted = e.source === window.parent && e.source !== window &&
+      SHELL_ORIGINS.indexOf(e.origin) !== -1;
+    if (!trusted) { e.stopImmediatePropagation(); return; }
     var p = e.data.payload || {};
 
     // The shell owns light/dark and the accent, and re-posts them whenever the
@@ -320,11 +333,27 @@ appearance the user is in:
     }
 
     if (e.data.type === 'manaurum:init') {
-      window.parent.postMessage({ type: 'manaurum:ready' }, '*');
+      e.source.postMessage({ type: 'manaurum:ready' }, e.origin);
     }
-  });
+  }, true);   // inline and first, so a refused message never reaches the SDK
 </script>
 ```
+
+**The sender check is not optional, and the SDK does not do it for you.**
+`manaurum-v2.mjs` 2.3.0, the version `https://manaurum.com/sdk/` serves today,
+adopts whichever window posts `manaurum:init` as its shell, again on every
+`init`, so the latest sender wins, and it sends that window your
+`app.pickFromDrive()` requests, so it can answer them. This listener stops
+everything it refuses, which protects the SDK as well, but only because it is
+registered first: keep it inline at the top of `<head>`, before any script or
+module that listens for `message`. It lets `manaurum:session-*` through
+because Core injects a session-renewal script into every v2 page that
+exchanges those with a Core frame of its own and checks them itself. Use exactly these two origins: not `www.`, never a
+`*.manaurum.com` pattern (that admits every app), and not just one of them (an
+app that pinned the apex stopped hearing the shell when it moved to `app.` and
+never became ready). The loopback line admits one more origin, the page's own,
+only when it is served from `127.0.0.1` or `localhost`, so `templates/preview.py`
+(Step 3.5) can frame it; without it the preview reports "NO manaurum:ready".
 
 **Answering the handshake and ignoring the payload is a shipped bug, not a
 shortcut.** The app comes up, the window works, and it renders in its own
@@ -337,8 +366,12 @@ rest of that file reads — copy the whole block rather than retyping this one.
 Inline in `<head>` matters: for an SPA with a deferred module bundle, `manaurum:init` can arrive before your bundle has parsed. Put the listener in the HTML **and** fire one proactive `manaurum:ready` after mount — that belt-and-braces pair is what MAN-1321 landed:
 
 ```js
-// src/main.tsx, after render
-try { window.parent.postMessage({ type: 'manaurum:ready' }, '*'); } catch { /* not embedded */ }
+// src/main.tsx, after render. One post per shell origin rather than '*', so
+// a page that frames the app does not hear from it. The browser drops the one
+// whose origin is not the parent's and logs a console error for it: expected.
+for (const origin of ['https://manaurum.com', 'https://app.manaurum.com']) {
+  try { window.parent.postMessage({ type: 'manaurum:ready' }, origin); } catch { /* not embedded */ }
+}
 ```
 
 The `manaurum:init` payload carries the app's `granted_capabilities`. **For a v2 app, postMessage is for this handshake and window framing only.** Never send the v1 data verbs (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app — v2 data flows from your own `/api` routes to the capability gateway, server-side.
@@ -581,7 +614,7 @@ manifest.
 
 ## Step 4 — Deploy
 
-You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → Credentials → Create token**. Shown once, save to `.env.manaurum`:
+You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → Credentials → Create token**. Shown once, save it to `.env.manaurum` **one level above the app directory** (see "Required project structure"):
 
 ```
 MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
