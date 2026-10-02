@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.2.0.** A plugin install caches one directory per
+> **This page is SDK 3.3.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -216,12 +216,18 @@ Validation rules (key ones):
 - `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
 - `permissions`: optional top-level array of BROWSER features the OS shell
   delegates to your iframe via the `allow` attribute (Permissions-Policy).
-  Enum today: `["microphone"]`. **Required for any app that records audio
-  inside the shell** — without it `getUserMedia` is blocked in the iframe
-  (your standalone `<app_id>.apps.manaurum.com` URL is unaffected). The user
-  still sees the normal browser mic prompt. This is separate from
-  capabilities: a voice app declares BOTH `"permissions": ["microphone"]`
-  and `os.ai.transcribe` in `requires_capabilities`.
+  Enum today: `["microphone", "camera"]` (MAN-1316, MAN-1920). **Required for
+  any app that opens a LIVE mic or camera stream inside the shell** — without
+  it `getUserMedia` is blocked in the iframe (your standalone
+  `<app_id>.apps.manaurum.com` URL is unaffected). The user still sees the
+  normal browser prompt. **A still photo needs no declaration:**
+  `<input type="file" accept="image/*" capture="environment">` hands off to
+  the device's camera app and is not gated, so declare `camera` only for a
+  stream you decode or render yourself (a barcode scanner, video capture).
+  This is separate from capabilities: a voice app declares BOTH
+  `"permissions": ["microphone"]` and `os.ai.transcribe` in
+  `requires_capabilities`. A non-empty `permissions` is refused at deploy
+  for `runtime.mode: "byo"` (MAN-1922).
 
 ### `runtime.api_routes` — read this before you write a single route
 
@@ -417,22 +423,27 @@ Capabilities available today:
 
 | Capability | Purpose |
 |---|---|
-| `os.kv.set` / `os.kv.get` | Per-app KV in Postgres (FORCE-RLS by tenant). |
-| `os.tenant_config.get` | Read tenant feature flags / config. |
+| `os.kv.set` / `os.kv.get` | Per-app KV in Postgres (FORCE-RLS by tenant). No list, no delete. |
+| `os.tenant_config.get` | ⚠️ Reads one field (`prompt_extension`); everything else is `null`. Not tenant feature flags, not install config. Keep your own settings instead. |
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
-| `os.files.upload` / `.download` / `.delete` | R2 (presigned URLs). |
-| `os.ai.complete` / `os.ai.embed` | LLM (BYOK — tenant configures keys in Settings → Интеграции). |
+| `os.files.upload` / `.download` / `.delete` / `.list` | Your app's PRIVATE object storage (presigned URLs). `upload` **requires `size_hint`**, the exact byte length. |
+| `os.ai.complete` | Text completion. Leave out `provider` and `model` and it runs on the AI backend the workspace chose for your app (the company-funded model by default); name a `provider` to use the tenant's own key. The answer is `content` plus `tokens_used` — there is no `usage`. |
+| `os.ai.embed` | Embeddings (BYOK, `openai` / `gemini`; `provider` and `model` required). |
 | `os.ai.transcribe` | Speech-to-text (BYOK — needs the tenant's **OpenAI** key). ≤ 25 MB decoded audio. Pair with manifest `"permissions": ["microphone"]` to record in the shell iframe. |
-| `os.ocr.extract` | OCR via vision LLM (BYOK). |
-| `os.notifications.send_to_user` | In-app / Resend / Twilio. |
-| `os.events.emit` | Inter-app events (transactional outbox). |
+| `os.ai.image_submit` / `os.ai.image_poll` | Generate an image: submit, then poll. Needs the tenant's OpenAI key and the `platform.ai_image` flag. |
+| `os.ai.providers` | What AI this app can use here, before you spend a call. |
+| `os.ocr.extract` | Read a file you stored with `os.files.upload` (BYOK vision). Input is `file_key`. |
+| `os.notifications.send_to_user` | In-app, or email through the tenant's Resend. SMS does not work (`501 sms_unavailable`). |
+| `os.events.emit` | Publish an event. **No hosted app can receive events today.** |
 | `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. Binary payloads via `body_base64` / `response_format: "base64"` (~5 MB each way). |
-| `os.compliance.audit_query` | Read your own capability call audit log. |
-| `os.apps.call` | Sync RPC to another v2 app. |
-| `os.drive.stage` / `.publish` / `.list` / `.read` / `.write` | The USER's file system (Files app), consent-gated. **User-scoped — forward `X-Manaurum-User-Context`.** |
+| `os.compliance.audit_query` | The capability audit log — **every app's in the tenant** unless you pass `app_filter`. |
+| `os.apps.call` | Call one of four methods of two built-in apps. **Not** RPC between v2 apps; there is none. |
+| `os.drive.stage` / `.publish` / `.list` / `.read` / `.write` / `.delete` | The USER's file system (Files app). Write creates or overwrites (versioned); delete goes to Trash. **User-scoped — forward `X-Manaurum-User-Context`.** |
 | `os.calendar.list_events` / `os.calendar.create_event` | The user's calendar. **User-scoped — forward `X-Manaurum-User-Context`.** |
+| `os.locations.list` / `os.locations.get` | The tenant's sales points and warehouses, by id. |
 
-See `references/capabilities-reference.md` for input/output schemas, error codes, and quotas.
+`os.apps.bulk_export` is registered but has no dataset, so it answers `404` to everything.
+See `references/capabilities-reference.md` for input/output schemas, error codes, and limits.
 
 ## Step 3.5 — Check the UI before you deploy it (MANDATORY)
 
@@ -705,10 +716,10 @@ A `deploy.sh` template with the polling loop, the live NDJSON progress stream, a
 | HTTP | Meaning | Fix |
 |---|---|---|
 | 401 `invalid_credential` | Bad/expired/revoked `mna_*`, or not an `mna_*` token. | Mint a fresh one in Dev Hub. |
-| 412 `app_id_must_be_uuid` | A capability call was sent with a slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID`. |
+| 412 `app_id_must_be_uuid` | `os.kv.*` or `os.events.emit` was called with the slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID` for those two families only. |
 | 422 `manifest validation failed` | Manifest fails the v2 schema. | Read `errors[]`; fix and retry. |
 | 422 `migration_validation_failed` | Migration SQL contains destructive DDL and `migration.breaking` is not set. | Either set `migration.breaking: true` (deliberate), or rewrite to additive-only. |
-| 422 `egress_not_declared` | App tried `os.http.fetch` to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
+| 412 `egress_not_declared` / `host_not_in_allow_list` | `os.http.fetch` with no egress hosts declared at all / to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
 | 404 `route_not_declared` | An `/api/*` path is missing from `runtime.api_routes`. Default-deny — the container never saw the request. | Declare the path. Remember `/api/x/*` does not cover `/api/x`. |
 | 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
 | 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
@@ -722,7 +733,7 @@ The platform sets these env vars on every task:
 | Env var | Value |
 |---|---|
 | `MANAURUM_TENANT_ID` | UUID of the tenant your app is installed in. |
-| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. Use as `X-Manaurum-App-Id`. |
+| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. The `X-Manaurum-App-Id` for `os.kv.*` and `os.events.emit` only; send your slug everywhere else (see Step 3). |
 | `MANAURUM_VERSION` | The semver of the running version. |
 | `MANAURUM_TARGET_SCHEMA` | Your Postgres schema, `app_<slug>__<tenant_hex>`. |
 | `MANAURUM_RUNTIME_TOKEN` | App-scoped `mna_*` credential for the capability gateway. Minted fresh every deploy. |

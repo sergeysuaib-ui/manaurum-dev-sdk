@@ -1,3 +1,61 @@
+# 3.3.0 - the capability reference, checked against the code one capability at a time (MAN-2144, MAN-2198, MAN-2995, MAN-1923)
+
+### Why
+
+The 2026-10-02 audit (`docs/audits/`, in 3.2.0) found `capabilities-reference.md`
+describing a platform from before September. Followed literally, it produced calls that
+fail on the first request while the deploy stays green:
+
+* `os.files.upload` without `size_hint`, which has been required since MAN-1707
+  (2026-08-13): a `422` on every upload.
+* `os.ocr.extract` with `{provider, object_key, schema}`; the input is
+  `{file_key, schema?}`, and the output and errors were different too.
+* `os.apps.call` with `{app_id, version: "1", timeout_seconds}`; the input is
+  `{target_app_id, method, args, version: int, timeout_ms}`, and only four methods of
+  two built-in apps can be called. "RPC to another v2 app" (SKILL.md, v2-platform.md)
+  does not exist.
+* `os.ai.complete` and `os.ai.embed` answering with `usage`; they answer `tokens_used`,
+  `cost_usd` and `cost_known`, so reading `usage` raised on every success. `top_p` was
+  documented as a passthrough and is a `422`. The page also described `os.ai.complete` as
+  BYOK only, before MAN-2412 bound it to the workspace's chosen backend.
+
+Six registered capabilities were not documented at all (`os.ai.providers`,
+`os.ai.image_submit`, `os.ai.image_poll`, `os.locations.list`, `os.locations.get`,
+`os.drive.delete`): the page said "All 26" of 32. Others were stale: the Drive chapter
+(5 MB, create-only, a notification MAN-2991 removed), `os.compliance.audit_query` ("scoped
+to the calling app"; it returns the whole tenant's rows), `os.apps.bulk_export` (no
+dataset is registered, so every call is a `404`), event subscriptions (no hosted app can
+receive events), notification limits, quotas, and three error codes that do not exist
+(`missing_provider_credentials`, `upstream_5xx`, `422 egress_not_declared`).
+
+Two open PRs already carried part of this, written against 2.7–2.10: #17 (Drive) and #20
+(camera, `size_hint`, the image capabilities, by roiduani). Their content is carried over
+here and corrected where the platform moved since.
+
+### What changed
+
+* **`references/capabilities-reference.md`** is rewritten against Core `main` 8fe6f5d,
+  capability by capability, from the input schemas, return values and raise sites:
+  * the inventory of all 32, and what does not exist;
+  * the call contract (which app-id form each family keys by, the user context, bodies
+    that are not JSON, `format` not being enforced) and every gate the gateway runs, in
+    order, with its code;
+  * per capability: input with ranges and defaults, output, errors, limits;
+  * `os.ai.complete`: which backend answers (unpinned, `provider`, `model` only), which
+    workspace, `log_prompt`, the spend cap, and the error table;
+  * new sections for `os.ai.image_submit` / `image_poll`, `os.ai.providers` and
+    `os.locations.*`; `os.drive.write` overwrite with `if_match`, and `os.drive.delete`;
+  * a quotas section that lists the limits that actually fire.
+* **`v2-platform.md` §3** stops repeating the contract (its error table was the stale copy)
+  and points at the reference. `provides` / `consumes`, the wildcard grant and the dev-mode
+  allow-list are corrected.
+* **`SKILL.md`**: the capability table matches the reference; `egress_not_declared` is a
+  `412`; `MANAURUM_APP_ID` is the app-id header for `os.kv.*` and `os.events.emit` only.
+* **`permissions`** is `["microphone", "camera"]` in every place that said microphone only
+  (MAN-1920), with when a still photo needs no declaration and the `byo` refusal
+  (MAN-1922).
+* **`scripts/open-claims.txt`**: MAN-133, MAN-2253, MAN-1289 and MAN-2199, which the new text cites
+  as open.
 # 3.2.0 - a token is checked for whose it is, and the window for who is talking (MAN-1307, MAN-3203)
 
 ### Why
