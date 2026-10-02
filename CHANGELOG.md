@@ -1,3 +1,31 @@
+# 3.10.0 - every capability's documented input, checked against its schema
+
+### Why
+
+The worst findings of the audit were inputs: `os.files.upload` without its required
+`size_hint`, `os.ocr.extract` sending `key` for `file_key`, `os.apps.call` with fields Core
+does not have (K2–K4). 3.3.0 rewrote the reference by hand; nothing kept it right. This is
+the last item of the audit's contract plan (section 3, item 2).
+
+### What changed
+
+* **`scripts/sync_contract.py`** records `capability_inputs` in
+  `templates/platform-contract.json`: for each of the 32 capabilities, the input fields and
+  `required` of the schema its handler registers, read with `ast` (module constants and
+  `**` merges followed; a value it cannot evaluate is ignored, but a schema whose fields,
+  `required`, `oneOf` or `not` it cannot read stops the sync).
+* **`check_repo.py`**, in `capabilities-reference.md`, under a heading that names one
+  capability: the **Input:** example (an inline `{ … }`, the fenced block below it, or the
+  key-only form) may send only fields the schema has, must send every required one, and
+  respects the schema's `oneOf` / `not`; a `| Field | … | Required |` table lists exactly the
+  schema's fields, required where the schema requires them; an example in a shape the
+  check cannot read is a finding, not a pass. Today 23 examples and 13 tables are checked
+  and match Core; no sentence changed. Capabilities documented under a heading that names
+  several (`os.drive.list` / `.read` / …, the image and location pairs) are not checked; they
+  were verified by hand against Core a5b9db9.
+* **`linter_mutations.py`**: six more (145) — Core renames a field, drops one, adds one,
+  makes one required, makes one optional, and requires one the example leaves out.
+
 # 3.9.0 - manaurum-app reads in order, and each fact lives in one place (audit Н14)
 
 ### Why

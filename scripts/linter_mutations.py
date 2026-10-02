@@ -1188,6 +1188,40 @@ def a_truncated_message_family(repo: Path) -> None:
     append(repo, README, "Post `manaurum:st` to read storage.")
 
 
+def edit_inputs(repo: Path, change) -> None:
+    """Change Core's side, as a sync after a Core change would."""
+    path = repo / "templates" / "platform-contract.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    change(data["capability_inputs"])
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def core_renames_a_field(repo: Path) -> None:
+    # The K3 shape: the reference sends `key`, Core now wants `file_key`.
+    edit_inputs(repo, lambda inputs: inputs["os.kv.get"].update(
+        properties=["file_key"], required=["file_key"]))
+
+
+def core_drops_a_documented_field(repo: Path) -> None:
+    edit_inputs(repo, lambda inputs: inputs["os.ai.complete"]["properties"].remove("log_prompt"))
+
+
+def core_adds_a_field(repo: Path) -> None:
+    edit_inputs(repo, lambda inputs: inputs["os.ai.complete"]["properties"].append("top_p"))
+
+
+def core_requires_what_the_example_leaves_out(repo: Path) -> None:
+    edit_inputs(repo, lambda inputs: inputs["os.ai.complete"]["required"].append("provider"))
+
+
+def core_makes_a_field_optional(repo: Path) -> None:
+    edit_inputs(repo, lambda inputs: inputs["os.kv.set"]["required"].remove("value"))
+
+
+def core_makes_a_field_required(repo: Path) -> None:
+    edit_inputs(repo, lambda inputs: inputs["os.ai.complete"]["required"].append("temperature"))
+
+
 REPO_MUTATIONS = [
     ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
     ("repo: a documented path that is not there", a_path_that_is_not_there,
@@ -1252,6 +1286,19 @@ REPO_MUTATIONS = [
     ("repo-green: a provider-filled code", a_provider_filled_code, None),
     ("repo: a truncated message family", a_truncated_message_family,
      "`manaurum:st` is not a message the shell handles"),
+    ("repo: Core renames an input field", core_renames_a_field,
+     "the os.kv.get example sends `key`, which its input schema does not have"),
+    ("repo: Core drops a documented input field", core_drops_a_documented_field,
+     "the os.ai.complete field table lists `log_prompt`"),
+    ("repo: Core adds an input field", core_adds_a_field,
+     "the os.ai.complete field table leaves out `top_p`"),
+    ("repo: Core makes an input field required", core_makes_a_field_required,
+     "calls `temperature` optional; its input schema requires it"),
+    ("repo: Core requires what the example leaves out",
+     core_requires_what_the_example_leaves_out,
+     "the os.ai.complete example leaves out `provider`"),
+    ("repo: Core makes an input field optional", core_makes_a_field_optional,
+     "calls `value` required; its input schema does not require it"),
 ]
 
 

@@ -102,6 +102,114 @@ def tool_name_prefix(text: str) -> str:
     return match.group(1)
 
 
+class Unknown(Exception):
+    """An expression this reader does not evaluate."""
+
+
+def literal(node, consts: dict):
+    """A schema literal, with module constants and `**` merges followed.
+
+    Values it cannot work out (an imported limit, arithmetic) become None:
+    what the documents are held to is each schema's field names, its
+    `required` and its top-level `oneOf`/`not`, and `capability_inputs()`
+    refuses a schema where any of those came back None.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in consts:
+            return consts[node.id]
+        raise Unknown(node.id)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        out = []
+        for element in node.elts:
+            if isinstance(element, ast.Starred):
+                out.extend(literal(element.value, consts))
+            else:
+                out.append(literal(element, consts))
+        return out
+    if isinstance(node, ast.Dict):
+        out = {}
+        for key, value in zip(node.keys, node.values):
+            if key is None:
+                out.update(literal(value, consts))
+                continue
+            try:
+                out[literal(key, consts)] = literal(value, consts)
+            except Unknown:
+                out[literal(key, consts)] = None
+        return out
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and \
+            node.func.id in ("list", "sorted", "tuple", "set", "frozenset") and len(node.args) == 1:
+        return sorted(literal(node.args[0], consts)) if node.func.id == "sorted" \
+            else list(literal(node.args[0], consts))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.BitOr)):
+        left, right = literal(node.left, consts), literal(node.right, consts)
+        return {**left, **right} if isinstance(left, dict) else left + right
+    raise Unknown(type(node).__name__)
+
+
+def capability_inputs(monorepo: Path, ref: str, names: list) -> dict:
+    """{capability: {"properties": [...], "required": [...]}} from each handler's
+    registration (`name="os.x.y", input_schema=...`)."""
+    out = {}
+    for path in git(monorepo, "ls-tree", "--name-only", ref, CAPABILITIES_DIR).split():
+        if not path.endswith(".py"):
+            continue
+        tree = ast.parse(show(monorepo, ref, path))
+        consts = {}
+        for node in tree.body:
+            target = None
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and \
+                    isinstance(node.targets[0], ast.Name):
+                target = node.targets[0].id
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) \
+                    and node.value is not None:
+                target = node.target.id
+            if target:
+                try:
+                    consts[target] = literal(node.value, consts)
+                except Unknown:
+                    pass
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            keywords = {k.arg: k.value for k in node.keywords if k.arg}
+            name = keywords.get("name")
+            if not (isinstance(name, ast.Constant) and str(name.value).startswith("os.")
+                    and "input_schema" in keywords):
+                continue
+            try:
+                schema = literal(keywords["input_schema"], consts)
+            except Unknown:
+                schema = None
+            properties = schema.get("properties", {}) if isinstance(schema, dict) else None
+            required = schema.get("required", []) if isinstance(schema, dict) else None
+            if not isinstance(properties, dict) or not isinstance(required, list):
+                raise SystemExit("cannot read the input schema of %s in %s - fix "
+                                 "capability_inputs()" % (name.value, path))
+            entry = {"properties": sorted(properties), "required": sorted(required)}
+            # Required-ness outside `required`: `oneOf` alternatives (exactly one
+            # set present) and `not` (never all together). Anything else at the
+            # top would make "required" mean something this copy cannot say.
+            unknown = {"anyOf", "allOf", "if", "then", "else", "dependentRequired",
+                       "dependentSchemas"} & set(schema)
+            if unknown:
+                raise SystemExit("%s in %s uses %s at the top of its input schema - "
+                                 "extend capability_inputs()" % (name.value, path,
+                                                                 ", ".join(sorted(unknown))))
+            if "oneOf" in schema:
+                entry["one_of_required"] = [sorted((alt or {}).get("required") or [])
+                                            for alt in schema["oneOf"]]
+            if "not" in schema:
+                entry["not_all_of"] = sorted(((schema["not"] or {}).get("required")) or [])
+            out[name.value] = entry
+    missing = sorted(set(names) - set(out))
+    if missing:
+        raise SystemExit("no input schema found for %s" % ", ".join(missing))
+    return dict(sorted(out.items()))
+
+
 def shell_messages(policy: str, host: str, session: str) -> dict:
     """The window protocol: what a v2 app may post, what the shell posts back."""
     allowed = re.search(r"V2_ALLOWED_MESSAGES[^=]*=\s*new Set\(\[(.*?)\]\)", policy, re.S)
@@ -200,6 +308,8 @@ def main() -> int:
             "separator": "__",
             "max_length": 64,
         },
+        "capability_inputs": capability_inputs(args.monorepo, args.ref,
+                                               capability_names(args.monorepo, args.ref)),
         "messages": shell_messages(show(args.monorepo, args.ref, SHELL_POLICY_SRC),
                                    show(args.monorepo, args.ref, SHELL_HOST_SRC),
                                    show(args.monorepo, args.ref, SESSION_SRC)),
