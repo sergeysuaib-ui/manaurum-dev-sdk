@@ -102,7 +102,7 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 | `tenant_config` | object | `{schema, required_at_install}` — per-tenant config collected at install time. Note: install-time values land in `v2_app_installs.config`, which the `os.tenant_config.get` capability does **not** currently read. Don't build on the round-trip yet. |
 | `offline` | object | Manaurum Edge declaration: `features`, `reference_data`, `streams`. **It does nothing for a v2 hosted app today:** the on-site box's configuration is built from v1 apps only. (The shell still copies the block into `manaurum:init`.) |
 | `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `microphone` (MAN-1316) and `camera` (MAN-1920); `uniqueItems`. Required for a LIVE `getUserMedia` stream inside the shell iframe; a still photo through `<input type="file" capture>` is not gated and needs no declaration. The user still sees the browser's own prompt. Refused when `runtime.mode` is `byo` (MAN-1922), and the shell delegates nothing to a frame whose address the manifest chose. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
-| `migrate_command` | string[] | In the schema, but **Core never executes it** — there is no call site (`production.py:40-43`, "reserved"). An app whose schema depends on it deploys green with no tables. Use `migrations/*.sql` instead — see § 7. |
+| `migrate_command` | string[] | In the schema, but **Core never executes it** — there is no call site (`production.py:49-52`, "reserved"). An app whose schema depends on it deploys green with no tables. Use `migrations/*.sql` instead — see § 7. |
 | `migration` | object | `{breaking, reason, rollback_strategy}`. `breaking: true` lets the DDL validator through *destructive* statements (and only those — see § 7). Default `false`. |
 | `metadata` | object | App Store rendering: `category`, `tags`, `description`, `homepage`, `support_email`, `source_url`. **This is where a root-level `description` belongs.** |
 
@@ -120,7 +120,7 @@ This dispatch goes **straight to your container**, not through the gateway — s
 
 #### The manifest entry
 
-The three required keys are `name`, `description`, `input_schema`. What separates a usable tool from a decorative one is the `description`, which is **prompt text for a model, not documentation for a human** — say what the capability does, when to reach for it, and when not to. Hard cap 400 chars (`manifest_v2.schema.json`, matching the runtime's `Tool` validator, `app/agent/types.py:108`); longer is rejected at deploy.
+The three required keys are `name`, `description`, `input_schema`. What separates a usable tool from a decorative one is the `description`, which is **prompt text for a model, not documentation for a human** — say what the capability does, when to reach for it, and when not to. Hard cap 400 chars (`manifest_v2.schema.json`, matching the runtime's `Tool` validator, `app/agent/types.py:117`); longer is rejected at deploy.
 
 ```json
 "agent_capabilities": [
@@ -283,6 +283,8 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 { "path": "/api/room/*", "auth": "optional" }
 ```
 
+**The published CLI does not know this mode yet.** `cli-v0.3.0` (2026-09-03) was cut before MAN-3200, and its schema allows only `user` and `anonymous`: `manaurum app validate` and the preflight of `manaurum app deploy` refuse an `optional` route the server accepts. Deploy with `manaurum app deploy --skip-preflight` (run `python check_app.py` first, which knows the mode), or through the API as in `manaurum-deploy`.
+
 * **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`.
 * **Anyone else** arrives with neither header. That includes a member of another tenant: the gateway makes them look exactly like a guest, so the route cannot be used to find out who belongs where. There is no `401`.
 * **Verify the pass for your app.** Its `aud` is your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted for another app fails the audience check — unlike the `user_context`, whose audience is shared. `templates/v2-starter/src/auth.py` → `optional_person` returns `None` for a guest, the person for a member, and a `401` for a pass that is present but bad (an attack or a broken deploy — never treat it as a guest).
@@ -310,7 +312,7 @@ On a `user` route the stream is authenticated once, at connect. `EventSource` ca
 
 ### `hosted` (default — what 99% of apps want)
 
-The platform builds a Docker image from your `Dockerfile`, runs it as a Swarm service on `dokploy-network`, and routes `<app_id>.apps.manaurum.com` to it via Traefik with a Let's Encrypt cert.
+The platform builds a Docker image from your `Dockerfile`, runs it as a Swarm service on the shared app network (one overlay for every app, which Core and the main Postgres are on too), and routes `<app_id>.apps.manaurum.com` to it via Traefik with a Let's Encrypt cert.
 
 Required files in your project:
 

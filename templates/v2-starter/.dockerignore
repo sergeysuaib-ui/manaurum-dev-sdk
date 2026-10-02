@@ -1,6 +1,10 @@
-# Keep the build context small and, above all, keep credentials out of
-# the image. `manaurum app deploy` uploads this directory as the Docker
-# build context; anything listed here never reaches the builder.
+# For a LOCAL `docker build`: keeps the context small and credentials out
+# of the image. On a platform deploy this file does nothing: the CLI
+# uploads the directory minus caches, .venv, .git, node_modules, dist and
+# build, and Core's classic builder does not apply .dockerignore. There,
+# the Dockerfile's COPY list keeps files out of the image, and nothing
+# keeps them out of the stored source - so keep .env* out of this
+# directory altogether.
 .env
 .env.*
 *.pem
@@ -23,10 +27,6 @@ build/
 *.tar.gz
 
 # Applied by Core per tenant, never needed inside the image.
-# NOTE: on a platform deploy this line changes nothing - the tarball goes
-# straight to Docker's build endpoint, which does not apply .dockerignore
-# server-side. It is what keeps migrations out of a LOCAL `docker build`.
-# The platform copy is excluded by your Dockerfile's COPY list instead.
 migrations/
 
 # Tests run on your machine and in CI, never in the runtime image.

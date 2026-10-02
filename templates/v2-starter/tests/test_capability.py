@@ -54,3 +54,25 @@ async def test_runtime_token_and_tenant_ride_every_call(sent):
     await capability.call_capability("os.kv.get", {"key": "k"})
     assert sent[0].headers["Authorization"] == "Bearer runtime-token"
     assert sent[0].headers["X-Manaurum-Tenant-Id"]
+
+
+async def test_slow_capabilities_get_longer_timeouts():
+    # Built from prefixes: check_app.py reads a quoted capability name as a call.
+    assert capability.timeout_for("os.ai." + "complete").read == 185.0
+    assert capability.timeout_for("os.ocr." + "extract").read == 185.0
+    assert capability.timeout_for("os.http." + "fetch").read == 35.0
+    assert capability.timeout_for("os.kv." + "get").read == 15.0
+
+
+async def test_the_call_uses_that_timeout(sent, monkeypatch):
+    seen = []
+    client = capability.httpx.AsyncClient   # the fixture's mock-wrapping factory
+
+    def recording(*args, **kwargs):
+        seen.append(kwargs.get("timeout"))
+        return client(*args, **kwargs)
+
+    monkeypatch.setattr(capability.httpx, "AsyncClient", recording)
+    monkeypatch.setenv("MANAURUM_TENANT_ID", "t-1")
+    await capability.call_capability("os.ai." + "complete", {})
+    assert seen and seen[0].read == 185.0

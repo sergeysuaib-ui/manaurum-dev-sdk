@@ -46,7 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # CHANGELOG.md is history: it is SUPPOSED to say "19 tests" in the entry for
 # the release that had 19 tests, and to name tickets that have since closed.
 # Checking it for present-tense accuracy would be checking the past.
-LIVE_DOCS = ["README.md"]
+LIVE_DOCS = ["README.md", "templates/v2-starter/README.md"]
 
 # Two files quote the documents at people: the SessionStart hook prints its
 # text into a session's context, and the UI linter's docstring names the rule
@@ -88,7 +88,7 @@ COUNT = r"(\d+|%s)" % "|".join(NUMBER_WORDS)
 # about a count of THIS suite, and an instruction to the reader is not one.
 # Digits are always a claim; a spelled-out number only counts when the line is
 # talking about the suite.
-TEST_COUNT = re.compile(r"(?i)\b%s\s+tests\b" % COUNT)
+TEST_COUNT = re.compile(r"(?i)\b%s\s+(?:tests|passed)\b" % COUNT)
 TEST_SUBJECT = re.compile(r"(?i)\b(starter|suite|pytest|offline|its)\b")
 TEST_IMPERATIVE = re.compile(r"(?i)\b(write|writing|add|adding|one|two|three)\b")
 # "fifteen checks", "Ten rules over your static files", "fails on nine of them".
@@ -219,6 +219,10 @@ STALE_FACTS = [
                 r"gateway adds its own copy;|client's header is passed through|"
                 r"passes the request's headers through"),
      "the gateway drops a client-sent X-Manaurum-User-Context (MAN-3214)"),
+    (re.compile(r"(?i)\bno `?workspace_id`? (?:claim|in the token)|"
+                r"(?:token|user_context) (?:does not|doesn't|never) carr(?:y|ies) (?:a |one |the )?"
+                r"`?workspace_id"),
+     "the gateway mints user_context with workspace_id (v2_app_gateway.py, mint_user_context)"),
     (re.compile(r"(?i)(?:first slice )?returns a stub"),
      "the logs endpoint returns a real tail"),
 ]

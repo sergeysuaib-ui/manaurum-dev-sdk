@@ -19,7 +19,7 @@ my-app/
 ├── BRIEF.md             # what this app is for, in the user's words
 ├── manifest.json        # what the platform is allowed to do for you
 ├── Dockerfile           # python:3.12-slim + uvicorn on :8000
-├── .dockerignore        # keeps .env, tests and friends out of the image
+├── .dockerignore        # local docker build only; a platform deploy ignores it
 ├── requirements.txt     # pinned runtime deps
 ├── requirements-dev.txt # pytest — not installed into the image
 ├── pytest.ini
@@ -64,7 +64,7 @@ the user's behalf — read that section first when something turns out wrong.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                      # 19 passed
+pytest                      # all pass, offline
 ```
 
 They need no database, no Manaurum account and no network: `conftest.py`
@@ -147,9 +147,10 @@ there is no `migrations/` directory at all.
 
 Want a real per-tenant schema? Delete the `data` block, create
 `migrations/` and put additive-only SQL in it (`.sql` files only — any
-other file directly inside that directory fails the deploy), set
-`migrate_command` in the manifest, and connect with `DATABASE_URL` (the
-platform sets the `search_path` to your tenant's schema for you).
+other file directly inside that directory fails the deploy; the deploy
+runs them, and `migrate_command` is never executed), and connect with
+`DATABASE_URL` (the platform locks the role's `search_path` to your
+tenant's schema for you).
 Validate before you push:
 
 ```bash

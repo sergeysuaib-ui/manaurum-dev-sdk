@@ -1,6 +1,6 @@
 /* ============================================================================
    my-app — stylesheet
-   manaurum-starter app.css 3.7.0 — keep this line when you copy the file.
+   manaurum-starter app.css 3.7.1 — keep this line when you copy the file.
    It is how the platform tells which template an app's stylesheet came from,
    and so which apps still carry a defect fixed in a later one.
    ----------------------------------------------------------------------------
@@ -153,6 +153,7 @@
 :root[data-accent="graphite"]  { --accent: #8e8e93; --accent-hover: #a2a2a7; --accent-soft: rgba(142,142,147,.14); --accent-contrast: #fff; }
 :root[data-accent="amber"]     { --accent: #f59e0b; --accent-hover: #fbbf24; --accent-soft: rgba(245,158,11,.12);  --accent-contrast: #0e0f12; }
 :root[data-accent="green"]     { --accent: #30d158; --accent-hover: #4add6e; --accent-soft: rgba(48,209,88,.14);   --accent-contrast: #0e0f12; }
+:root[data-accent="verdant"]   { --accent: #02d667; --accent-hover: #2ae382; --accent-soft: rgba(2,214,103,.14);   --accent-contrast: #051a10; }
 
 /* ── Reset + page shell ─────────────────────────────────────────────────── */
 

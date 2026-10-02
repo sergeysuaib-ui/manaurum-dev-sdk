@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -536,6 +537,31 @@ def an_annotated_oauth2_scheme(app: Path) -> None:
          '    claims = None')
 
 
+# ── Rules older than the mutation suite (audit Н1) ──────────────────────────
+
+
+def a_module_that_does_not_parse(app: Path) -> None:
+    (app / "src" / "broken.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+
+def no_dockerfile(app: Path) -> None:
+    (app / "Dockerfile").unlink()
+
+
+def a_migration_with_no_number(app: Path) -> None:
+    a_migration(app, "CREATE TABLE note (id text primary key);\n", name="init.sql")
+
+
+def two_migrations_with_one_number(app: Path) -> None:
+    a_migration(app, "CREATE TABLE note (id text primary key);\n", name="0001_init.sql")
+    a_migration(app, "ALTER TABLE note ADD COLUMN body text;\n", name="0001_body.sql")
+
+
+def a_manifest_that_does_not_parse(app: Path) -> None:
+    path = app / "manifest.json"
+    path.write_text(path.read_text(encoding="utf-8") + "\n,", encoding="utf-8")
+
+
 APP_MUTATIONS = [
     ("routes: a path the manifest does not declare", undeclared_route,
      "no runtime.api_routes rule covers it"),
@@ -664,6 +690,14 @@ APP_MUTATIONS = [
      ("DROP without manifest.migration.breaking", "DROP EXTENSION")),
     ("agent: an annotated scheme imported under another name",
      an_annotated_oauth2_scheme, "no user-context verification"),
+    ("python: a module that does not parse", a_module_that_does_not_parse,
+     "does not parse"),
+    ("image: no Dockerfile", no_dockerfile, "Dockerfile: missing"),
+    ("migrations: a file with no number", a_migration_with_no_number, "no leading number"),
+    ("migrations: two files with one number", two_migrations_with_one_number,
+     "share the number 1"),
+    ("manifest: manifest.json does not parse", a_manifest_that_does_not_parse,
+     "manifest.json: does not parse"),
 ]
 
 
@@ -830,6 +864,59 @@ def a_named_handler_written_in_place(app: Path) -> None:
          " });</script></body>")
 
 
+# ── Rules older than the mutation suite (audit Н1) ──────────────────────────
+
+
+def html_edit(app: Path, old: str, new: str) -> None:
+    edit(app / "src" / "static" / "index.html", old, new)
+
+
+def html_replace_all(app: Path, old: str, new: str) -> None:
+    path = app / "src" / "static" / "index.html"
+    text = path.read_text(encoding="utf-8")
+    if old not in text:
+        raise AssertionError("anchor not found in index.html: %r" % old)
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def a_short_hex_in_the_markup(app: Path) -> None:
+    html_edit(app, "</body>", '<svg><path fill="#f00"/></svg></body>')
+
+
+def an_rgba_in_the_markup(app: Path) -> None:
+    html_edit(app, "</body>", '<svg><path fill="rgba(0,0,0,.5)"/></svg></body>')
+
+
+def a_colour_in_a_style_attribute(app: Path) -> None:
+    html_edit(app, "</body>", '<p style="color: red">x</p></body>')
+
+
+def a_button_row(app: Path) -> None:
+    html_edit(app, "</body>", '<button class="row">x</button></body>')
+
+
+def a_clickable_row_without_is_interactive(app: Path) -> None:
+    html_edit(app, "</body>", '<ul><li class="row" data-id="1">x</li></ul></body>')
+
+
+def no_index_html(app: Path) -> None:
+    (app / "src" / "static" / "index.html").unlink()
+
+
+def two_primary_buttons_in_one_view(app: Path) -> None:
+    html_edit(app, '<div data-view="overview">',
+              '<div data-view="overview"><button class="btn btn-primary">One</button>'
+              '<button class="btn btn-primary">Two</button>')
+
+
+def the_device_never_written(app: Path) -> None:
+    html_replace_all(app, "dataset.device", "dataset.dev")
+
+
+def nothing_reads_the_payload(app: Path) -> None:
+    html_replace_all(app, "payload", "pl")
+
+
 UI_MUTATIONS = [
     ("ui: a width cap nothing centres", a_cap_nothing_centres,
      "caps its width"),
@@ -863,6 +950,19 @@ UI_MUTATIONS = [
      the_appearance_as_a_destructured_parameter, None),
     ("ui: a named handler written in place stays green",
      a_named_handler_written_in_place, None),
+    ("ui: a short hex in the markup", a_short_hex_in_the_markup, "hex #f00 in markup"),
+    ("ui: rgba() in the markup", an_rgba_in_the_markup, "rgba() in markup"),
+    ("ui: a colour in a style= attribute", a_colour_in_a_style_attribute,
+     "a colour in a style= attribute"),
+    ("ui: <button class=\"row\">", a_button_row, '<button class="row">'),
+    ("ui: a clickable row without is-interactive", a_clickable_row_without_is_interactive,
+     "no is-interactive"),
+    ("ui: no index.html", no_index_html, "index.html is missing"),
+    ("ui: two primary buttons in one view", two_primary_buttons_in_one_view,
+     "primary buttons in one view"),
+    ("ui: the device never written", the_device_never_written,
+     "device from the shell is never written"),
+    ("ui: nothing reads the payload", nothing_reads_the_payload, "nothing reads `payload`"),
 ]
 
 
@@ -936,7 +1036,12 @@ def an_unregistered_open_ticket(repo: Path) -> None:
 def a_stale_claims_line(repo: Path) -> None:
     path = repo / "scripts" / "open-claims.txt"
     text = path.read_text(encoding="utf-8")
-    path.write_text(text.replace("2026-09-09", "not-a-date", 1), encoding="utf-8")
+    # Whatever date the first line carries: a fixed one went stale the day the
+    # register was re-verified, and the mutation then changed nothing.
+    mutated = re.sub(r"(?m)^(MAN-\d+\s+.+?\s+)\d{4}-\d{2}-\d{2}", r"\1not-a-date", text, count=1)
+    if mutated == text:
+        raise AssertionError("no dated line in open-claims.txt to break")
+    path.write_text(mutated, encoding="utf-8")
 
 
 # The must-stay-green half.
@@ -1039,6 +1144,10 @@ def runtime_keys_renamed(repo: Path) -> None:
                     .replace("or RUNTIME_KEYS", "or RUNTIME_KEY_SET"), encoding="utf-8")
 
 
+def no_workspace_id_in_the_token(repo: Path) -> None:
+    append(repo, README, "The user_context token does not carry a workspace_id.")
+
+
 REPO_MUTATIONS = [
     ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
     ("repo: a documented path that is not there", a_path_that_is_not_there,
@@ -1088,6 +1197,8 @@ REPO_MUTATIONS = [
      "has a readiness probe (MAN-1369)"),
     ("repo: RUNTIME_KEYS renamed", runtime_keys_renamed,
      "no `RUNTIME_KEYS = {...}` to hold"),
+    ("repo: no workspace_id in the token", no_workspace_id_in_the_token,
+     "mints user_context with workspace_id"),
 ]
 
 

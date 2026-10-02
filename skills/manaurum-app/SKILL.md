@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.7.0.** A plugin install caches one directory per
+> **This page is SDK 3.7.1.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -158,7 +158,7 @@ workspace/
 └── my-app/            ← this is what you deploy; everything below is packed and uploaded
     ├── manifest.json   ← REQUIRED — see below
     ├── Dockerfile         ← REQUIRED — produces the runtime image
-    ├── .dockerignore      ← strongly recommended — keep .env*, .git, node_modules out of the image
+    ├── .dockerignore      ← for a local `docker build` only; the platform build ignores it
     ├── migrations/        ← optional — plain *.sql, run once per (app, tenant) in filename order
     │   └── 0001_init.sql
     └── ... your source files (any language, any framework) ...
@@ -170,7 +170,7 @@ workspace/
 __pycache__  .venv  venv  .git  .pytest_cache  .ruff_cache  .mypy_cache  node_modules  dist  build
 ```
 
-That is an exact-name match list with **no glob support and no `.env*` entry** — a `.env.manaurum` sitting next to your `Dockerfile` is packed verbatim into the build context, baked into an image layer, retained per-version in object storage, downloadable later via `manaurum app fetch-source`, and committed to a per-app append-only git history. There is no practical way to un-leak it. Keep every `.env*` outside the deployed directory, and ship a `.dockerignore` as a second line of defence.
+That is an exact-name match list with **no glob support and no `.env*` entry** — a `.env.manaurum` sitting next to your `Dockerfile` is packed verbatim into the build context, baked into an image layer by any `COPY . .`, retained per-version in object storage, downloadable later via `manaurum app fetch-source`, and committed to a per-app append-only git history. There is no practical way to un-leak it. Keep every `.env*` outside the deployed directory. A `.dockerignore` does not help here: the platform builds with Docker's classic builder (`POST /build`, `version=1`), which does not apply it to the uploaded context, and the file is in the stored tar either way. What keeps a file out of the *image* is a Dockerfile that `COPY`s only what it needs, as the starter's does.
 
 ## Step 1 — Manifest v2 (minimal)
 
@@ -257,7 +257,7 @@ Precedence: the longer literal prefix wins, ties break by declaration order. Tha
 
 Static assets (HTML/JS/CSS, `/healthz`, anything not under `/api/`) are **not** declared here and always reach your container anonymously. A person opening a page in a browser tab with no session is redirected to log in first, unless the page's path is listed in `runtime.public_paths`.
 
-For declaring custom capabilities, secrets, migrations, see `references/v2-platform.md` § Manifest reference.
+For declaring custom capabilities, secrets, migrations, see `references/v2-platform.md`, section 1 (the manifest) and section 7 (migrations).
 
 ## Step 2 — Dockerfile
 
@@ -521,7 +521,7 @@ entirely** — then the shot happens at the load event, with the skeletons still
 up. The trade is that preview's own appearance check has not run yet at that
 moment, so take the theme evidence from one of the other screenshots.
 
-Add `&accent=lavender` (or any of the eight) to check you are not hardcoding
+Add `&accent=lavender` (or any of the nine) to check you are not hardcoding
 blue.
 
 **Photograph the wide window too — the first thing an owner does is drag the
@@ -775,7 +775,7 @@ Everything here shares one property: it works when you open `https://<slug>.apps
 
 **`frontend.icon` takes an emoji, a full URL, or an absolute `/api/catalog/media/...` path.** A relative path like `icons/app.svg` is not resolved — it renders as that literal string in the tile. Omit the field entirely and you get a clean generic placeholder, which is better than a broken one.
 
-**Keep `.env*` out of the app directory.** The packager excludes `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.venv` — not `.env*`. Anything else you don't want in the image needs a `.dockerignore`.
+**Keep `.env*` out of the app directory.** The packager excludes only the names listed in "The token file lives one level up" above — not `.env*`. Anything else you don't want in the image stays out of your Dockerfile's `COPY` list; a `.dockerignore` only affects a local `docker build`.
 
 **No downloads, no new tabs, no clipboard writes.** The sandbox has no `allow-downloads` and no `allow-popups`, and the frame's `allow` delegates only `microphone` and `camera`, and those only when `permissions[]` asks. Inside the desktop, then:
 

@@ -85,7 +85,8 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-ACCENTS = ("core-blue", "teal", "lavender", "coral", "rose", "graphite", "amber", "green")
+ACCENTS = ("core-blue", "teal", "lavender", "coral", "rose", "graphite", "amber", "green",
+           "verdant")
 
 # A fixture whose keys are all from this set is an envelope describing the
 # response, not the response body itself.

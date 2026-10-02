@@ -57,7 +57,7 @@ the user is in. Read those; do not guess at them.
 // manaurum:init payload → what actually varies
 { appearance: 'light' | 'dark',        // ← style off this
   accent: 'core-blue' | 'teal' | 'lavender' | 'coral'
-        | 'rose' | 'graphite' | 'amber' | 'green',
+        | 'rose' | 'graphite' | 'amber' | 'green' | 'verdant',
   theme: 'smoothie',                   // ← constant. ignore it.
   device: 'mobile' | 'desktop', … }
 ```

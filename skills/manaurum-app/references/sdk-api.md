@@ -28,7 +28,7 @@ Section map:
 
 ### What the shell sends
 
-The desktop renders `<iframe src="<entrypoint>">` and, on the iframe's `load` event, posts `manaurum:init` into it (`IframeAppHost.tsx:316-371`, `:699-702`) with `targetOrigin` set to the exact origin of your entrypoint.
+The desktop renders `<iframe src="<entrypoint>">` and, on the iframe's `load` event, posts `manaurum:init` into it (`IframeAppHost.tsx:284-352`, `:691-694`) with `targetOrigin` set to the exact origin of your entrypoint.
 
 For a v2 app the entrypoint is **derived by the platform**, not read from your manifest: `https://<app_id>.apps.manaurum.com/` (`lib/v2/deriveEntrypoint.ts:31-42`; the domain comes from `NEXT_PUBLIC_MANAURUM_APPS_DOMAIN`, default `apps.manaurum.com`). The one exception is `runtime.mode: "byo"`, where the manifest's `runtime.entrypoint` is used verbatim.
 
@@ -81,9 +81,9 @@ The payload as actually posted today (`sendInit`):
 event.source.postMessage({ type: 'manaurum:ready' }, event.origin);
 ```
 
-**Within 10 seconds of the window opening** — `READY_TIMEOUT_MS = 10_000` (`IframeAppHost.tsx`). Miss it and the shell paints an overlay across your UI: *"App is not responding — No `manaurum:ready` received within 10s"* (`:814-836`). Your app is still running underneath; the user just cannot see or use it.
+**Within 10 seconds of the window opening** — `READY_TIMEOUT_MS = 10_000` (`IframeAppHost.tsx`). Miss it and the shell paints an overlay across your UI: *"App is not responding — No `manaurum:ready` received within 10s"* (`:792-794`). Your app is still running underneath; the user just cannot see or use it.
 
-For the shell to accept the reply, all of these must hold (`:394-409`):
+For the shell to accept the reply, all of these must hold (`:375-380`):
 
 1. `event.origin` equals the origin the shell derived for your entrypoint. Serve from the host the platform expects; a BYO app on a host that doesn't match `runtime.entrypoint` has every message silently dropped.
 2. `event.source` is the iframe's own `contentWindow`. Post from your top-level document — a message relayed from a nested iframe or a worker is rejected.
@@ -141,7 +141,7 @@ A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from t
 - You cannot read the shell's origin from inside the frame, so check it: act on a `manaurum:*` message only when `event.source === window.parent` and `event.origin` is `https://manaurum.com` or `https://app.manaurum.com`. Use both origins, never `www.`, and never a `*.manaurum.com` pattern, because every v2 app is a `*.manaurum.com` page and may frame yours. Never adopt the origin of whoever posts `manaurum:init`: an unauthenticated sender then becomes your shell. SDK 2.3.0 does exactly that, on every `init`, which is why the inline guard above has to run before it.
 - The shell posts `manaurum:init` with your origin as `targetOrigin`, so no other embedder can receive it.
 - The iframe sandbox is `allow-scripts allow-forms allow-same-origin` (`iframeHostPolicy.ts`). `allow-modals` is never emitted — `alert()` / `confirm()` / `prompt()` are dead in the shell (and work fine on your standalone URL, so "it worked in my browser" proves nothing). Nor are `allow-downloads` or `allow-popups`, and `allow` never delegates `clipboard-write`: downloads, `target="_blank"`, `window.open()` and `navigator.clipboard.writeText()` all fail in the window. What to do instead: `SKILL.md` → "What will bite you".
-- Browser features are delegated through the iframe `allow` attribute only when your manifest declares them in `permissions[]` (`:210`, `:218-222`, `:919`). See `references/v2-platform.md`.
+- Browser features are delegated through the iframe `allow` attribute only when your manifest declares them in `permissions[]` (`:197-206`, and the `allow` attribute at `:887`). See `references/v2-platform.md`.
 
 ### Which messages a v2 app may send
 
@@ -196,7 +196,9 @@ const orders = await res.json();
 
 ### Exported surface
 
-`ManaurumV2` (the module's only export) has exactly two members: `init()` and the `version` getter.
+The module exports two names. `ManaurumV2` has exactly two members: `init(options?)` and the `version` getter. `findClippedContent(doc)` is the layout guard's own test, exported so it can be tested without a browser: it returns `{ element, selector, hiddenPx, boxHeight }` for the outermost element that hides content with nothing to scroll it, or `null`.
+
+**The layout guard.** After the handshake the SDK watches the page (resize, and DOM mutations for its first 40 checks; at most once a second) and console-errors `content is clipped and nothing scrolls` with the element's selector, once per element, also reporting it to the shell as `manaurum:diagnostic`. `app.checkLayout()` runs it now — call it right after rendering a view you know is long. `init({ layoutCheck: false })` turns it off.
 
 **Callbacks** — all fire-and-forget; a throwing callback is caught and logged as `[ManaurumV2]`, it does not break the SDK.
 
