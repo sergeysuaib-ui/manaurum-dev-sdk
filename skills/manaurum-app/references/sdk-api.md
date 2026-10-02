@@ -258,6 +258,7 @@ The `manaurum_session` cookie on `.manaurum.com` is good for 15 minutes from whe
 `app.fetch` goes through the same `window.fetch`, so it is covered. These are not, and in a standalone tab each of them stops recognising the person once the cookie lapses:
 
 - `EventSource` and `XMLHttpRequest` — only `fetch` is wrapped. Read an authenticated stream with `fetch` and a body reader.
+- `auth: "optional"` routes are covered differently (Core MAN-3200): there is no `401` to ride, so a member whose cookie lapsed is served as a guest with `X-Manaurum-Session: stale`. The script renews and repeats a `GET`/`HEAD` once; a `POST` already reached you as a guest and is not repeated.
 - `auth: "anonymous"` routes — the gateway never answers them with the session `401`, so there is nothing to renew. An app that carries its own pass on such routes owns that pass's expiry.
 - A call with `credentials: 'omit'`, an `Authorization` header of your own, a streaming request body, or a cross-origin URL. These go out untouched.
 

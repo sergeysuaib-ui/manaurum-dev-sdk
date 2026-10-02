@@ -143,3 +143,106 @@ def auth_claims(request: Request) -> UserContextClaims:
         # client's — so refuse rather than guess which one is Core's.
         raise HTTPException(status_code=401, detail="user_context_ambiguous")
     return verify_user_context(tokens[0])
+
+
+# ── Person pass on `auth: "optional"` routes (Core MAN-3200) ───────────────
+#
+# On an `optional` route a signed-in member of your tenant arrives with the
+# usual `X-Manaurum-User-Context` (for capability calls on their behalf) AND
+# with `X-Manaurum-Person`, which says who they are. A guest — or a member
+# of another tenant, which the gateway makes look exactly like a guest —
+# arrives with neither.
+#
+# Unlike the user_context, the pass IS bound to one app: its audience is
+# your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass
+# minted for another app fails here on the audience check. `require_aud`
+# matters: python-jose skips the audience check for a token with no `aud`.
+
+PERSON_HEADER = "X-Manaurum-Person"
+_PERSON_TYP = "person"
+
+
+@dataclass(frozen=True)
+class PersonClaims:
+    """Who is asking. ``kind`` is ``"member"`` today; ``"external"`` arrives
+    with App people (invited outsiders). ``name`` is the profile name or
+    empty — never the email. ``is_tenant_admin`` / ``workspace_role`` are
+    facts, not roles: turn them into a permission yourself."""
+
+    kind: str
+    sub: str
+    tenant_id: str
+    email: str = ""
+    name: str = ""
+    role: str = ""
+    is_tenant_admin: bool = False
+    workspace_role: str = ""
+
+
+def verify_person_pass(token: str) -> PersonClaims:
+    """Verify a raw `X-Manaurum-Person` JWT for THIS app, or raise."""
+    pem = (os.environ.get("CORE_USER_CONTEXT_PUBLIC_KEY_PEM") or "").strip()
+    app_id = (os.environ.get("MANAURUM_APP_ID") or "").strip()
+    tenant_id = (os.environ.get("MANAURUM_TENANT_ID") or "").strip()
+    if not pem:
+        raise HTTPException(status_code=503, detail="core_user_context_public_key_not_provisioned")
+    if not app_id:
+        # The audience IS the check. Without it any app's pass would pass.
+        raise HTTPException(status_code=503, detail="manaurum_app_id_not_injected")
+    if not tenant_id:
+        raise HTTPException(status_code=503, detail="manaurum_tenant_id_not_injected")
+
+    from jose import jwt
+    from jose.exceptions import ExpiredSignatureError, JWTError
+
+    try:
+        claims = jwt.decode(
+            token,
+            pem,
+            algorithms=[_JWT_ALGORITHM],
+            issuer=_JWT_ISSUER,
+            audience=app_id,
+            options={"require_exp": True, "require_iat": True, "require_aud": True},
+        )
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="person_pass_expired")
+    except JWTError:
+        # Wrong key, wrong issuer, or minted for another app (audience).
+        raise HTTPException(status_code=401, detail="person_pass_invalid")
+
+    if claims.get("typ") != _PERSON_TYP or claims.get("kind") not in ("member", "external"):
+        raise HTTPException(status_code=401, detail="person_pass_invalid")
+    if not str(claims.get("sub") or ""):
+        raise HTTPException(status_code=401, detail="person_pass_incomplete")
+    if str(claims.get("tenant_id") or "") != tenant_id:
+        raise HTTPException(status_code=401, detail="person_pass_wrong_tenant")
+
+    facts = claims.get("facts") if isinstance(claims.get("facts"), dict) else {}
+    return PersonClaims(
+        kind=str(claims["kind"]),
+        sub=str(claims["sub"]),
+        tenant_id=tenant_id,
+        email=str(claims.get("email") or ""),
+        name=str(claims.get("name") or ""),
+        role=str(claims.get("role") or ""),
+        is_tenant_admin=bool(facts.get("is_tenant_admin")),
+        workspace_role=str(facts.get("workspace_role") or ""),
+    )
+
+
+def optional_person(request: Request) -> PersonClaims | None:
+    """FastAPI dependency for `auth: "optional"` routes: the person, or
+    ``None`` for a guest.
+
+    ``person: PersonClaims | None = Depends(optional_person)``
+
+    A pass that is present but does not verify is a 401, not a guest: it
+    is either an attack or a broken deploy, and treating it as "no pass"
+    would hide both.
+    """
+    tokens = request.headers.getlist(PERSON_HEADER)
+    if not tokens:
+        return None
+    if len(tokens) > 1:
+        raise HTTPException(status_code=401, detail="person_pass_ambiguous")
+    return verify_person_pass(tokens[0])

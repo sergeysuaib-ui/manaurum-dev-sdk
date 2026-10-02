@@ -259,7 +259,7 @@ The declaration table for every `/api/*` path your container serves. **A path th
 | Key | Notes |
 |---|---|
 | `path` | Required. Must start with `/`. Trailing `*` is a wildcard (`/api/orders/*`); anything else is an exact match. `/api/tasks/*` does **not** match the bare `/api/tasks` — declare both if you serve both. |
-| `auth` | Required, `"user"` or `"anonymous"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). There is no third, optional mode. |
+| `auth` | Required: `"user"`, `"anonymous"` or `"optional"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). `optional` (Core MAN-3200): a signed-in member of your tenant as on `user`, plus `X-Manaurum-Person`; anyone else as on `anonymous`, never a `401` — see "Pages that guests and members both open". |
 | `streaming` | Optional bool, default false. Proxy in SSE / chunked passthrough mode instead of buffering the upstream response. Orthogonal to `auth`. Emit SSE heartbeats, honour `Last-Event-ID`, and do not hold a DB connection for the stream's lifetime. Limits below. |
 
 There is no `method` field — one rule covers every verb. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they always reach your container anonymously, and a page navigation without a session is sent to log in unless `runtime.public_paths` lists it.
@@ -271,24 +271,27 @@ The gateway strips `Cookie` and `Authorization` from every request it proxies, `
 1. The signature: RS256 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, issuer `manaurum-core`, audience `manaurum-app`, `exp` and `iat` present and `exp` in the future. A missing key is a `503`, never "trusted".
 2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`. A token without one was not minted by the gateway.
 3. **That it is yours.** `app_id` must equal your manifest's slug, and `tenant_id` must equal `MANAURUM_TENANT_ID`. Core signs every app's tokens with the same key and the same audience, so step 1 accepts a token minted for any app, and the developer of any app a user opens sees that user's tokens. Without step 3 they have 60 seconds to present one to you. The capability gateway makes this check on its own surface (`401 invalid_user_context`, "app mismatch"); in your container it is yours to make.
-4. **Exactly one header.** The gateway adds its own copy under a different letter case and does not remove a copy the client sent, so a request can reach your container with two. Starlette's `headers.get()` returns the client's; Node joins the two with `", "`, which then fails JWT parsing, so it fails closed, but count the raw headers anyway. One header, or `401`.
+4. **Exactly one header.** Until Core MAN-3214 (deployed 2026-10-02) the gateway added its own copy under a different letter case and did not remove a copy the client sent, so a request could reach your container with two (Starlette's `headers.get()` returned the client's). It now drops the client's copy. Keep counting the raw headers anyway — one header, or `401` — against an older Core or a proxy in front of you.
 
 Never read the header on an `anonymous` route. Nothing is minted there, and the client's header is passed through as it is. `templates/v2-starter/src/auth.py` implements all four steps (it reads your slug as `APP_SLUG` from `src/capability.py`; copy both, or set it where you keep it) and `tests/test_auth.py` tests each one. `MANAURUM_TENANT_ID` is injected into `hosted` containers; on a `byo` host, set it yourself to the tenant you deploy into.
 
 ### Pages that guests and members both open
 
-A share link, a voting room, an invite page: the same page, opened by people with a Manaurum session and by people without one. The gateway has no mode for it. A `user` route answers the guest `401 authentication_required`; an `anonymous` route — and every page under `public_paths` — tells you nothing even when a member is the one asking.
+A share link, a voting room, an invite page: the same page, opened by people with a Manaurum session and by people without one. Declare its API routes `optional` (Core MAN-3200):
 
-What the apps that have this shape do (zb-product-kb, planning-poker):
+```jsonc
+{ "path": "/api/room/*", "auth": "optional" }
+```
 
-1. One `auth: "user"` route — say `POST /api/pass` — verifies the `user_context` and answers a short-lived pass the app signs itself: HMAC-SHA256 over (user id, what it grants, expiry), with the key kept in `os.secrets` (declare `os.secrets.get`). Compare signatures in constant time (`hmac.compare_digest`), and rotate the key to revoke every pass at once.
-2. The page asks for it once. A guest gets `401` and carries on without one; a member keeps the pass.
-3. The routes both of them call are `anonymous` and read the pass from a header of the app's own (`X-App-Pass`). Not `Authorization` — the gateway strips it.
-4. Each such route decides on its own what a request **without** a pass may do. That is the guest's whole permission set, so make it deliberate: what the share link was for (see the board, cast a vote under a name the guest typed) and nothing a member's identity would unlock. Whatever needs to know *which member* needs a valid pass, and a missing or bad pass gets the guest answer, never an error that falls through to member behaviour.
+* **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`.
+* **Anyone else** arrives with neither header. That includes a member of another tenant: the gateway makes them look exactly like a guest, so the route cannot be used to find out who belongs where. There is no `401`.
+* **Verify the pass for your app.** Its `aud` is your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted for another app fails the audience check — unlike the `user_context`, whose audience is shared. `templates/v2-starter/src/auth.py` → `optional_person` returns `None` for a guest, the person for a member, and a `401` for a pass that is present but bad (an attack or a broken deploy — never treat it as a guest).
+* **Decide deliberately what a request without a pass may do.** That is the guest's whole permission set: what the link was for (see the board, vote under a typed name), nothing a member's identity would unlock.
+* **Sessions.** A member whose session lapsed is served as a guest; the response carries `X-Manaurum-Session: stale`, and the platform script injected into your pages renews and repeats a GET/HEAD once. A POST is not repeated — it already reached you as a guest — so after a stale POST, ask the person to try again.
 
-The pass is the only proof of membership on those routes, so bind it to what it grants (this room, this document), keep it short, and renew it through the `user` route. A person signed in to **another** tenant gets `404 app_not_found` from that route, not `401`; treat it as "no pass" too. Platform session renewal does not cover it: it only acts on `user` routes (see `references/sdk-api.md` → "Sessions in a standalone tab").
+Guests still need your own mechanism if a guest must be recognised across requests (a seat in a room, a typed name): keep a short-lived pass of your own, HMAC over what it grants with the key in `os.secrets`, in a header of your own (`X-App-Pass`; not `Authorization`, the gateway strips it). Members no longer need it.
 
-**Names and roles.** The `user_context` JWT carries ids: `sub`, `tenant_id`, `workspace_id`, `app_id` (the slug), `app_version`. No name, no email, and **no role**: nothing tells your app who is a tenant admin. Keep your own list of admins (say, user ids in `os.secrets` or your schema) and check it. Inside the desktop window `manaurum:init` carries `user.nickname`; in a standalone tab nothing does, so ask the person and store the answer against `sub`.
+**Names and roles.** The `user_context` carries ids only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). Inside the desktop window `manaurum:init` carries `user.nickname`.
 
 ### Streaming routes — the limits
 

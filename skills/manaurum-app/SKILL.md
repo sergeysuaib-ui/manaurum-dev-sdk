@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.5.0.** A plugin install caches one directory per
+> **This page is SDK 3.6.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -236,11 +236,11 @@ Every request to `https://<slug>.apps.manaurum.com` goes through the Core gatewa
 Each entry is `{ "path": …, "auth": … }`:
 
 - `path` must start with `/`. A trailing `/*` matches anything **below** that prefix.
-- `auth` is `"user"` or `"anonymous"` — both required, both explicit.
+- `auth` is `"user"`, `"anonymous"` or `"optional"` — required and explicit.
   - `"user"`: the gateway mints a 60-second RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`. The end user's own bearer token is **never** forwarded to you.
-    **A good signature is not enough.** Every app's tokens are signed with one key for one audience (`manaurum-app`), so a token minted for another app, which that app's developer sees, verifies in yours too. Accept it only if `app_id` is your manifest's slug and `tenant_id` equals `MANAURUM_TENANT_ID`. Refuse a request that carries the header twice: the gateway adds its own copy but does not remove one the client sent. Never read the header on an `anonymous` route, where nothing is minted and whatever arrives came from the client. `templates/v2-starter/src/auth.py` does all of this; copy it.
+    **A good signature is not enough.** Every app's tokens are signed with one key for one audience (`manaurum-app`), so a token minted for another app, which that app's developer sees, verifies in yours too. Accept it only if `app_id` is your manifest's slug and `tenant_id` equals `MANAURUM_TENANT_ID`. Refuse a request that carries the header twice. Core since MAN-3214 drops any copy the client sent, so a second header means an older Core or something wrong in front of you; the check costs nothing. Never read the header on an `anonymous` route, where nothing is minted and whatever arrives came from the client. `templates/v2-starter/src/auth.py` does all of this; copy it.
   - `"anonymous"`: proxied with no user context. This is how you expose a kiosk/public endpoint, and it must be declared — a route you forget is unreachable, not open.
-  - **There is no third mode.** No "the user if signed in, nobody otherwise": a `user` route answers a guest `401`, an `anonymous` route tells you nothing even about a member, and the gateway strips `Cookie` and `Authorization` from everything it proxies. An app whose pages both guests and members open (a share link, a voting room) needs its own pass — `references/v2-platform.md` → "Pages that guests and members both open".
+  - `"optional"` (Core MAN-3200): the user if signed in, nobody otherwise. A signed-in member of your tenant arrives as on `user` **plus** `X-Manaurum-Person` — who they are, bound to your app by `aud` = `MANAURUM_APP_ID`. A guest, or a member of another tenant (indistinguishable on purpose), arrives with neither, and never gets a `401`. For share links, voting rooms, invite pages: `references/v2-platform.md` → "Pages that guests and members both open". `templates/v2-starter/src/auth.py` → `optional_person`.
 - Optional `"streaming": true` for `text/event-stream` routes, so the gateway passes chunks through instead of buffering the response. A stream is closed after 15 minutes, and after 60 seconds in which your container sent nothing; a 51st concurrent stream for one (app, tenant) is `429`. Limits and the reconnect contract: `references/v2-platform.md` → "Streaming routes — the limits".
 - **There is no `method` field.** One rule covers GET, POST, PATCH, DELETE alike. You cannot declare `/api/items` anonymous for reads and `user` for writes — enforce that inside your app.
 

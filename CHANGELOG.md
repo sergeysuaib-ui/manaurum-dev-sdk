@@ -1,3 +1,28 @@
+# 3.6.0 - `auth: "optional"` and the person pass (Core MAN-3200, MAN-3214)
+
+### Why
+
+Apps whose pages both guests and members open (a share link, a voting room) had to
+mint their own pass on a `user` route and carry it on `anonymous` routes, because the
+gateway had no "the user if signed in" mode. Core adds it as stage 1 of App people
+(MAN-3212, D-160). Ship this release together with the Core deploy that carries it:
+before that deploy an `optional` route fails manifest validation.
+
+### What changed
+
+* `SKILL.md`, `references/v2-platform.md` "Pages that guests and members both open":
+  `auth: "optional"` replaces "there is no third mode". A member gets the usual
+  `user_context` plus `X-Manaurum-Person` (`aud` = `MANAURUM_APP_ID`); a guest and a
+  member of another tenant get neither and are indistinguishable; never a `401`.
+* `references/sdk-api.md` "Sessions in a standalone tab": the `stale` signal, and why a
+  `POST` is not repeated.
+* `templates/v2-starter/src/auth.py`: `verify_person_pass` and the `optional_person`
+  dependency, with the audience, tenant, `typ` and duplicate-header checks;
+  six tests in `tests/test_auth.py`.
+* The pass verifier requires the `aud` claim (`require_aud`): python-jose skips the audience
+  check for a token with no `aud` at all. Core does the same (sergeysuaib-ui/manaurum#2328).
+* The duplicate `X-Manaurum-User-Context` note: Core now drops a client-sent copy
+  (MAN-3214). The starter keeps refusing two headers; it costs nothing.
 # 3.5.0 - the manifest, the gateway, the window and the Assistant, checked against the code (MAN-1452)
 
 ### Why
