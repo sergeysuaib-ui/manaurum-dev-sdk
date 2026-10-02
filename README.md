@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code plugin
 
-**Version 3.7.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.7.1.** Skills that teach Claude Code to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -227,7 +227,15 @@ discover it at 2 a.m.:
   window.
 * **No scheduled jobs and no inbound webhooks.** `schedules` and `webhooks` exist in the
   manifest schema but nothing runs them yet.
-* **No metrics.** `manaurum app logs` is a tail of the last N lines, with no follow.
+* **Usage numbers, but no error tracking for an SDK app.** `GET /api/app-usage/<uuid>`
+  (MAN-3131) — the platform's app UUID (`app_id` in `GET /api/dev/v2/apps/<slug>`), not
+  your slug, called with a signed-in session (the app's author, or a tenant admin in a
+  team workspace), not an `mna_*` token — gives per-day
+  signed-in users, visits and refused or failed saves, people in the last 7 days and
+  people active now; anonymous visitors are not counted. Errors raised in the browser
+  are collected only for Aurum Studio apps (MAN-3132): its injected runtime reports them,
+  and an SDK app has no such runtime. `manaurum app logs` is a tail of the last N lines,
+  with no follow.
 * **Subdomains are public knowledge.** Your app's hostname appears in Certificate
   Transparency logs seconds after its first deploy, whatever `visibility.mode` says.
   Visibility controls *installation*, not the existence of the URL — so put auth on

@@ -1,3 +1,47 @@
+# 3.7.1 - what the 2026-10-02 audit left: stale pointers, the `.dockerignore` myth, untested rules
+
+### Why
+
+After 3.2.0–3.7.0 the audit's critical, high and medium findings were closed but a tail of
+smaller ones was not, and one of them turned out to be wrong advice, not a stale pointer.
+
+### What changed
+
+* **`.dockerignore` is no defence on a platform deploy.** `manaurum-app/SKILL.md` and
+  `manaurum-deploy/SKILL.md` recommended it as a "second line of defence" against a leaked
+  `.env`. Core builds with Docker's classic builder (`POST /build`, `version=1`,
+  `production.py`), which does not apply `.dockerignore` to the uploaded context, and the tar
+  is stored as uploaded. Both now say: keep `.env*` out of the directory, and let the
+  Dockerfile's `COPY` list keep files out of the image. The starter's `.dockerignore` header,
+  which said "anything listed here never reaches the builder", and its
+  `requirements-dev.txt` say the same.
+* **Usage numbers exist** (audit С28). README's "No metrics" now describes
+  `GET /api/app-usage/<uuid>` (MAN-3131: the platform's app UUID, a signed-in session) and
+  says browser-error capture (MAN-3132) is for Aurum Studio apps only.
+* **The starter waits as long as Core does** (Н2): `capability.timeout_for()` gives `os.ai.*`
+  and `os.ocr.*` 185 s and `os.http.*` / `os.apps.*` 35 s instead of a flat 15 s, with tests.
+* **`verdant`** is the ninth accent (Н9; `globals.css`, `preferences.py`): in `app.css`,
+  `design.md` and `preview.py`; `SKILL.md` says nine.
+* **`sdk-api.md`** (Н10): `manaurum-v2.mjs` exports `findClippedContent` as well as
+  `ManaurumV2`; the layout guard, `app.checkLayout()` and `init({ layoutCheck: false })` are
+  described; `IframeAppHost.tsx` line references updated.
+* **Pointers and leftovers** (Н7, Н8, Н12, Н13, С15): "19 passed" in `manaurum-setup` and
+  the starter README (`check_repo.py` now refuses "N passed" too, and reads the starter
+  README); a link to a section that does not exist;
+  `production.py` and `agent/types.py` line numbers; "`dev` (in-browser editor)" — that
+  builder is gone; the slug rule in `manaurum-setup`; "on `dokploy-network`" (the shared app
+  network, whatever it is named); the starter README telling people to set `migrate_command`;
+  the build-context scan's refusals (a file over 32 MB among them), which only an `enforce`
+  scan makes, in a row of their own.
+* **CHANGELOG** (Н15): every release heading is `#` now; 2.0.0 and older used `##`.
+* **`check_repo.py`** refuses "no `workspace_id`" in the token, the last phrase on the audit's
+  ban list; `open-claims.txt` re-verified against Linear.
+* **`linter_mutations.py`**: 15 more mutations (131), one for each linter rule that had
+  never been seen to fail (Н1): a module that does not parse, no Dockerfile, migration
+  numbering, an unparseable manifest, short hex, `rgba()`, `style=` colour, `<button
+  class="row">`, a clickable row without `is-interactive`, no `index.html`, two primaries in
+  one view, device and payload never read.
+
 # 3.7.0 - the linters check what the platform checks, and the plugin can see itself drift
 
 ### Why
@@ -1718,7 +1762,7 @@ iframe `allow=` Permissions-Policy delegation) and 2.3.0 documents it accurately
 
 # Changelog
 
-## 2.0.0 (2026-05-07) — Platform v2 is the default flow
+# 2.0.0 (2026-05-07) — Platform v2 is the default flow
 
 This is a **major** release. The skill defaults flip: every new app is now scaffolded, taught, and deployed as a Platform v2 containerized hosted app. The v1 (iframe + `manaurum.js` + `mnu_*` token + `/api/dev/apps/deploy`) flow is preserved as a legacy section in each skill, only used when an existing v1 app needs maintenance.
 
@@ -1773,7 +1817,7 @@ If you have a Claude Code instance with this plugin installed at v1.15 and you u
 
 ---
 
-## 1.15.0 (2026-04-30) — F1.5 evolution — `renamed_from` + dedicated `include`
+# 1.15.0 (2026-04-30) — F1.5 evolution — `renamed_from` + dedicated `include`
 
 ### Added
 
@@ -1785,7 +1829,7 @@ If you have a Claude Code instance with this plugin installed at v1.15 and you u
 
 - Pure-documentation release. Backend changes shipped in Manaurum PR #341 (merged + deployed 2026-04-30). Runtime API and SDK build unchanged — same `app.db.list('parent', { include: [...] })` works against either tier.
 
-## 1.14.0 (2026-04-30) — F1.5 hardening — R8 quotas + destructive add-NOT-NULL
+# 1.14.0 (2026-04-30) — F1.5 hardening — R8 quotas + destructive add-NOT-NULL
 
 ### Added
 
@@ -1799,7 +1843,7 @@ If you have a Claude Code instance with this plugin installed at v1.15 and you u
 
 - Pure-documentation release — runtime API and SDK build unchanged. Companion to Manaurum PR #339 (validator + diff engine + telemetry).
 
-## 1.13.0 (2026-04-30) — graduated storage (`storage: "dedicated"`)
+# 1.13.0 (2026-04-30) — graduated storage (`storage: "dedicated"`)
 
 ### Added
 
@@ -1816,7 +1860,7 @@ Until now `storage: "dedicated"` was reserved-but-rejected. Apps that grew past 
 - Storage tier is a one-way decision per entity. Plan before first deploy: changing `storage` between `shared` and `dedicated` after deploy is rejected as a destructive transition.
 - (Plumbing only: 1.12.0 shipped the Component Library docs but missed the `plugin.json` version bump — this release lands at 1.13.0 to keep the cache directory layout monotonic.)
 
-## 1.12.0 (2026-04-30) — manaurumOS Component Library
+# 1.12.0 (2026-04-30) — manaurumOS Component Library
 
 ### Added
 
@@ -1830,7 +1874,7 @@ Until now `storage: "dedicated"` was reserved-but-rejected. Apps that grew past 
 - The library is curated, public, and read-only. No tenant scoping, no auth headers — same-origin fetch is enough. Iframe apps with strict CSP `connect-src` should bake chosen components into the bundle at build time rather than fetching at runtime.
 - Pure-documentation release — no template change.
 
-## 1.11.0 (2026-04-28) — db.batch (atomic multi-write)
+# 1.11.0 (2026-04-28) — db.batch (atomic multi-write)
 
 ### Added
 
@@ -1850,7 +1894,7 @@ Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-
 - Forward-additive — existing single-op SDK calls are unchanged.
 - Larger workloads must chunk client-side; chunks are atomic individually but not collectively.
 
-## 1.10.0 (2026-04-28) — db.list child-fetch via include
+# 1.10.0 (2026-04-28) — db.list child-fetch via include
 
 ### Added
 
@@ -1868,7 +1912,7 @@ Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-
 - Forward-additive — `db.list` calls without `include` keep working unchanged.
 - Phase 2 of the SDK roadmap is now fully shipped: 2.1 (db.list operators) + 2.2 (entity immutability) + 2.3 (db.aggregate) + 2.4 (child-fetch).
 
-## 1.9.0 (2026-04-28) — db.aggregate
+# 1.9.0 (2026-04-28) — db.aggregate
 
 ### Added
 
@@ -1885,7 +1929,7 @@ Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-
 - Forward-additive — existing `db.list` / `db.create` / etc. unchanged.
 - `MIN`/`MAX` and `COUNT(field)` deferred. Once we have planner data on real datasets, MIN/MAX are the next likely additions.
 
-## 1.8.0 (2026-04-28) — db.list filter operators + entity immutability flags
+# 1.8.0 (2026-04-28) — db.list filter operators + entity immutability flags
 
 ### Added
 
@@ -1907,7 +1951,7 @@ Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-
 - Both changes are forward-additive. Existing manifests and `db.list` callers keep working unchanged.
 - `db.list` with operators: the SDK build is **v1.5.0** (bump from v1.4.0). The platform's bundled SDK is updated automatically on deploy; tenant apps can import either version.
 
-## 1.7.0 (2026-04-28) — runtime AI API
+# 1.7.0 (2026-04-28) — runtime AI API
 
 ### Added
 
@@ -1925,7 +1969,7 @@ Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-
 - The iframe **never** sees the LLM API key. The platform resolves the workspace's configured provider+model from Settings → Agents and writes per-app `llm_token_usage` rows attributed to the calling `application_id` so workspace admins see per-app spend.
 - No manifest permission required in v1; the gate lives in Settings → Agents (a workspace admin can disable AI for a specific app, surfacing as `AI_DISABLED`). A formal `ai.use` manifest permission is on the roadmap and will be additive.
 
-## 1.6.0 (2026-04-27) — runtime Database API
+# 1.6.0 (2026-04-27) — runtime Database API
 
 ### Added
 
@@ -1941,7 +1985,7 @@ Receptions Confirm (status flip + N stock_movement inserts), bulk import, multi-
 
 This release is purely documentation — the underlying runtime has been live since W4.3 (`backend/app/routes/app_data.py` + the `manaurum.db.*` block in `frontend/public/sdk/manaurum.js`). No backend or SDK shipping change.
 
-## 1.5.0 (2026-04-27) — BREAKING: tenant-aware Deploy API
+# 1.5.0 (2026-04-27) — BREAKING: tenant-aware Deploy API
 
 ### Changed (BREAKING)
 
@@ -1974,7 +2018,7 @@ If you have an existing app deployed via the legacy flow:
 3. Bundle as `bundle.zip` with `index.html` at the root.
 4. Redeploy via `POST /api/dev/apps/deploy`. The new deploy creates a fresh `applications` row in your tenant's catalog under the v1 schema.
 
-## 1.1.0 (2026-04-08)
+# 1.1.0 (2026-04-08)
 
 ### Added
 - **UI Kit reference**: comprehensive design system with exact styles from built-in apps — cards, buttons, inputs, labels, badges, toggles, sidebars, tabs, task cards, section headers, empty/loading states
@@ -1986,7 +2030,7 @@ If you have an existing app deployed via the legacy flow:
 - Design guidelines expanded from basic colors/fonts to full component library
 - Publishing flow updated to reflect Telegram-style creation (name only, slug auto-generated)
 
-## 1.0.0 (2026-04-08)
+# 1.0.0 (2026-04-08)
 
 ### Added
 - `manaurum-app` skill — generate apps from prompts with SDK, manifest, theme support

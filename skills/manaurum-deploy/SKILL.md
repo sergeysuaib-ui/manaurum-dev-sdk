@@ -390,13 +390,14 @@ Every deploy is **also** committed to a per-`(tenant, app)` bare git repo — on
 version whose archive has aged out still has its files in the git history.
 
 > **Whatever you ship, you ship forever.** The CLI packager excludes `__pycache__`, `.venv`,
-> `.git`, the `*_cache` dirs, `node_modules`, `dist` and `build` — it does **not** exclude
+> `venv`, `.git`, the `*_cache` dirs, `node_modules`, `dist` and `build` — it does **not** exclude
 > `.env`, `.env.local`, `.env.manaurum` or any other dotfile. A secret that lands in the tar is
 > downloadable by anyone who can call `fetch-source` for your tenant, and is permanently in the
 > git history even after the tarball is pruned. **Keep secrets out of the app directory
-> entirely** (put `.env.manaurum` in the parent dir or your shell profile), and ship a
-> `.dockerignore` as a second line of defence. Rotating the credential is the only remedy after
-> the fact.
+> entirely** (put `.env.manaurum` in the parent dir or your shell profile). A `.dockerignore`
+> is no defence on a platform deploy: the classic builder Core uses (`POST /build`,
+> `version=1`) does not apply it, and the tar is stored as uploaded. Rotating the credential
+> is the only remedy after the fact.
 
 ### Failures you'll actually hit (job `failed`, or after a green deploy)
 
@@ -411,6 +412,7 @@ version whose archive has aged out still has its files in the git history.
 | Job `failed`, `version_already_published: … already exists in the registry` | The image tag exists with no version record: a deleted app redeployed with an old label, or a push that completed but was never recorded. (A recorded version is refused by the POST.) | Bump `version`. |
 | Job `failed`, `docker build failed: …` (with `result.log_tail`) | The image build failed. | Read the tail — usually `COPY <src> not found` (path outside the tar root) or a failing `RUN`. |
 | Job `failed`, `deploy archive rejected (…)` | The archive is not gzip or plain tar, expands past 64 MiB, or holds more than 20,000 entries. | Use `tar cf` (or `czf`); exclude dependencies the Dockerfile installs anyway. |
+| Job `failed`, `build context failed validation (N finding(s))`, e.g. `file-too-large` | Only where the platform runs its build-context scan in `enforce` mode (`v2_build_scan_mode`; off by default, and `audit` only logs): a file over 32 MB, a base image not on the allow-list, or another finding the scan names. | Fix what the finding names; keep large data out of the image. |
 
 ### Who gets the app after a deploy
 

@@ -16,6 +16,23 @@ from typing import Any
 import httpx
 
 _TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+# Longer where Core itself waits longer upstream: 180 s for the AI providers
+# (`capabilities/ai.py`) and for `os.ocr.extract` (a vision-model call), up to
+# 30 s for `os.http.fetch` and `os.apps.call` (`timeout_ms`). A client that
+# gives up first turns a slow success into an error - and for a write, into
+# a retry that may write twice. Inside a browser's `/api/*` request the
+# gateway still answers 504 at 30 s; see capabilities-reference.md. Prefixes,
+# for the reason given below.
+_SLOW = (("os.ai.", 185.0), ("os.ocr.", 185.0), ("os.http.", 35.0),
+         ("os.apps.", 35.0))
+
+
+def timeout_for(name: str) -> httpx.Timeout:
+    """How long to wait for capability `name`."""
+    for prefix, seconds in _SLOW:
+        if name.startswith(prefix):
+            return httpx.Timeout(seconds, connect=5.0)
+    return _TIMEOUT
 
 # The manifest's `app_id`. The setup step's `sed` renames it with everything
 # else, and tests/test_manifest.py fails if the two ever disagree.
@@ -88,7 +105,7 @@ async def call_capability(
     if user_context:
         headers["X-Manaurum-User-Context"] = user_context
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=timeout_for(name)) as client:
             response = await client.post(
                 f"{base}/api/capability/{name}", json=payload, headers=headers,
             )

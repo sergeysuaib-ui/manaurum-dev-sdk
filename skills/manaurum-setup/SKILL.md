@@ -39,7 +39,7 @@ it and rename**, rather than assembling files from the snippets below:
 ```bash
 cp -r <plugin>/templates/v2-starter my-app && cd my-app
 grep -rl my-app . | xargs sed -i 's/my-app/<your-app-id>/g'   # app_id, title, docs
-pip install -r requirements.txt -r requirements-dev.txt && pytest   # 19 passed
+pip install -r requirements.txt -r requirements-dev.txt && pytest   # all pass, offline
 ```
 
 ```
@@ -66,7 +66,7 @@ my-app/
 ├── migrations/          ← Optional — plain *.sql only, run once per (app, tenant).
 │                           Not in the starter: a non-*.sql file here fails the
 │                           deploy, so there is no placeholder to hold it open.
-├── .dockerignore        ← Keeps .env* / .git / tests out of the build context
+├── .dockerignore        ← Local `docker build` only; a platform deploy ignores it
 ├── deploy.sh            ← Optional CLI helper (see /manaurum-deploy)
 └── .gitignore
 
@@ -145,10 +145,11 @@ appear in `runtime.api_routes`.
 Validation rules:
 
 - `app_id`: no regex in the schema, but it becomes your DNS label and your Postgres
-  schema/role name — keep it `^[a-z][a-z0-9-]*[a-z0-9]$` and under ~40 chars.
-  Becomes `<app_id>.apps.manaurum.com`.
+  schema/role name, and the deploy refuses anything but 3–40 chars of `a-z`, `0-9` and
+  `-`, starting with a letter and not ending with `-` (`422 app_id_invalid`), a UUID, or
+  a reserved name. Becomes `<app_id>.apps.manaurum.com`.
 - `version`: semver `MAJOR.MINOR.PATCH`. Bump on every redeploy.
-- `runtime.mode`: `hosted` for default; `byo` (you host elsewhere, platform proxies) and `dev` (in-browser editor) are advanced.
+- `runtime.mode`: `hosted`. `byo` (you host elsewhere, platform proxies) is advanced. `dev` belonged to the retired in-browser builder; do not use it.
 - `runtime.port`: the port your process actually listens on. The gateway resolves your
   container as `<swarm-service>:<port>`, using `runtime.port` if present and **80**
   otherwise. Nothing in the platform parses your Dockerfile's `EXPOSE` line. Set this
@@ -253,8 +254,8 @@ The irreducible minimum is:
 node_modules
 ```
 
-The CLI packager already drops `.git`, `node_modules`, `dist`, `build`, `__pycache__`
-and `.venv` from the deploy tarball — but **not** `.env*`, and the tarball is streamed
+The CLI packager already drops `.git`, `node_modules`, `dist`, `build`, `__pycache__`,
+`.venv`, `venv` and the `.*_cache` dirs from the deploy tarball — but **not** `.env*`, and the tarball is streamed
 straight into Docker's build endpoint, which does not apply `.dockerignore` server-side.
 So `.dockerignore` protects your **local** `docker build`, and the narrow `COPY src/`
 above is what protects the deployed image. Keep real secrets outside the app directory.
@@ -372,7 +373,7 @@ offline.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                          # 19 passed
+pytest                          # all pass, offline
 ```
 
 Then run the app itself:
