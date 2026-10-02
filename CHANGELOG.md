@@ -15,6 +15,10 @@ smaller ones was not, and one of them turned out to be wrong advice, not a stale
   Dockerfile's `COPY` list keep files out of the image. The starter's `.dockerignore` header,
   which said "anything listed here never reaches the builder", and its
   `requirements-dev.txt` say the same.
+* **The published CLI refuses `auth: "optional"`.** `cli-v0.3.0` was cut on 2026-09-02, a month
+  before MAN-3200; its schema allows `user` and `anonymous` only, so `app validate` and the
+  deploy preflight refuse a manifest 3.6.0 teaches. `v2-platform.md` says so and gives the way
+  round (`--skip-preflight` after `check_app.py`, or the API).
 * **Usage numbers exist** (audit С28). README's "No metrics" now describes
   `GET /api/app-usage/<uuid>` (MAN-3131: the platform's app UUID, a signed-in session) and
   says browser-error capture (MAN-3132) is for Aurum Studio apps only.

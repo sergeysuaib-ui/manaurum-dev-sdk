@@ -283,6 +283,8 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 { "path": "/api/room/*", "auth": "optional" }
 ```
 
+**The published CLI does not know this mode yet.** `cli-v0.3.0` (2026-09-03) was cut before MAN-3200, and its schema allows only `user` and `anonymous`: `manaurum app validate` and the preflight of `manaurum app deploy` refuse an `optional` route the server accepts. Deploy with `manaurum app deploy --skip-preflight` (run `python check_app.py` first, which knows the mode), or through the API as in `manaurum-deploy`.
+
 * **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`.
 * **Anyone else** arrives with neither header. That includes a member of another tenant: the gateway makes them look exactly like a guest, so the route cannot be used to find out who belongs where. There is no `401`.
 * **Verify the pass for your app.** Its `aud` is your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted for another app fails the audience check — unlike the `user_context`, whose audience is shared. `templates/v2-starter/src/auth.py` → `optional_person` returns `None` for a guest, the person for a member, and a `401` for a pass that is present but bad (an attack or a broken deploy — never treat it as a guest).
