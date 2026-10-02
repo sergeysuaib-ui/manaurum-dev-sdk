@@ -1148,6 +1148,46 @@ def no_workspace_id_in_the_token(repo: Path) -> None:
     append(repo, README, "The user_context token does not carry a workspace_id.")
 
 
+def an_error_code_core_does_not_write(repo: Path) -> None:
+    append(repo, README, "A second deploy of the slug answers `409 slug_gone_forever`.")
+
+
+def a_code_built_from_a_prefix(repo: Path) -> None:
+    # MUST STAY GREEN. Core writes it as f"{detail_prefix}_backslash".
+    append(repo, README, "A key with a backslash answers `400 invalid_file_key_backslash`.")
+
+
+def a_message_the_shell_does_not_know(repo: Path) -> None:
+    append(repo, README, "Post `manaurum:open-url` to open a link in a new tab.")
+
+
+def a_refused_v1_message_named(repo: Path) -> None:
+    # MUST STAY GREEN. A v1 verb the shell refuses for v2 is part of the story.
+    append(repo, README, "A v2 app that posts `manaurum:storage-get` gets an error back.")
+
+
+def a_protocol_message_the_reference_omits(repo: Path) -> None:
+    path = repo / "templates" / "platform-contract.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["messages"]["app_to_shell"].append("manaurum:clipboard-write")
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def a_second_code_in_a_status_row(repo: Path) -> None:
+    append(repo, README, "| Status | Code |\n|---|---|\n"
+                         "| 409 | `slug_reserved` / `slug_gone_forever` |")
+
+
+def a_provider_filled_code(repo: Path) -> None:
+    # MUST STAY GREEN. Core writes it as f"{provider}_upstream_error:{status}".
+    append(repo, README, "A provider failure answers `502 openai_upstream_error:429`.")
+
+
+def a_truncated_message_family(repo: Path) -> None:
+    # A fragment of a refused family is not a family.
+    append(repo, README, "Post `manaurum:st` to read storage.")
+
+
 REPO_MUTATIONS = [
     ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
     ("repo: a documented path that is not there", a_path_that_is_not_there,
@@ -1199,6 +1239,19 @@ REPO_MUTATIONS = [
      "no `RUNTIME_KEYS = {...}` to hold"),
     ("repo: no workspace_id in the token", no_workspace_id_in_the_token,
      "mints user_context with workspace_id"),
+    ("repo: an error code Core does not write", an_error_code_core_does_not_write,
+     "`slug_gone_forever` is not an error code Core writes"),
+    ("repo-green: a code built from a prefix", a_code_built_from_a_prefix, None),
+    ("repo: a message the shell does not know", a_message_the_shell_does_not_know,
+     "`manaurum:open-url` is not a message the shell handles"),
+    ("repo-green: a refused v1 message named", a_refused_v1_message_named, None),
+    ("repo: a protocol message the reference omits", a_protocol_message_the_reference_omits,
+     "`manaurum:clipboard-write` is part of the shell's protocol and described nowhere"),
+    ("repo: a second code in a status row", a_second_code_in_a_status_row,
+     "`slug_gone_forever` is not an error code Core writes"),
+    ("repo-green: a provider-filled code", a_provider_filled_code, None),
+    ("repo: a truncated message family", a_truncated_message_family,
+     "`manaurum:st` is not a message the shell handles"),
 ]
 
 

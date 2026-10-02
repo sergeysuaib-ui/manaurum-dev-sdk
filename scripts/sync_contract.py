@@ -3,8 +3,9 @@
 
 Every fact the 2026-10-02 audit found stale had the same history: Core
 changed, and nothing here noticed, because nothing here held a copy of what
-Core says. `templates/manifest_v2.schema.json` and
-`templates/platform-contract.json` are that copy. `check_app.py` reads them
+Core says. `templates/manifest_v2.schema.json`,
+`templates/platform-contract.json` and `scripts/platform-strings.json` are
+that copy. `check_app.py` reads them
 instead of keeping its own lists, and `scripts/check_repo.py` holds the
 documents to them. This script is how they are refreshed: from a Manaurum
 monorepo checkout, at a ref you name, read-only (`git show`, no checkout).
@@ -21,6 +22,7 @@ why its output is committed and carries the SHA it came from.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -30,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_OUT = ROOT / "templates" / "manifest_v2.schema.json"
 CONTRACT_OUT = ROOT / "templates" / "platform-contract.json"
+STRINGS_OUT = ROOT / "scripts" / "platform-strings.json"
 
 SCHEMA_SRC = "backend/app/services/_schemas/manifest_v2.schema.json"
 CAPABILITIES_DIR = "backend/app/services/capabilities/"
@@ -37,6 +40,18 @@ RESERVED_SRC = "backend/app/services/v2_apps/reserved_slugs.py"
 SLUG_SRC = "backend/app/services/v2_apps/traefik_yaml.py"
 VALIDATOR_SRC = "backend/app/services/manifest_v2_validator.py"
 TOOLS_SRC = "backend/app/agent/sdk_capability_tools.py"
+SHELL_POLICY_SRC = "frontend/src/components/window/iframeHostPolicy.ts"
+SHELL_HOST_SRC = "frontend/src/components/window/IframeAppHost.tsx"
+SESSION_SRC = "backend/app/services/v2_apps/session_runtime.js"
+# Where the error codes a v2 developer meets are written: the gateways, the
+# deploy and credential routes, the capability handlers, the Assistant's
+# dispatch. Every string literal in them, docstrings aside, is kept - a code
+# is often built (`f"{prefix}_leading_slash"`) or returned from a helper,
+# so "the strings after detail=" would miss real ones.
+STRING_DIRS = ["backend/app/routes/", "backend/app/auth/", "backend/app/services/v2_apps/",
+               "backend/app/services/capabilities/", "backend/app/services/builtin_rpc/",
+               "backend/app/services/app_studio/", "backend/app/agent/"]
+CODE_TOKEN = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 
 
 def git(monorepo: Path, *args: str) -> str:
@@ -87,6 +102,80 @@ def tool_name_prefix(text: str) -> str:
     return match.group(1)
 
 
+def shell_messages(policy: str, host: str, session: str) -> dict:
+    """The window protocol: what a v2 app may post, what the shell posts back."""
+    allowed = re.search(r"V2_ALLOWED_MESSAGES[^=]*=\s*new Set\(\[(.*?)\]\)", policy, re.S)
+    rejected = re.search(r"V2_REJECTED_MESSAGE_PREFIXES[^=]*=\s*\[(.*?)\];", policy, re.S)
+    if not allowed or not rejected:
+        raise SystemExit("V2_ALLOWED_MESSAGES / V2_REJECTED_MESSAGE_PREFIXES not found in %s"
+                         % SHELL_POLICY_SRC)
+    to_app = set(re.findall(r"type: '(manaurum:[a-z-]+)'", host))
+    to_app |= set(re.findall(r"postToIframe\('(manaurum:[a-z-]+)'", host))
+    if "manaurum:init" not in to_app:
+        raise SystemExit("manaurum:init not found in %s - the layout changed; fix "
+                         "shell_messages()" % SHELL_HOST_SRC)
+    return {
+        "app_to_shell": sorted(set(re.findall(r"'(manaurum:[a-z-]+)'", allowed.group(1)))),
+        "shell_to_app": sorted(to_app),
+        "rejected_prefixes": sorted(set(re.findall(r"'(manaurum:[a-z-]+)'",
+                                                   rejected.group(1)))),
+        "session": sorted(set(re.findall(r"['\"](manaurum:session-[a-z-]+)['\"]", session))),
+    }
+
+
+def platform_strings(monorepo: Path, ref: str) -> dict:
+    """Every snake_case word in a string literal under STRING_DIRS.
+
+    `check_repo.py` refuses a documented error code that is not in here: a
+    code Core no longer writes anywhere is a code no developer will see.
+    `suffixes` are the literal tails of the f-strings an error is made of -
+    a `detail=`, an `"error"`/`"code"` value, an `HTTPException` argument
+    (`f"{prefix}_backslash"`) - so a code built from a prefix still counts
+    as written. Tails of other f-strings (SQL, index names) would let
+    almost any `<word>_<tail>` pass, so they are not collected.
+    """
+    strings, suffixes = set(), set()
+
+    def tails(joined) -> None:
+        for before, part in zip(joined.values, joined.values[1:]):
+            if isinstance(before, ast.FormattedValue) and \
+                    isinstance(part, ast.Constant) and isinstance(part.value, str):
+                tail = re.match(r"_[a-z0-9_]+", part.value)
+                if tail:
+                    suffixes.add(tail.group(0))
+
+    files = [f for d in STRING_DIRS
+             for f in git(monorepo, "ls-tree", "-r", "--name-only", ref, d).split()
+             if f.endswith(".py")]
+    for path in files:
+        try:
+            tree = ast.parse(show(monorepo, ref, path))
+        except SyntaxError:
+            continue
+        docstrings = {id(node.value) for node in ast.walk(tree)
+                      if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                    and id(node) not in docstrings:
+                strings.update(CODE_TOKEN.findall(node.value))
+            elif isinstance(node, ast.keyword) and node.arg in ("detail", "error", "code") \
+                    and isinstance(node.value, ast.JoinedStr):
+                tails(node.value)
+            elif isinstance(node, ast.Dict):
+                for key, value in zip(node.keys, node.values):
+                    if isinstance(key, ast.Constant) and key.value in ("error", "code", "detail") \
+                            and isinstance(value, ast.JoinedStr):
+                        tails(value)
+            elif isinstance(node, ast.Call) and getattr(node.func, "id", "") == "HTTPException":
+                for arg in node.args:
+                    if isinstance(arg, ast.JoinedStr):
+                        tails(arg)
+    if len(strings) < 1000:
+        raise SystemExit("found only %d strings under %s - the layout changed"
+                         % (len(strings), ", ".join(STRING_DIRS)))
+    return {"suffixes": sorted(suffixes), "strings": sorted(strings)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--monorepo", required=True, type=Path)
@@ -111,15 +200,28 @@ def main() -> int:
             "separator": "__",
             "max_length": 64,
         },
+        "messages": shell_messages(show(args.monorepo, args.ref, SHELL_POLICY_SRC),
+                                   show(args.monorepo, args.ref, SHELL_HOST_SRC),
+                                   show(args.monorepo, args.ref, SESSION_SRC)),
+    }
+    strings = {
+        "_comment": "Generated by scripts/sync_contract.py: every snake_case word in a "
+                    "string literal of the Core code a v2 developer's errors come from. "
+                    "check_repo.py refuses a documented error code that is not here.",
+        "source": {"ref": args.ref, "sha": sha, "date": date},
+        **platform_strings(args.monorepo, args.ref),
     }
 
     SCHEMA_OUT.write_text(schema_text, encoding="utf-8", newline="\n")
     CONTRACT_OUT.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8",
                             newline="\n")
-    print("wrote %s and %s from %s @ %s (%s): %d capabilities"
+    STRINGS_OUT.write_text(json.dumps(strings, indent=0) + "\n", encoding="utf-8",
+                           newline="\n")
+    print("wrote %s, %s and %s from %s @ %s (%s): %d capabilities, %d strings"
           % (SCHEMA_OUT.relative_to(ROOT).as_posix(),
-             CONTRACT_OUT.relative_to(ROOT).as_posix(), args.ref, sha[:9], date,
-             len(contract["capabilities"])))
+             CONTRACT_OUT.relative_to(ROOT).as_posix(),
+             STRINGS_OUT.relative_to(ROOT).as_posix(), args.ref, sha[:9], date,
+             len(contract["capabilities"]), len(strings["strings"])))
     return 0
 
 
