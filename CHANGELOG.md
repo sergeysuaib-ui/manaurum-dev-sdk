@@ -1,3 +1,25 @@
+# 3.11.0 - document the code in the edit that writes it, and the starter checks it
+
+Summary: Apps built with the SDK now explain their own code as they are written, and the starter's tests fail if a function is left unexplained.
+
+### Why
+
+roiduani proposed this in PR #18 (2.9.0), which sat unmerged while the skill moved on. An
+app nobody can safely change is a cost the first author never sees: the docstring written
+after the app works records the signature, not what a `None` meant.
+
+### What changed
+
+* **`manaurum-app` Step 3**, "Document it in the same edit that writes it": Google-style
+  docstrings and JSDoc, spent on what the signature cannot say; never anchor a test on
+  comment text. (Shortened from PR #18; it does not take the Step 3.5 number, which is the
+  UI check now.)
+* **`templates/v2-starter/tests/test_documented.py`** (from PR #18): an `ast` walk that
+  fails on any undocumented module, function or class under `src/`. The five starter
+  functions that had none now do (`_ok`, `_fail`, `save_my_note`, `read_note`,
+  `write_note`); `_fail` says why it cuts at 300 characters (Core passes the model no more,
+  `v2_capability_dispatch.py`).
+
 # 3.10.0 - every capability's documented input, checked against its schema
 
 Summary: The SDK's own checks now also catch a capability documented with the wrong input fields, before an app built from it fails.

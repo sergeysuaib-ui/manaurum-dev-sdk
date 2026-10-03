@@ -48,10 +48,17 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 def _ok(output) -> dict:
+    """The answer to a call that worked: the Assistant reads `output`."""
     return {"ok": True, "output": output}
 
 
 def _fail(error: str) -> dict:
+    """The answer to a call that did not work, as a failed tool call.
+
+    Core passes the model only the first 300 characters of `error`
+    (`v2_capability_dispatch.py`), so cut here too: what the tests see is
+    what the model gets. Put what the model must act on first.
+    """
     return {"ok": False, "error": error[:300]}
 
 
@@ -85,6 +92,12 @@ async def save_my_note(
     data: SaveNoteInput,
     claims: UserContextClaims = Depends(auth_claims),
 ) -> dict:
+    """Overwrite the caller's note with `data.text`; returns what was stored.
+
+    Whose note comes from the JWT, as in `read_my_note`. The write is a
+    plain overwrite, so a retry after the Assistant's 30 s timeout stores
+    the same text again rather than a second copy.
+    """
     try:
         return _ok({"text": await write_note(claims.user_id, data.text)})
     except CapabilityError as exc:

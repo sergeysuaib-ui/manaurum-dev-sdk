@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.10.0.** A plugin install caches one directory per
+> **This page is SDK 3.11.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -476,6 +476,19 @@ Capabilities available today:
 
 `os.apps.bulk_export` is registered but has no dataset, so it answers `404` to everything.
 See `references/capabilities-reference.md` for input/output schemas, error codes, and limits.
+
+### Document it in the same edit that writes it
+
+Not a pass at the end: by then nobody remembers which `None` meant "absent" and which
+meant "we don't know", and the docstring records the signature instead of the contract.
+Python takes a Google-style docstring (summary line, the *why*, then only the `Args:` /
+`Returns:` / `Raises:` that carry information); browser JS takes JSDoc. Spend the words
+on what a reader cannot see — units, what an empty return means, which failure is normal,
+what a caller must not do. `item_id: The item id` is noise; a function with nothing
+non-obvious to say gets one summary line. The starter's `tests/test_documented.py` fails
+on any undocumented module, function or class under `src/`: keep it. And never anchor a
+test on comment or docstring text — slice on a declaration instead, or improving a
+sentence breaks the suite.
 
 ## Step 3.5 — Check the UI before you deploy it (MANDATORY)
 

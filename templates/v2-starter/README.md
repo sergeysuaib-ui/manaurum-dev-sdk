@@ -36,7 +36,8 @@ my-app/
     ├── conftest.py      # the user_context JWT fixture + a fake os.kv
     ├── test_auth.py     # the verifier, incl. every way it can be wrong
     ├── test_agent.py    # the handlers: identity comes from claims, never the body
-    └── test_routes.py   # the wiring: real HTTP, so an open route fails a test
+    ├── test_routes.py   # the wiring: real HTTP, so an open route fails a test
+    └── test_documented.py  # every module, function and class has a docstring
 ```
 
 There is no `migrations/` directory: this starter persists through `os.kv`
