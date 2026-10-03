@@ -562,6 +562,101 @@ def a_manifest_that_does_not_parse(app: Path) -> None:
     path.write_text(path.read_text(encoding="utf-8") + "\n,", encoding="utf-8")
 
 
+# ── The Postgres recipe's rules (3.13.0, from PR #27) ───────────────────────
+
+RECIPE = ROOT / "templates" / "recipes" / "postgres"
+
+
+def a_generated_column_on_array_to_string(app: Path) -> None:
+    # The obvious way to index tags, and Postgres refuses it at apply time,
+    # per tenant, after the deploy's validator has passed the file.
+    a_migration(app, (
+        "CREATE TABLE doc (id text primary key, tags text[] NOT NULL DEFAULT '{}',\n"
+        "  search tsvector GENERATED ALWAYS AS (\n"
+        "    to_tsvector('english', array_to_string(tags, ' '))) STORED);\n"))
+
+
+def a_generated_column_without_a_configuration(app: Path) -> None:
+    # One argument reads default_text_search_config, so it is STABLE. Judged
+    # with the deploy's validator importable too: this rule is not one the
+    # validator makes, so deferring to it must not switch this one off.
+    a_migration(app, (
+        "CREATE TABLE doc (id text primary key, title text);\n"
+        "ALTER TABLE doc ADD COLUMN search tsvector\n"
+        "  GENERATED ALWAYS AS (to_tsvector(coalesce(title, ''))) STORED;\n"))
+
+
+def a_generated_column_with_a_configuration_column(app: Path) -> None:
+    # MUST STAY GREEN. Two arguments is the IMMUTABLE form, whatever the
+    # first one is - a regconfig column included. A rule that only looked for
+    # a quote after the bracket went red here.
+    a_migration(app, (
+        "CREATE TABLE doc (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n"
+        "  lang regconfig NOT NULL DEFAULT 'english', body text,\n"
+        "  search tsvector GENERATED ALWAYS AS (\n"
+        "    to_tsvector(lang, coalesce(body, ''))) STORED);\n"))
+
+
+def the_postgres_recipe_copied_in(app: Path) -> None:
+    # MUST STAY GREEN. What the skill tells an agent to copy: the recipe's
+    # db.py, search.py and migrations, in an app that dropped the starter's
+    # `"data": {"none": true}`. Holds the recipe to the linter it ships with.
+    patch_manifest(app, lambda data: data.pop("data"))
+    shutil.copy(RECIPE / "db.py", app / "src" / "db.py")
+    shutil.copy(RECIPE / "search.py", app / "src" / "search.py")
+    shutil.copytree(RECIPE / "migrations", app / "migrations")
+
+
+SET_IN_INIT = '''"""Database pool."""
+import os
+
+import asyncpg
+
+_pool = None
+
+
+async def _on_connect(conn):
+    await conn.execute(f'SET search_path TO "{os.environ["MANAURUM_TARGET_SCHEMA"]}", public')
+
+
+async def get_pool():
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(os.environ["DATABASE_URL"], init=_on_connect)
+    return _pool
+'''
+
+
+def search_path_set_in_pool_init(app: Path) -> None:
+    patch_manifest(app, lambda data: data.pop("data"))
+    (app / "src" / "db.py").write_text(SET_IN_INIT, encoding="utf-8")
+
+
+def search_path_set_in_pool_setup(app: Path) -> None:
+    # MUST STAY GREEN. MAN-1443's fix in libi and family-space-v2: codecs in
+    # init=, the SET in setup=, which runs on every acquire. `init=` and
+    # `SET search_path` in one file is not the bug; the SET inside init is.
+    patch_manifest(app, lambda data: data.pop("data"))
+    (app / "src" / "db.py").write_text(
+        SET_IN_INIT.replace(
+            "    await conn.execute(f'SET search_path",
+            "    await conn.set_type_codec('jsonb', encoder=str, decoder=str,\n"
+            "                              schema='pg_catalog')\n\n\n"
+            "async def _on_acquire(conn):\n"
+            "    await conn.execute(f'SET search_path").replace(
+            "init=_on_connect)",
+            "init=_on_connect,\n"
+            "                                         setup=_on_acquire)"),
+        encoding="utf-8")
+
+
+def database_url_with_no_database(app: Path) -> None:
+    # The starter's manifest says `"data": {"none": true}`; the app grew a
+    # database anyway. Deploys green, and the first query has no DSN.
+    (app / "src" / "db.py").write_text(SET_IN_INIT.replace(
+        "init=_on_connect", "server_settings={'search_path': 'x'}"), encoding="utf-8")
+
+
 APP_MUTATIONS = [
     ("routes: a path the manifest does not declare", undeclared_route,
      "no runtime.api_routes rule covers it"),
@@ -698,6 +793,21 @@ APP_MUTATIONS = [
      "share the number 1"),
     ("manifest: manifest.json does not parse", a_manifest_that_does_not_parse,
      "manifest.json: does not parse"),
+    ("migrations: a generated column on array_to_string()",
+     a_generated_column_on_array_to_string, "uses array_to_string()"),
+    ("migrations: a generated to_tsvector() without a configuration",
+     a_generated_column_without_a_configuration, "to_tsvector() without a configuration",
+     True),
+    ("migrations: a generated to_tsvector(lang, ...) stays green",
+     a_generated_column_with_a_configuration_column, None),
+    ("postgres: the recipe copied into the starter stays green",
+     the_postgres_recipe_copied_in, None),
+    ("postgres: SET search_path in create_pool(init=...)", search_path_set_in_pool_init,
+     "src/db.py:16: SET search_path inside create_pool(init=...)"),
+    ("postgres: SET search_path in create_pool(setup=...) stays green",
+     search_path_set_in_pool_setup, None),
+    ("data: DATABASE_URL under data.none", database_url_with_no_database,
+     "src/db.py: reads DATABASE_URL"),
 ]
 
 

@@ -1,3 +1,47 @@
+# 3.13.0 - a database template that lasts past one request, and search that answers
+
+Summary: Apps that keep their data in a database get a ready-made, tested starting point, including a search box that finds something when a question is phrased loosely.
+
+### Why
+
+PR #27 (2.12.0) carried a Postgres recipe and three linter rules for it, and sat unmerged
+and conflicting while main moved on to 3.12.0. This ports that part of it - the recipe,
+its CI job, the rules and the two reference sections - onto the current tree, with every
+platform fact re-checked against Core main. The rest of PR #27 (screen kinds, the
+patterns page, the design review, preview's first-screen meter) is not in this release.
+
+The bug the recipe exists for is asyncpg's, not the platform's: the pool runs `RESET ALL`
+on every connection it takes back, so a `SET search_path` in `init=` lasts one request.
+On the platform the role's default search_path hides it; on any other Postgres the app
+fails with `relation ... does not exist` on the second request. Several first-party apps
+shipped it until MAN-1443.
+
+### What changed
+
+* **`templates/recipes/postgres/`** (from PR #27): `db.py` puts `search_path` in
+  `server_settings`, which survives the reset, with the platform's own value (the schema,
+  one `ext_<name>` per granted extension, `pg_temp`) and the first-use pool and timeouts
+  `v2-platform.md` already teaches. `search.py` runs full-text search strictly, then
+  relaxed (`or`) when that finds nothing, says which one answered, and HTML-escapes the
+  `ts_headline` snippet before marking it. Three migrations: the table, a weighted
+  generated `tsvector` column, and its GIN index built `CONCURRENTLY` in a file of its own.
+  The pytest suite runs against a real Postgres and includes the broken `init=` pool.
+* **CI**: a `postgres recipe` job runs that suite against `postgres:16-alpine` and fails
+  if it would only skip. The tools job byte-compiles `templates/recipes/` too.
+* **`check_app.py`**: three rules from PR #27, rewritten on main's SQL lexer - a session
+  `SET` inside an asyncpg `create_pool(init=...)` (not when `setup=` or `server_settings`
+  re-applies that setting), code reading `DATABASE_URL` under `"data": {"none": true}`,
+  and a generated column on a function Postgres refuses there (`array_to_string`,
+  `concat`, one-argument `to_tsvector`, clock and random functions). The last one runs
+  whether or not the deploy's validator is importable, because the validator does not
+  judge volatility. PR #27's own CONCURRENTLY, 64 KB and SQL-reader changes are not
+  ported: main's versions supersede them.
+* **`linter_mutations.py`**: a red case and a must-stay-green case for each rule,
+  including the whole recipe copied into the starter.
+* **`v2-platform.md`** section 7: "Connecting from the container" and "Full-text search";
+  the role's search_path is stated as Core sets it. **SKILL.md** points to the recipe and
+  lists the new rules in Step 3.6 and "What NOT to do". README lists the recipe.
+
 # 3.12.0 - the plugin installs in Codex too (MAN-1439)
 
 Summary: The ManAurum SDK can now also be installed in Codex / ChatGPT, using the same skills and templates as Claude Code.

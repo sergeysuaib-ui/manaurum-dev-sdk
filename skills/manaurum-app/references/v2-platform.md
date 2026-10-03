@@ -534,7 +534,7 @@ It runs the exact same validator the deploy pipeline runs, file by file in the s
 
 At runtime your container reads `DATABASE_URL` — a per-(app, tenant) `appusr_*` **login** role, `NOSUPERUSER NOBYPASSRLS`, granted `USAGE` on exactly one schema plus `SELECT/INSERT/UPDATE/DELETE` on its objects. It holds **no `CREATE`**, so runtime DDL is impossible: a `CREATE TABLE IF NOT EXISTS` on boot — a common framework default — dies with `permission denied for schema app_<slug>__<hex>`. Schema changes happen only through `migrations/*.sql`.
 
-The role's `search_path` is locked to your schema, so write plain unqualified SQL. Your schema is already per-tenant, so there is no `tenant_id` column to filter on and no RLS to satisfy.
+The role's default `search_path` is your schema, then one `ext_<name>` schema per granted extension, then `pg_temp` — no `public` — so write plain unqualified SQL. Your schema is already per-tenant, so there is no `tenant_id` column to filter on and no RLS to satisfy.
 
 **Sequences: your container can draw from them, not move them.** The runtime role holds `USAGE, SELECT` on sequences — enough for `nextval`, not for `setval` or `ALTER SEQUENCE … RESTART`. That bites when you bring rows over with their original ids, moving an app here from somewhere else: the inserts succeed, the sequence is still at 1, and the next ordinary insert collides with an imported id. The migrator role created the sequence, so it owns it, and the realignment belongs in a migration that runs after the import:
 
@@ -578,6 +578,47 @@ Two shapes look careful and are not:
 - **Connect once in `lifespan` and let the process crash.** Swarm restarts it every few seconds, so it does come back. Until then, though, the UI, `/healthz` and every route are down too, not only the ones that need data. The operator sees a crash loop rather than its cause.
 
 The same goes for anything else you fetch once at boot from Core, such as a secret from `os.secrets.get`. Core can be down while you start too. Fetch it when you first need it, and fetch it again if you do not have it yet.
+
+### Connecting from the container
+
+Copy `templates/recipes/postgres/db.py`. It is the pool above plus the one decision that apps keep getting wrong:
+
+```python
+_pool = await asyncpg.create_pool(
+    dsn=os.environ["DATABASE_URL"],
+    min_size=1, max_size=8, timeout=10, command_timeout=25,
+    server_settings={
+        "search_path": search_path(schema),   # '"app_…", pg_temp' - survives RESET ALL
+        "statement_timeout": "25s",
+    },
+    init=configure_connection,                # json/jsonb codecs only
+)
+```
+
+**Why `search_path` is a connection parameter and not a `SET`.** asyncpg's pool runs `RESET ALL` on every connection it takes back — that is asyncpg's behaviour (`Connection.get_reset_query()`), not the platform's. `init=` runs once, when a connection is created, so anything it `SET`s is gone after the first release and the session falls back to the *role's* default. A pool that does `SET search_path` in `init=` answers the first request on a fresh connection and can fail the next one with `relation "…" does not exist`.
+
+On the platform this usually hides, because the role's default `search_path` is already your schema and the reset lands back on it. On a plain local Postgres the default is `"$user", public`, so the bug fires exactly where you run the app by hand, and reads as "the platform is broken". Several first-party apps shipped it until MAN-1443 moved them to `setup=`, which runs a `SET` on every acquire and pays a round trip per request. A value in `server_settings` costs nothing: it travels in the connection's startup packet, and `RESET ALL` restores it instead of removing it. `check_app.py` fails on a session `SET` inside `init=`.
+
+**The value is the platform's own:** your schema, one `ext_<name>` schema per granted extension in `data.extensions` (only `vector` and `pg_trgm` exist), then `pg_temp`. Because `server_settings` *replaces* the role's default, an extension you use must be in the recipe's `EXTENSIONS` tuple, or its types stop resolving. Naming one that is not granted yet costs nothing — Postgres skips a schema the role cannot use. `public` is not on the path, and nothing an app needs lives there: `gen_random_uuid()` and the text search configurations are in `pg_catalog`, which Postgres always searches.
+
+Type codecs are not session state — they live in the asyncpg connection object — so `init=` is the right place for them. The recipe's tests (`templates/recipes/postgres/tests/`) run against a real Postgres and include the failing `init=` version, so the lesson cannot quietly rot. Point them at any local server:
+
+```bash
+pip install -r templates/recipes/postgres/requirements-test.txt
+MANAURUM_TEST_PG_DSN=postgresql://postgres:postgres@localhost:5432/postgres \
+  pytest templates/recipes/postgres
+```
+
+### Full-text search
+
+A content app needs search on its second day, and the obvious query makes the app look broken: `websearch_to_tsquery` joins words with AND, so a question typed the way people type — "why do clients leave after the first month" — needs every content word in one document and returns nothing. The recipe (`templates/recipes/postgres/search.py` and its `migrations/`) is Postgres built-ins only — no extension to request — and does four things:
+
+1. **A generated, weighted `tsvector` column.** `setweight(…, 'A')` for the title, `'B'` for tags, `'D'` for the body, so a title hit ranks first. A generated column accepts only IMMUTABLE functions, and two that look harmless are not: `array_to_string()` is STABLE (wrap it in a one-line `LANGUAGE sql IMMUTABLE` function — honest for `text[]`), and so is the one-argument `to_tsvector(text)`, which reads `default_text_search_config` (write `to_tsvector('russian', …)`). Postgres refuses both with `generation expression is not immutable`; the deploy's validator does not look, so `check_app.py` does.
+2. **A GIN index.** In the same file as `CREATE TABLE`, a plain `CREATE INDEX … USING gin`. On a table an earlier migration created, `CREATE INDEX CONCURRENTLY` in a file of its own (above).
+3. **Strict, then relaxed.** The query as typed first. If it finds nothing, the same words joined with `or` — still `websearch_to_tsquery`, which never raises on odd input — ranked by `ts_rank_cd`, so documents matching more of the words come first. The response says which one answered (`mode`), and the screen should too: "no post has all of these words — these have some of them". Paging passes the mode back, so page two answers page one's question.
+4. **A snippet that is safe to insert.** `ts_headline` returns the document's own text with markers around the hits, and that text came from people. It is not a sanitiser: it drops what its parser takes for a whole tag and passes a fragment like `<img src=x onerror=alert` straight through. The recipe uses control characters as markers, HTML-escapes the snippet, and only then turns the markers into `<mark>` — and runs `ts_headline` on the returned page only, because it re-parses every document it is given.
+
+`russian`, `english` and `simple` are built into Postgres and live in `pg_catalog`. The configuration in the query must be the one the column was built with, or query words are stemmed differently from indexed ones. Adding a `STORED` column to an existing table rewrites it under a lock, inside the migration's 30 s statement timeout — fine for thousands of rows, worth a thought for millions.
 
 ### `migrate_command` does nothing
 
