@@ -62,7 +62,7 @@ my-app/
 │                           empty states, skeletons, mobile. Restyle by
 │                           changing values at the top, not by starting over.
 ├── tests/               ← conftest mints user_context JWTs offline
-│   ├── conftest.py  test_auth.py  test_agent.py  test_routes.py
+│   ├── conftest.py  test_auth.py  test_agent.py  test_routes.py  test_documented.py ...
 ├── migrations/          ← Optional — plain *.sql only, run once per (app, tenant).
 │                           Not in the starter: a non-*.sql file here fails the
 │                           deploy, so there is no placeholder to hold it open.
@@ -415,7 +415,9 @@ the only test that covers the shell contract.
 
 ### After scaffolding
 
-1. Build your app (any language, any framework — anything Docker can build).
+1. Build your app (any language, any framework — anything Docker can build), and
+   document each function in the edit that writes it: `tests/test_documented.py`
+   fails on anything undocumented under `src/` (`manaurum-app` → Step 3).
 2. Deploy with `/manaurum-deploy`. The deploy endpoint is **asynchronous** — it returns a
    job id, not a result; poll until `succeeded` or `failed`.
 3. Hit `https://<slug>.apps.manaurum.com` **and** open the app as a desktop window.

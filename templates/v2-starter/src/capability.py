@@ -138,8 +138,9 @@ async def read_note(user_id: str) -> str:
 async def write_note(user_id: str, text: str) -> str:
     """Store `text` as the user's note, cut to 10,000 characters; returns it.
 
-    The cut matches `SaveNoteInput` and the manifest's schema, so a caller
-    that skipped validation cannot store more than the UI would.
+    The 10,000 is what `SaveNoteInput` enforces and the manifest's tool
+    description states. `PUT /api/notes` checks no length, so on the UI's
+    path this cut is the only cap.
     """
     text = text[:10_000]
     await call_capability(

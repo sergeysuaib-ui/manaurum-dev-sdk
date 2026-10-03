@@ -55,8 +55,9 @@ def _ok(output) -> dict:
 def _fail(error: str) -> dict:
     """The answer to a call that did not work, as a failed tool call.
 
-    Core passes the model only the first 300 characters of `error`, so
-    the cut here keeps the end of the message from being lost silently.
+    Core passes the model only the first 300 characters of `error`
+    (`v2_capability_dispatch.py`), so cut here too: what the tests see is
+    what the model gets. Put what the model must act on first.
     """
     return {"ok": False, "error": error[:300]}
 
