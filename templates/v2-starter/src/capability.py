@@ -129,12 +129,18 @@ def note_key(user_id: str) -> str:
 
 
 async def read_note(user_id: str) -> str:
+    """The user's note, or "" if they never saved one (os.kv answers null)."""
     output = await call_capability("os.kv.get", {"key": note_key(user_id)})
     value = output.get("value") if isinstance(output, dict) else None
     return value.get("text", "") if isinstance(value, dict) else ""
 
 
 async def write_note(user_id: str, text: str) -> str:
+    """Store `text` as the user's note, cut to 10,000 characters; returns it.
+
+    The cut matches `SaveNoteInput` and the manifest's schema, so a caller
+    that skipped validation cannot store more than the UI would.
+    """
     text = text[:10_000]
     await call_capability(
         "os.kv.set", {"key": note_key(user_id), "value": {"text": text}}
