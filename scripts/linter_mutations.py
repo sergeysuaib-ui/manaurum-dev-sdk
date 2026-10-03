@@ -1222,6 +1222,22 @@ def core_makes_a_field_required(repo: Path) -> None:
     edit_inputs(repo, lambda inputs: inputs["os.ai.complete"]["required"].append("temperature"))
 
 
+def newest_summary(repo: Path, change) -> None:
+    path = repo / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    start = text.index("\nSummary:")
+    end = text.index("\n", start + 1)
+    path.write_text(text[:start] + change(text[start:end]) + text[end:], encoding="utf-8")
+
+
+def a_release_without_a_summary(repo: Path) -> None:
+    newest_summary(repo, lambda line: "")
+
+
+def a_summary_that_is_a_paragraph(repo: Path) -> None:
+    newest_summary(repo, lambda line: line + " And then" * 40 + ".")
+
+
 REPO_MUTATIONS = [
     ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
     ("repo: a documented path that is not there", a_path_that_is_not_there,
@@ -1299,6 +1315,10 @@ REPO_MUTATIONS = [
      "the os.ai.complete example leaves out `provider`"),
     ("repo: Core makes an input field optional", core_makes_a_field_optional,
      "calls `value` required; its input schema does not require it"),
+    ("repo: a release without a Summary line", a_release_without_a_summary,
+     "has no `Summary:` line"),
+    ("repo: a Summary that is a paragraph", a_summary_that_is_a_paragraph,
+     "keep it to one sentence"),
 ]
 
 

@@ -1,5 +1,7 @@
 # 3.10.0 - every capability's documented input, checked against its schema
 
+Summary: The SDK's own checks now also catch a capability documented with the wrong input fields, before an app built from it fails.
+
 ### Why
 
 The worst findings of the audit were inputs: `os.files.upload` without its required
@@ -470,6 +472,8 @@ context. It requires one for `os.drive.*` and `os.calendar.*`, and
   wording and the linters' other gaps go in their own releases.
 
 # 3.1.0 - what the first app ported to v2 found missing (Planning Poker)
+
+Summary: Fewer false alarms when checking your app, and app settings are found again.
 
 ### Why
 
