@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr" data-languages="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -26,6 +26,12 @@
 
     python templates/preview.py --app templates
     http://127.0.0.1:8765/__shell?entry=/patterns/index.html%23library
+
+  It is written in English only, and says so on <html> with
+  data-languages="en": its sample text has no Russian or Hebrew, and English
+  laid out right to left is wrong for a reader and for a screen reader alike.
+  An app in three languages follows the starter instead. To see these shapes
+  mirrored, copy one into the starter and open it with ?locale=he.
 
   The <head> script is the starter's, shortened: handshake, appearance,
   device, and the check that the message came from the shell (MAN-2506). A
@@ -168,7 +174,7 @@
         <!-- The way back sits in the text column, not at the window edge:
              on a wide window the two would be a screen apart. -->
         <div class="toolbar">
-          <a class="btn btn-ghost" href="#library">&larr; All posts</a>
+          <a class="btn btn-ghost" href="#library"><span class="flip-rtl" aria-hidden="true">&larr;</span> All posts</a>
         </div>
         <h1 class="article-title">Why clients leave after the first month, and the one reason we can fix</h1>
         <p class="article-meta"><span>12 March 2026</span><span>Customers</span><span>4 min read</span></p>

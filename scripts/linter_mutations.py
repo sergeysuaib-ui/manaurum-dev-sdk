@@ -1054,6 +1054,154 @@ def html_replace_all(app: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8")
 
 
+# ── The person's language (3.16.0) ──────────────────────────────────────────
+
+
+def the_shell_language_never_applied(app: Path) -> None:
+    # The function stays, the message branches stay; nothing calls it. The
+    # standalone guess from navigator.languages still writes lang and dir,
+    # which is exactly why the rule cannot be "is lang written somewhere".
+    html_edit(app, "        applyShellLocale(payload);\n", "")
+    html_edit(app, "if (applyShellLocale(payload)) window.dispatchEvent",
+              "if (true) window.dispatchEvent")
+
+
+def only_the_lang_applied(app: Path) -> None:
+    # The locale reaches <html lang>, the direction never does: a Hebrew
+    # screen laid out left to right.
+    html_edit(app, "      root.lang = locale;\n      root.dir = dir;\n",
+              "      root.lang = locale;\n")
+
+
+def no_live_language_switch(app: Path) -> None:
+    # Applied on init, and a switch while the window is open never heard.
+    html_edit(app, "data.type === 'manaurum:locale-change'",
+              "data.type === 'manaurum:language'")
+
+
+def the_language_destructured(app: Path) -> None:
+    # MUST STAY GREEN. Read off the payload by destructuring, then written.
+    path = app / "src" / "static" / "index.html"
+    text = path.read_text(encoding="utf-8")
+    text, n = re.subn(r"function applyShellLocale\(payload\) \{.*?\n    \}",
+                      "function applyShellLocale(payload) {\n"
+                      "      const { locale, dir } = payload;\n"
+                      "      if (!LOCALE_DIR.hasOwnProperty(locale)) return false;\n"
+                      "      root.lang = locale;\n"
+                      "      root.dir = dir || LOCALE_DIR[locale];\n"
+                      "      window.__manaurum.locale = locale;\n"
+                      "      window.__manaurum.dir = root.dir;\n"
+                      "      return true;\n"
+                      "    }", text, count=1, flags=re.S)
+    if not n:
+        raise AssertionError("anchor not found in index.html: function applyShellLocale")
+    path.write_text(text, encoding="utf-8")
+
+
+def a_language_handler_written_in_place(app: Path) -> None:
+    # MUST STAY GREEN. Another app's shape: setAttribute and documentElement,
+    # in a named handler passed where it is written, and the direction taken
+    # from the locale rather than from `dir`.
+    the_shell_language_never_applied(app)
+    html_edit(app, "</body>",
+              "<script>window.addEventListener('message', function onShellMessage(e) {"
+              " var p = (e.data || {}).payload || {};"
+              " if (!p.locale) return;"
+              " document.documentElement.setAttribute('lang', p.locale);"
+              " document.documentElement.dir = p.locale === 'he' ? 'rtl' : 'ltr';"
+              " });</script></body>")
+
+
+def a_language_helper(app: Path, arrow: bool = False) -> None:
+    # MUST STAY GREEN. The write sits in a helper and the read is at the call:
+    # `setLanguage(p.locale, p.dir)`. Found red by the review of 3.16.0.
+    the_shell_language_never_applied(app)
+    helper = ("const setLanguage = (l, d) => {" if arrow else "function setLanguage(l, d) {")
+    html_edit(app, "</body>",
+              "<script>" + helper +
+              " document.documentElement.lang = l; document.documentElement.dir = d; }"
+              " window.addEventListener('message', function (e) {"
+              " var p = (e.data || {}).payload || {};"
+              " if (e.data.type === 'manaurum:init' || e.data.type === 'manaurum:locale-change')"
+              " setLanguage(p.locale, p.dir); });</script></body>")
+
+
+def a_language_helper_as_an_arrow(app: Path) -> None:
+    # MUST STAY GREEN. The same, bound to a name with an arrow.
+    a_language_helper(app, arrow=True)
+
+
+def a_helper_called_with_constants(app: Path) -> None:
+    # The helper exists and is called - with English, never with the payload.
+    the_shell_language_never_applied(app)
+    html_edit(app, "</body>",
+              "<script>function setLanguage(l, d) {"
+              " document.documentElement.lang = l; document.documentElement.dir = d; }"
+              " setLanguage('en', 'ltr');</script></body>")
+
+
+def one_language_on_purpose(app: Path) -> None:
+    # MUST STAY GREEN. An app written in Hebrew only, and saying so.
+    the_shell_language_never_applied(app)
+    html_edit(app, '<html lang="en">', '<html lang="he" dir="rtl" data-languages="he">')
+
+
+def one_language_that_its_root_contradicts(app: Path) -> None:
+    # Declared Hebrew-only, and still laid out left to right.
+    the_shell_language_never_applied(app)
+    html_edit(app, '<html lang="en">', '<html lang="he" data-languages="he">')
+
+
+def css_edit(app: Path, old: str, new: str) -> None:
+    edit(app / "src" / "static" / "app.css", old, new)
+
+
+def css_append(app: Path, text: str) -> None:
+    path = app / "src" / "static" / "app.css"
+    path.write_text(path.read_text(encoding="utf-8") + "\n" + text + "\n", encoding="utf-8")
+
+
+def a_padding_left(app: Path) -> None:
+    css_edit(app, ".prose ol { padding-inline-start:", ".prose ol { padding-left:")
+
+
+def a_text_align_left(app: Path) -> None:
+    css_edit(app, "  text-align: start;\n", "  text-align: left;\n")
+
+
+def a_border_right_in_a_style_block(app: Path) -> None:
+    # Stylesheets inside the page count too.
+    html_edit(app, "</head>",
+              "<style>.aside { border-right: 1px solid var(--border-hairline); }</style></head>")
+
+
+def a_float_left(app: Path) -> None:
+    css_append(app, ".avatar { float: left; }")
+
+
+def a_four_value_shorthand(app: Path) -> None:
+    # What `.pull` was in 3.15.0: the left padding hidden in the fourth value.
+    css_append(app, ".quote { padding: var(--space-1) 0 var(--space-1) var(--space-5); }")
+
+
+def a_physical_corner_and_position(app: Path) -> None:
+    css_append(app, ".tab-end { position: absolute; right: 0; top: 0;"
+                    " border-top-left-radius: 8px; }")
+
+
+def sides_that_mirror_anyway(app: Path) -> None:
+    # MUST STAY GREEN. Both sides the same mirror trivially, and positioning
+    # is not reading direction: a toast centred with left: 50% stays put.
+    css_append(app, ".narrow { max-width: 40ch; margin-left: auto; margin-right: auto;\n"
+                    "  padding-left: var(--space-4); padding-right: var(--space-4); }\n"
+                    ".toast { position: fixed; left: 50%; bottom: var(--space-6);\n"
+                    "  transform: translateX(-50%); }\n"
+                    ".close { position: absolute; inset-inline-end: var(--space-2); top: 0; }\n"
+                    ".box { margin: 0 auto; padding: 4px 8px 4px 8px; border-radius: 4px 4px;\n"
+                    "  inset: 0; }\n"
+                    ".cover { position: absolute; left: 0; right: 0; }")
+
+
 def a_short_hex_in_the_markup(app: Path) -> None:
     html_edit(app, "</body>", '<svg><path fill="#f00"/></svg></body>')
 
@@ -1256,6 +1404,34 @@ UI_MUTATIONS = [
      None),
     ("ui: accent selectors and remove() in a loop stay green",
      accent_selectors_and_removal_in_a_loop, None),
+    ("ui: the shell's language never applied", the_shell_language_never_applied,
+     "language from manaurum:init is never written onto <html lang dir>"),
+    ("ui: the locale applied, the direction not", only_the_lang_applied,
+     "never written onto <html dir>"),
+    ("ui: no live language switch", no_live_language_switch, "no manaurum:locale-change"),
+    ("ui: the language destructured stays green", the_language_destructured, None),
+    ("ui: a language handler written in place stays green",
+     a_language_handler_written_in_place, None),
+    ("ui: padding-left in app.css", a_padding_left,
+     "`padding-left` in `.prose ul, .prose ol` does not mirror"),
+    ("ui: text-align: left in app.css", a_text_align_left, "use text-align: start / end"),
+    ("ui: border-right in a <style> block", a_border_right_in_a_style_block,
+     "index.html: `border-right` in `.aside` does not mirror"),
+    ("ui: float: left", a_float_left, "use float: inline-start / inline-end"),
+    ("ui: symmetric sides and positioning stay green", sides_that_mirror_anyway, None),
+    ("ui: a four-value shorthand with a left of its own", a_four_value_shorthand,
+     "`padding: var(--space-1) 0 var(--space-1) var(--space-5)` in `.quote`"),
+    ("ui: a physical corner and right: 0", a_physical_corner_and_position,
+     "use border-start-start-radius"),
+    ("ui: right: 0 positioning", a_physical_corner_and_position,
+     "`right: 0` in `.tab-end` does not mirror"),
+    ("ui: a language helper stays green", a_language_helper, None),
+    ("ui: a language helper as an arrow stays green", a_language_helper_as_an_arrow, None),
+    ("ui: a language helper called with constants", a_helper_called_with_constants,
+     "language from manaurum:init is never written"),
+    ("ui: one language on purpose stays green", one_language_on_purpose, None),
+    ("ui: one language its root contradicts", one_language_that_its_root_contradicts,
+     'data-languages="he" says the app speaks only he'),
 ]
 
 

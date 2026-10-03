@@ -16,6 +16,7 @@ Section map:
 | Section | What it is |
 |---|---|
 | `manaurum:ready` — the shell handshake | mandatory for every app with a window |
+| The person's language | `locale` / `dir`, `manaurum:locale-change`, and what cannot learn the language |
 | Platform v2 — frontend SDK (`manaurum-v2.mjs`) | the optional client helper |
 
 `https://manaurum.com/sdk/manaurum.js` (global `ManaurumSDK`) is the retired v1 SDK. Do not load it.
@@ -48,6 +49,8 @@ The payload as actually posted today (`sendInit`):
     "navigationMode": "window",
     "shell": { "hasTabBar": false, "hasBackButton": false, "tabBarHeight": 0 },
     "user": { "nickname": "User" },
+    "locale": "he",
+    "dir": "rtl",
     "permissions": ["microphone"],
     "appId": "my-app",
     "offline_token": "",
@@ -60,7 +63,7 @@ The payload as actually posted today (`sendInit`):
 - `theme` is **always** `"smoothie"` inside an iframe — the XP easter egg stops at the window frame (MAN-235). Style off `appearance` (`light` / `dark`) and `accent` instead.
 - `granted_capabilities` is sent **only to v2 apps** — the install's admin-approved grant list. `permissions` carries the manifest's `permissions[]` array (browser features such as `microphone`).
 - `offline` appears only when the manifest declares an `offline` block; `deepLink` when the window was opened from a notification, an `?open=` link, or another app's "open in source".
-- `locale` (`"en"`, `"ru"` or `"he"`) and `dir` (`"ltr"` / `"rtl"`) are the language the OS speaks (MAN-2289). The shell posts `manaurum:locale-change` with `{locale, dir}` once when the window becomes ready and again whenever the person switches language. SDK 2.3.0 reads neither, so take them from your own listener (behind the sender check) and set `<html lang dir>` from them.
+- `locale` (`"en"`, `"ru"` or `"he"`) and `dir` (`"ltr"` / `"rtl"`) are the language the person chose in ManAurum (MAN-2289). The shell posts `manaurum:locale-change` with `{locale, dir}` once when the window becomes ready and again whenever the person switches language. SDK 2.3.0 reads neither, so take them from your own listener (behind the sender check) and set `<html lang dir>` from them — the whole path is in "The person's language" below.
 
 **Platform fields** (in `manaurum:init`; `manaurum:device-change` repeats all but `shell`):
 
@@ -178,6 +181,36 @@ Any other `manaurum:*` type (not framing, not a v1 verb) is ignored: the shell l
 
 ---
 
+## The person's language
+
+The person picks the interface language in ManAurum's settings: English, Russian or Hebrew (`LOCALES`, `frontend/src/i18n/config.ts:14`). Hebrew is written right to left (`LOCALE_DIRECTION`, `:20-24`). An app built from the starter follows that choice, and switches while it is open.
+
+**Where it lives.** On the person's account, in every workspace: `user_profiles.preferred_language` (`backend/app/models/user_profile.py:31`), the `language` preference, where `""` means follow the browser (`backend/app/services/preferences.py:284-296`). The shell shows the language in its own `manaurum_locale` cookie, then the one in localStorage; a device with neither takes the account's value, and uses the browser's languages only until the profile loads or when the account has no choice (`frontend/src/i18n/locale.ts:76-84`, `frontend/src/i18n/index.tsx:129-147`). A switch writes the cookie, localStorage and, best effort, the account (`index.tsx:92-100`, `:167-172`). The cookie is host-only on the shell's origin: an app at `<app_id>.apps.manaurum.com` cannot read it.
+
+**How an app gets it: from the window, and only there.**
+
+| When | Message | Carries |
+|---|---|---|
+| the window opens | `manaurum:init` | `locale` and `dir`, among the other fields above |
+| once when the window becomes ready, then whenever the person switches | `manaurum:locale-change` | `{ locale, dir }` |
+
+(`IframeAppHost.tsx:309-314`, `:603-616`.) `locale` is `en`, `ru` or `he`; `dir` is `ltr` or `rtl`. Take `dir` as sent rather than deriving it from a language list of your own. SDK 2.3.0 passes neither on: it drops both from its context and has no handler for `manaurum:locale-change` (MAN-3233). So read them in the inline listener, behind the sender check, next to the appearance.
+
+**What the app does with it.** All four are in the starter's `index.html` and `app.css`, and `check_ui.py` fails on the first and the last:
+
+1. Write `locale` to `<html lang>` and `dir` to `<html dir>`, on `manaurum:init` and on every `manaurum:locale-change`. `lang` is what screen readers, hyphenation and font fallback follow; `dir` mirrors the page. The starter also copies both onto `window.__manaurum` and fires a `manaurum-locale` event, like its appearance and device events.
+2. Keep every word a person reads in one table per language — the starter's `STRINGS = { en, ru, he }` and `t(key)`, with `data-i18n="key"` on static text and a `{0}` slot for a code name that stays as it is — and re-render on the event, including what code wrote (the starter keeps how to draw it, so "Saved at 14:05" is redrawn in the new language's clock). A locale the shell sends and `STRINGS` has no table for is shown in English, left to right: the starter resets `<html lang dir>` to `en` / `ltr` then, so its `LOCALE_DIR` and `STRINGS` cannot drift into English words laid out right to left. A key missing from one table reads as English too, which is a Hebrew screen with one English sentence in it (the starter's tests fail on that).
+3. Format numbers and dates with `Intl` and the OS's own tags — `en`, `ru-RU`, `he-IL` (`INTL_LOCALE`, `config.ts:27-31`) — never by hand.
+4. Use logical CSS (`margin-inline-start`, not `margin-left`) so the page mirrors by itself: `references/design.md` → "Right to left".
+
+**An app in one language on purpose** says so on its root element: `<html lang="he" dir="rtl" data-languages="he">`. `check_ui.py` then holds it to that — `lang` is the one language, `dir` its direction — instead of failing it for ignoring the shell, and `preview.py`'s badge reads `fixed language`. It is an explicit choice for an app whose every reader shares a language, not a way to skip the work: the person who reads another one gets your language, not theirs.
+
+**A standalone tab** hears no shell. Guess from `navigator.languages` (the first of en / ru / he, else English), as the starter does. Your server also sees the browser's `Accept-Language`: the gateway forwards request headers other than hop-by-hop, auth and Core's own (`_filter_request_headers`, `backend/app/routes/v2_app_gateway.py:639-650`). Both are the *browser's* language — inside the window as well — which need not be the one chosen in ManAurum.
+
+**What cannot learn it.** Core hands the person's language to nothing outside the window. It is not in the `user_context` JWT (`backend/app/services/v2_apps/user_context_jwt.py:119-131`), not in the person pass (`person_pass.py:85-103`), and no capability returns it. So **your server, the Assistant's calls to your `/agent` routes, and a standalone tab cannot learn the language chosen in ManAurum**; carrying it there is not yet built (MAN-3244). When your server must write text for a person in their language (a reply it renders, an export), have the page send `locale` with the request. Text the server writes with no page behind it — what it answers the Assistant, a scheduled message — is in a language you pick, and the README says which.
+
+---
+
 ## Platform v2 — frontend SDK (`manaurum-v2.mjs`)
 
 An ES module served from `https://manaurum.com/sdk/manaurum-v2.mjs` (also at `/sdk/manaurum-v2.mjs` on any Manaurum host). It is **thin on purpose**: it does the handshake, exposes the shell's theme/device context, wraps `fetch` with sane defaults, and opens the Drive picker. It has **no** capability client — v2 capabilities are called by your *container*, not by your page.
@@ -291,4 +324,5 @@ if (!res.cancelled) {
 
 - **No capability client.** There is no `app.capability(...)`. Capabilities are called server-side by your container with `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` against `{MANAURUM_CORE_URL}/api/capability/<name>`. See `references/capabilities-reference.md`.
 - **No storage / db / files / ai bridge.** Every `manaurum:storage-*`, `manaurum:db-*`, `manaurum:file-*`, `manaurum:ai-*` message belongs to the retired v1 bridge and is rejected for v2 frames.
+- **No language.** 2.3.0 drops `locale` and `dir` from its context and has no handler for `manaurum:locale-change` (MAN-3233). Read them in your inline listener — "The person's language" above.
 - **No window-framing helpers.** `set-title` / `resize` / `close` / `toast` are allowed for v2 apps, but SDK 2.3.0 exposes no methods for them — post them yourself with `window.parent.postMessage({ type, payload }, shellOrigin)`.

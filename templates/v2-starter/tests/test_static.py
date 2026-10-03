@@ -9,6 +9,8 @@ modes below, so "I opened it in my browser" proves nothing.
   instead of your UI after 10 seconds.
 * Lose the `data-appearance` write and the app stops following the OS between
   light and dark — it silently follows the *browser* instead.
+* Lose the `lang`/`dir` write and the app ignores the language the person
+  chose in ManAurum; a Hebrew reader gets an English, left-to-right window.
 
 NOTE THE `_code()` HELPER, and keep it. The first version of this file
 asserted against the raw file text and TWO mutations survived: index.html
@@ -124,6 +126,134 @@ def test_appearance_comes_from_the_shell_not_only_the_browser():
     assert re.search(r"dataset\.appearance\s*=", _INDEX), (
         "appearance is never written to the DOM"
     )
+
+
+def test_the_language_comes_from_the_shell_on_init_and_on_change():
+    """The person's language reaches <html lang dir>, on init AND on a switch.
+
+    The shell sends `locale` and `dir` in `manaurum:init` and posts
+    `manaurum:locale-change` whenever the person changes language;
+    manaurum-v2.mjs 2.3.0 passes neither on, so the inline listener is the
+    only thing that applies them. Without `dir` a Hebrew screen is laid out
+    left to right; without the change handler one window stays in the old
+    language until it is reopened.
+    """
+    body = re.search(r"function applyShellLocale\(payload\)\s*\{(.*?)\n    \}", _INDEX, re.S)
+    assert body, "no applyShellLocale(payload) in the inline listener"
+    code = body.group(1)
+    assert "payload.locale" in code and "payload.dir" in code, (
+        "the language is not read off the payload")
+    assert re.search(r"root\.lang\s*=\s*locale", code), "<html lang> is never written"
+    assert re.search(r"root\.dir\s*=\s*dir", code), "<html dir> is never written"
+    assert re.search(r"window\.__manaurum\.locale\s*=", code)
+
+    init = _INDEX.index("=== 'manaurum:init'")
+    change = re.search(r"===\s*'manaurum:locale-change'", _INDEX)
+    assert change, "no live handler for manaurum:locale-change"
+    calls = [m.start() for m in re.finditer(r"applyShellLocale\(payload\)", _INDEX)]
+    assert any(init < c < change.start() for c in calls), "init never applies the language"
+    assert any(c > change.start() for c in calls), "a language switch is never applied"
+    assert "new CustomEvent('manaurum-locale')" in _INDEX
+    # The sender check still runs first: a stranger cannot switch the language.
+    assert re.search(r"event\.source\s*===\s*window\.parent", _INDEX).start() < change.start()
+
+
+def test_the_standalone_tab_guesses_from_the_browser():
+    """No shell, no OS language: the browser's languages, mapped to ours."""
+    body = re.search(r"function applyBrowserLocale\(\)\s*\{(.*?)\n    \}", _INDEX, re.S)
+    assert body, "no standalone default for the language"
+    assert "navigator.language" in body.group(1)
+    table = re.search(r"var LOCALE_DIR = \{([^}]*)\}", _INDEX)
+    assert table and re.findall(r"(\w+): '(ltr|rtl)'", table.group(1)) == [
+        ("en", "ltr"), ("ru", "ltr"), ("he", "rtl")]
+
+
+def _catalogue(locale: str) -> dict[str, str]:
+    block = re.search(r"\n    %s: \{\n(.*?)\n    \}," % locale, _INDEX, re.S)
+    assert block, f"no {locale} catalogue in STRINGS"
+    return dict(re.findall(r"'([\w.]+)':\s*'((?:[^'\\]|\\.)*)'", block.group(1)))
+
+
+def _module() -> str:
+    """The module script with the STRINGS table cut out."""
+    script = _INDEX[_INDEX.index('<script type="module">'):]
+    start = script.index("const STRINGS = {")
+    return script[:start] + script[script.index("\n  };", start):]
+
+
+def test_every_catalogue_has_every_key():
+    """en, ru and he carry the same keys, and every key the page uses exists.
+
+    A missing key reads as English at run time, which is the bug this
+    prevents: a Hebrew screen with one English sentence in the middle.
+    """
+    en, ru, he = _catalogue("en"), _catalogue("ru"), _catalogue("he")
+    assert len(en) > 10
+    assert set(ru) == set(en), sorted(set(en) ^ set(ru))
+    assert set(he) == set(en), sorted(set(en) ^ set(he))
+    # Every quoted key in the code - in t(...), say(...), an array or a
+    # ternary alike - by its namespace, not by the call around it.
+    spaces = {key.split(".")[0] for key in en}
+    used = set(re.findall(r'data-i18n(?:-placeholder)?="([\w.]+)"', _INDEX))
+    used |= {key for key in re.findall(r"'([a-z]+(?:\.[a-zA-Z]+)+)'", _module())
+             if key.split(".")[0] in spaces}
+    assert len(used) > 10, "nothing on the page is translated"
+    assert used <= set(en), sorted(used - set(en))
+
+
+def test_every_translation_keeps_the_slots():
+    """`{0}` (a code name) and `{time}` (a value) survive every translation.
+
+    A Hebrew string that lost its `{0}` silently drops the code it names; one
+    that kept `{time}` misspelt shows the braces to the person.
+    """
+    en = _catalogue("en")
+    for locale in ("ru", "he"):
+        for key, text in _catalogue(locale).items():
+            assert sorted(re.findall(r"\{\w+\}", text)) == \
+                sorted(re.findall(r"\{\w+\}", en[key])), (locale, key)
+
+
+def test_a_language_without_strings_is_english_left_to_right():
+    """LOCALE_DIR (head) and STRINGS (module) are two lists of languages.
+
+    A locale the first has and the second lacks must not become English words
+    laid out right to left: the module puts <html> back to en / ltr.
+    """
+    body = re.search(r"function settleLanguage\(\)\s*\{(.*?)\n  \}", _INDEX, re.S)
+    assert body, "no settleLanguage() in the module"
+    code = body.group(1)
+    assert "STRINGS[window.__manaurum.locale]" in code
+    assert "documentElement.lang = 'en'" in code and "documentElement.dir = 'ltr'" in code
+    apply = re.search(r"function applyStrings\(\)\s*\{(.*?)\n  \}", _INDEX, re.S)
+    assert apply and "settleLanguage();" in apply.group(1)
+
+
+def test_a_time_on_screen_is_formatted_when_drawn():
+    """"Saved at 14:05" is redrawn in the new language from the stored time.
+
+    Formatting once and keeping the string leaves the old language's words
+    and clock on screen after a switch.
+    """
+    saved = re.search(r"const savedAt = new Date\(\);\s*show\(status, \(el\) =>(.*?)\}\)\)\);",
+                      _INDEX, re.S)
+    assert saved and "formatDate(savedAt" in saved.group(1), (
+        "the save time must be formatted inside the draw function")
+
+
+def test_numbers_and_dates_use_the_os_tags():
+    """Intl gets the same BCP-47 tags as the OS (frontend/src/i18n/config.ts)."""
+    assert "const INTL_LOCALE = { en: 'en', ru: 'ru-RU', he: 'he-IL' };" in _INDEX
+    assert "new Intl.NumberFormat(INTL_LOCALE[" in _INDEX
+    assert "new Intl.DateTimeFormat(" in _INDEX
+
+
+def test_stylesheet_mirrors_for_right_to_left():
+    """No physical left/right in app.css: under dir="rtl" it would not mirror."""
+    css = re.sub(r"/\*.*?\*/", "", (_STATIC / "app.css").read_text(encoding="utf-8"), flags=re.S)
+    physical = re.findall(r"\b(?:margin|padding|border)-(?:left|right)\b|"
+                          r"text-align:\s*(?:left|right)\b|float:\s*(?:left|right)\b", css)
+    assert not physical, physical
 
 
 def test_stylesheet_defeats_the_hidden_attribute():

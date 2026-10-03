@@ -44,6 +44,19 @@ rule 4's accent budget it can read from source: an accent class
 (`btn-primary`, `btn-ghost`, `badge-accent`) handed out inside a loop, and more
 than four of them in one view.
 
+And the person's language (3.16.0): it fails an `index.html` that never writes
+`locale` and `dir` from the payload onto `<html lang dir>`, or never handles
+`manaurum:locale-change`; and it fails every physical side in a stylesheet —
+`margin-left`, `padding-right`, `border-left`, `text-align: left`,
+`float: right`, a corner like `border-top-left-radius`, `left: 0` / `right:
+8px` positioning, and a four-value shorthand whose left and right differ
+(`padding: 4px 0 4px 20px`) — naming the logical property to use instead,
+because those do not mirror for Hebrew. What mirrors anyway is not flagged:
+both sides alike in one rule, `margin: 0 auto`, `left: 50%`. An app written
+in one language on purpose declares it, `<html lang="he" dir="rtl"
+data-languages="he">`, and is held to that instead (`sdk-api.md` → "The
+person's language").
+
 Exit 0 or fix what it names. Do this *before* the screenshots: it is cheaper,
 and half of what it finds would otherwise reach the owner rather than you.
 
@@ -53,9 +66,17 @@ and half of what it finds would otherwise reach the owner rather than you.
 dependencies): it serves your static files, answers every `/api/*` call from a
 fixtures file, and adds a `/__shell` page that frames your app the way the
 desktop does — the shell's exact sandbox, a real `manaurum:init` with the
-appearance and accent you ask for, and three badges: one for
+appearance, accent and language you ask for, and four badges: one for
 `manaurum:ready`, one that says whether the appearance was actually *applied*,
-and one that measures whether your page is *centred* in the frame. Keep it
+one that says whether the language reached `<html lang dir>`, and one that
+measures whether your page is *centred* in the frame. `?locale=he` frames the
+app in Hebrew, right to left; the en / ru / he switch in the bar posts
+`manaurum:locale-change` the way the shell does when the person switches, and
+`&switch=he` does it by itself half a second after ready, for a headless run. The
+language badge compares the page with what the shell said, so it cannot tell
+an app that ignores the shell from one that follows it when `?locale=` equals
+your browser's own language (the app's standalone guess lands on the same
+value): photograph a language that is not yours. Keep it
 **beside** the app directory, never inside it: everything inside is packed into
 the deploy.
 
@@ -84,6 +105,8 @@ chrome --headless=new --disable-gpu --hide-scrollbars \
   "http://127.0.0.1:8765/__shell?appearance=light"
 
 # and again with ?appearance=dark → dark.png
+# and with ?locale=he → hebrew.png: every word in Hebrew, the whole page
+#   mirrored, and a back arrow that points right
 ```
 
 A fresh `--user-data-dir` keeps the run independent of whatever browser profile
@@ -109,7 +132,7 @@ no narrow shot can tell them apart; past it, a cap with no
 `margin-inline: auto` leaves the app on the left edge and dead space on the
 right. That shipped in four apps (MAN-2849) — and it was *in* the 1240 shot
 above, 216px of empty right margin that nobody read as a defect. So do not read
-it; the third badge measures it:
+it; the layout badge measures it:
 
 ```bash
 … --window-size=1920,1000 --screenshot=wide.png \
@@ -148,7 +171,7 @@ retrofitting them after the app exists is exactly why this check gets skipped.
 ### 4. Read the bar across the top of each picture, then criticise the pictures
 
 Criticise them honestly, against the seven rules and the `Never` table that
-opens `design.md` — out loud, in your reply. Besides the three badges,
+opens `design.md` — out loud, in your reply. Besides the four badges,
 `preview.py` measures the first screen of the rendered app: how many elements
 are painted in the accent (red above four), whether one badge sits on more than
 half the rows of a list (red), and how far down the first list row starts. A

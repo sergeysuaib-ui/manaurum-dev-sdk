@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.15.0.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.16.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -332,6 +332,11 @@ Paste this inline, at the top of `<head>` of your entry point:
       if (p.appearance) document.documentElement.dataset.appearance = p.appearance;
       if (p.accent) document.documentElement.dataset.accent = p.accent;
     }
+    // The person's language: 'en' | 'ru' | 'he', and 'ltr' | 'rtl' with it.
+    if (p.locale && (e.data.type === 'manaurum:init' || e.data.type === 'manaurum:locale-change')) {
+      document.documentElement.lang = p.locale;
+      document.documentElement.dir = p.dir || 'ltr';
+    }
 
     if (e.data.type === 'manaurum:init') {
       e.source.postMessage({ type: 'manaurum:ready' }, e.origin);
@@ -341,7 +346,7 @@ Paste this inline, at the top of `<head>` of your entry point:
 ```
 
 The starter's `index.html` is this script plus a few extras — copy its whole block
-rather than retyping this one. Three things are non-negotiable:
+rather than retyping this one. Four things are non-negotiable:
 
 1. **The sender check.** Exactly `https://manaurum.com` and `https://app.manaurum.com`,
    plus the page's own origin on loopback only (so `templates/preview.py` can frame it).
@@ -361,6 +366,12 @@ rather than retyping this one. Three things are non-negotiable:
 3. **Apply the appearance from `e.data.payload`.** Answering the handshake and ignoring
    the payload is a shipped bug: the window works and renders in its own palette inside
    a dark desktop.
+4. **Follow the person's language.** Apply `p.locale` / `p.dir` to `<html lang dir>` on
+   init and on every `manaurum:locale-change`, and use logical CSS (`margin-inline-start`,
+   never `margin-left`) so Hebrew mirrors — `check_ui.py` fails on all three. Write UI
+   strings for en, ru and he, re-render on a switch, and format numbers and dates with
+   `Intl`, as the starter does. What your server cannot learn:
+   `references/sdk-api.md` → "The person's language".
 
 postMessage is for this handshake and window framing only: never send the v1 data verbs
 (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app. Every
@@ -423,7 +434,7 @@ python <plugin>/templates/check_ui.py my-app/src/static
 
 **2. Serve it with stubs**, from **beside** the app directory, never inside it
 (everything inside is deployed). `/__shell` frames your app the way the desktop does,
-with three badges: ready, appearance applied, layout centred.
+with four badges: ready, appearance applied, language applied, layout centred.
 
 ```bash
 cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
@@ -447,6 +458,7 @@ chrome --headless=new --disable-gpu --hide-scrollbars \
 # …&accent=lavender (or any of the nine)     → check nothing hardcodes blue
 # --window-size=1920,1000 → wide.png          (the layout badge must not say OFF-CENTRE)
 # ...&width=900 in the URL → narrow.png       (your smallest supported window)
+# ...&locale=he → hebrew.png                  (Hebrew words, the page mirrored)
 # ...?entry=/index.html%23item/42             (every other screen, by its fragment)
 ```
 

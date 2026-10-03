@@ -75,6 +75,45 @@ APPEARANCE_WRITE = re.compile(
 # fallback that reads it (`if (!root.dataset.appearance) ...`) applies nothing.
 APPEARANCE_READ = re.compile(r"(?<!dataset)\.appearance\b(?!\s*=(?!=))|"
                              r"\{[^{}]*\bappearance\b[^{}]*\}\s*(?:=|\)|,)")
+# The person's language, the same shape (3.16.0): `lang` and `dir` written onto
+# the document - `root.lang = ...`, `document.documentElement.dir = ...`,
+# `setAttribute('dir', ...)` - from `locale` / `dir` read off the payload. The
+# document's own values (`root.dir`, `documentElement.lang`) are not the
+# payload's, so a standalone guess from `navigator.languages` applies nothing;
+# and the starter's copy on `window.__manaurum` is neither the document nor
+# the payload - counting `__manaurum.dir = dir` as the write let an app that
+# never set <html dir> pass (found by a mutation).
+LANG_WRITE = re.compile(r"(?:(?<!__manaurum)\.lang\s*=(?!=)|setAttribute\(\s*['\"]lang['\"]\s*,)[^;\n]*")
+DIR_WRITE = re.compile(r"(?:(?<!__manaurum)\.dir\s*=(?!=)|setAttribute\(\s*['\"]dir['\"]\s*,)[^;\n]*")
+LOCALE_READ = re.compile(
+    r"(?<!\broot)(?<!documentElement)(?<!__manaurum)\.(?:locale|dir)\b(?!\s*=(?!=))|"
+    r"\{[^{}]*\b(?:locale|dir)\b[^{}]*\}\s*(?:=|\)|,)")
+# Left and right in a stylesheet are the reading direction, and Hebrew reads
+# the other way: under <html dir="rtl"> none of these mirror. What mirrors
+# anyway is not a finding: both sides set alike in one rule, `left: 50%`
+# (centring with a translate), `auto`, and a shorthand whose left and right
+# values are the same (`margin: 0 auto`, `padding: 4px 8px`).
+PHYSICAL_PROPERTY = re.compile(r"(margin|padding|border)-(left|right)(-(?:width|style|color))?")
+PHYSICAL_CORNER = re.compile(r"border-(top|bottom)-(left|right)-radius")
+PHYSICAL_VALUE = {"text-align": "text-align: start / end",
+                  "float": "float: inline-start / inline-end",
+                  "clear": "clear: inline-start / inline-end"}
+# `top right bottom left`: a fourth value unlike the second does not mirror.
+FOUR_SIDED = {
+    "margin": "margin-block + margin-inline-start / -end",
+    "padding": "padding-block + padding-inline-start / -end",
+    "inset": "inset-block + inset-inline-start / -end",
+    "border-width": "border-inline-start-width / -end-width",
+    "border-style": "border-inline-start-style / -end-style",
+    "border-color": "border-inline-start-color / -end-color",
+    "scroll-margin": "scroll-margin-inline-start / -end",
+    "scroll-padding": "scroll-padding-inline-start / -end",
+}
+# The single-language opt-out (3.16.0): `<html lang="he" dir="rtl"
+# data-languages="he">` says the app is written in one language on purpose.
+HTML_TAG = re.compile(r"<html\b([^>]*)>", re.I)
+LOCALE_CHANGE = re.compile(r"""(?:===?|\bcase)\s*['"]manaurum:locale-change['"]|"""
+                           r"""['"]manaurum:locale-change['"]\s*(?:===?|:)""")
 # A function: declared by name, bound to a name, or anonymous. An anonymous
 # one, or a named one written where an argument goes (`addEventListener(
 # 'message', function onMessage(e) {...})`), runs when it is passed.
@@ -122,7 +161,7 @@ CHECKED_SUFFIXES = (".html", ".htm", ".js", ".mjs")
 # with no brace inside; an @media wrapper is simply skipped over, which is
 # what we want - a cap set under a media query is still a cap.
 CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
-CSS_DECL = re.compile(r"([a-z-]+)\s*:\s*([^;]+)")
+CSS_DECL = re.compile(r"([a-z-]+)\s*:\s*([^;]+)", re.I)
 BODY_OPEN = re.compile(r"<body\b[^>]*>", re.I)
 FIRST_TAG = re.compile(r"<([a-zA-Z][a-zA-Z0-9-]*)\b([^>]*)>")
 NOT_LAYOUT = frozenset(("script", "noscript", "template", "style", "link", "meta"))
@@ -337,10 +376,20 @@ def applies_shell_appearance(html: str) -> bool:
     function used somewhere else - called, or passed by name, as in
     `addEventListener('message', onShellMessage)`.
     """
-    for match in APPEARANCE_WRITE.finditer(html):
+    return written_from_payload(html, APPEARANCE_WRITE, APPEARANCE_READ)
+
+
+def written_from_payload(html: str, write, read) -> bool:
+    """Is a value read off the payload written onto the document, by code that
+    runs? The shape `applies_shell_appearance` describes, for any pair."""
+    for match in write.finditer(html):
         definitions = list(FUNCTION_DEF.finditer(html, 0, match.start()))
         start = definitions[-1].start() if definitions else 0
-        if not APPEARANCE_READ.search(html, start, match.end()):
+        if not read.search(html, start, match.end()):
+            # A helper: the write sits in `function setLanguage(l, d)` and the
+            # read is where it is called, `setLanguage(p.locale, p.dir)`.
+            if definitions and called_with(html, definitions[-1], read):
+                return True
             continue
         if not definitions:
             return True
@@ -352,6 +401,161 @@ def applies_shell_appearance(html: str) -> bool:
         if uses > 1:                      # the definition itself is one
             return True
     return False
+
+
+def called_with(html: str, definition, read) -> bool:
+    """Is the function `definition` defines called with a payload read?"""
+    name = definition.group(1) or definition.group(2)
+    if not name:
+        return False
+    for call in re.finditer(r"(?<![\w$.])%s\s*\(" % re.escape(name), html):
+        if definition.start() <= call.start() < definition.end():
+            continue                      # `function name(` is the definition
+        args = html[call.end():closing(html, call.end(), "(", ")")]
+        if read.search(args):
+            return True
+    return False
+
+
+def html_attr(attrs: str, name: str):
+    found = re.search(r"""\b%s\s*=\s*["']([^"']*)["']""" % re.escape(name), attrs, re.I)
+    return found.group(1).strip() if found else None
+
+
+def fixed_language(html: str):
+    """The one language an app declares with `data-languages`, or None."""
+    tag = HTML_TAG.search(html)
+    declared = html_attr(tag.group(1), "data-languages") if tag else None
+    languages = (declared or "").lower().split()
+    return (languages[0], tag.group(1)) if len(languages) == 1 else None
+
+
+def applies_shell_language(html: str) -> list:
+    """What of the shell's language never reaches <html lang dir> (3.16.0).
+
+    `lang` is what a screen reader and the browser's hyphenation and fonts
+    follow; `dir` is what mirrors the page for Hebrew. An app that applies the
+    locale and not the direction is a Hebrew screen laid out left to right.
+    Both come from the payload, on `manaurum:init`, and again on
+    `manaurum:locale-change`, which the shell posts whenever the person
+    switches language while the window is open.
+
+    An app written in one language on purpose says so on its root element,
+    `<html lang="he" dir="rtl" data-languages="he">`, and is then held to that
+    instead: `lang` is the language, `dir` its direction.
+    """
+    fixed = fixed_language(html)
+    if fixed:
+        only, attrs = fixed
+        want_dir = "rtl" if only == "he" else "ltr"
+        lang = (html_attr(attrs, "lang") or "").lower()
+        direction = (html_attr(attrs, "dir") or "ltr").lower()
+        if lang != only or direction != want_dir:
+            return ['index.html: data-languages="%s" says the app speaks only %s, so <html> '
+                    'must say lang="%s" dir="%s" (it says lang="%s" dir="%s")'
+                    % (only, only, only, want_dir, lang, direction)]
+        return []
+    missing = [name for name, write in (("lang", LANG_WRITE), ("dir", DIR_WRITE))
+               if not written_from_payload(html, write, LOCALE_READ)]
+    if missing:
+        return ["index.html: the language from manaurum:init is never written onto "
+                "<html %s> - read payload.locale and payload.dir and set both, or the "
+                "app ignores the language the person chose in ManAurum%s"
+                % (" ".join(missing),
+                   "; without dir a Hebrew screen is laid out left to right"
+                   if "dir" in missing else "")]
+    if not LOCALE_CHANGE.search(html):
+        return ["index.html: no manaurum:locale-change - when the person switches "
+                "language the app stays in the old one until the window is reopened"]
+    return []
+
+
+def css_values(value: str) -> list:
+    """Space-separated values, `var(--a, 1px 2px)` and `calc()` kept whole."""
+    out, depth, current = [], 0, ""
+    for ch in value:
+        depth += (ch == "(") - (ch == ")")
+        if ch.isspace() and depth == 0:
+            if current:
+                out.append(current)
+            current = ""
+        else:
+            current += ch
+    return out + ([current] if current else [])
+
+
+def radius_mirrors(value: str) -> bool:
+    """Does `border-radius: a b c d` (either half of `/`) look the same mirrored?"""
+    for half in value.split("/"):
+        v = css_values(half)
+        if (len(v) == 2 and v[0] != v[1]) or (len(v) == 3 and not v[0] == v[1] == v[2]) \
+                or (len(v) == 4 and not (v[0] == v[1] and v[2] == v[3])):
+            return False
+    return True
+
+
+def flip(side: str) -> str:
+    return "right" if side == "left" else "left"
+
+
+def physical_direction(prop: str, value: str, decls: dict):
+    """(what was found, what to use instead) for one declaration, or None."""
+    side = PHYSICAL_PROPERTY.fullmatch(prop)
+    corner = PHYSICAL_CORNER.fullmatch(prop)
+    if side:
+        if decls.get("%s-%s%s" % (side.group(1), flip(side.group(2)), side.group(3) or "")) == value:
+            return None
+        return prop, "%s-inline-%s%s" % (side.group(1), "start" if side.group(2) == "left"
+                                         else "end", side.group(3) or "")
+    if corner:
+        if decls.get("border-%s-%s-radius" % (corner.group(1), flip(corner.group(2)))) == value:
+            return None
+        return prop, "border-%s-%s-radius" % ("start" if corner.group(1) == "top" else "end",
+                                              "start" if corner.group(2) == "left" else "end")
+    if prop in ("left", "right"):
+        if value in ("50%", "auto") or decls.get(flip(prop)) == value:
+            return None
+        return "%s: %s" % (prop, value), "inset-inline-%s" % ("start" if prop == "left"
+                                                              else "end")
+    if prop in FOUR_SIDED:
+        v = css_values(value)
+        if len(v) < 4 or v[1] == v[3]:
+            return None
+        return "%s: %s" % (prop, value), FOUR_SIDED[prop]
+    if prop == "border-radius":
+        if radius_mirrors(value):
+            return None
+        return "%s: %s" % (prop, value), "border-start-start-radius and the other logical corners"
+    if prop in PHYSICAL_VALUE and value in ("left", "right"):
+        return "%s: %s" % (prop, value), PHYSICAL_VALUE[prop]
+    return None
+
+
+def physical_directions(static_dir: Path) -> list:
+    """Left/right in a stylesheet that will not mirror under dir="rtl".
+
+    What mirrors anyway is not a finding: both sides alike in one rule
+    (`margin-left: auto; margin-right: auto`), a shorthand with the same left
+    and right (`margin: 0 auto`), and `left: 50%`. A vendored `*.min.css` is
+    skipped, as the other rules skip it.
+    """
+    problems, seen = [], set()
+    for name, selector, raw in css_rules(static_dir):
+        if ".min." in name.rsplit("/", 1)[-1]:
+            continue
+        decls = {prop: value.lower() for prop, value in raw.items()}
+        for prop, value in decls.items():
+            hit = physical_direction(prop, value, decls)
+            if not hit:
+                continue
+            found, logical = hit
+            if (name, found) in seen:
+                continue
+            seen.add((name, found))
+            problems.append(
+                "%s: `%s` in `%s` does not mirror when the person reads Hebrew "
+                "(dir=\"rtl\") - use %s" % (name, found, " ".join(selector.split()), logical))
+    return problems
 
 
 def check(static_dir: Path) -> list:
@@ -377,6 +581,7 @@ def check(static_dir: Path) -> list:
         if MEDIA_WIDTH.search(css):
             problems.append("%s: @media max-width - branch on body[data-device], which is "
                             "what the shell actually reports" % name)
+    problems += physical_directions(static_dir)
 
     sources = [p for p in sorted(static_dir.rglob("*"))
                if p.is_file() and p.suffix in CHECKED_SUFFIXES
@@ -486,6 +691,7 @@ def check(static_dir: Path) -> list:
     if "payload" not in html:
         problems.append("index.html: nothing reads `payload` - appearance and accent "
                         "arrive in e.data.payload, not on the message root")
+    problems += applies_shell_language(html)
     problems += uncentred_cap(static_dir, html)
     return problems
 

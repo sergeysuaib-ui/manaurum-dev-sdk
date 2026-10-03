@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.15.0.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.16.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -204,7 +204,9 @@ parts inlined. Reading one real app beats reading four pages about apps.
   with no `is-interactive`, `alert`/`confirm`/`prompt`, more than one primary button in a
   view, a missing `manaurum:ready`, appearance read off `e.data` instead of
   `e.data.payload`, an accent class handed out inside a render loop, more than four
-  accent classes in one view. Comments are stripped first, so a comment explaining a rule is not a
+  accent classes in one view, the person's language never applied to `<html lang dir>`,
+  and a physical side (`margin-left`, `text-align: left`) that will not mirror for Hebrew.
+  Comments are stripped first, so a comment explaining a rule is not a
   violation of it. `python check_ui.py src/static`, exit 1 on findings. Two apps have now
   been rejected on sight for things on this list; a rule a program checks is the only kind
   that survives a hurry. CI runs it against the starter and the patterns page, so the
@@ -261,9 +263,10 @@ parts inlined. Reading one real app beats reading four pages about apps.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
   it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
   fixtures file, and frames the page the way the desktop shell does: the shell's exact
-  sandbox, a real `manaurum:init` with the appearance and accent you ask for, and three
-  badges — one for `manaurum:ready`, one saying whether the appearance was actually
-  applied, one saying whether the page is centred — plus three measurements of the first
+  sandbox, a real `manaurum:init` with the appearance, accent and language (`?locale=he`) you
+  ask for, an en / ru / he switch that posts `manaurum:locale-change`, and four badges —
+  one for `manaurum:ready`, one saying whether the appearance was actually applied, one
+  whether the language was, one saying whether the page is centred — plus three measurements of the first
   screen: how many elements are painted in the accent (red above four), whether one badge
   sits on most rows of a list (red), and how far down the first list row starts. Fixtures match like `runtime.api_routes` does (`/api/items/*`), a fixture can
   describe a failure or a delay (`{"status": 500}`, `{"delay_ms": 1500}`), and `?width=`

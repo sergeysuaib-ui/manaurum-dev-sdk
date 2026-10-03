@@ -33,6 +33,11 @@ WHAT IS CHECKED, and why each one is here rather than left to a human:
   most rows), and a copy of it with thirteen accent filters and a badge on
   every row reads red on both. Needs Chrome or Edge; skipped with a note when
   neither is installed, and a failure when `CI` is set.
+* preview's language (3.16.0): `?locale=` sends the right `dir` and an unknown
+  one falls back to English; in the browser, the starter reads "language
+  applied" in Hebrew, in Russian and after a live `&switch=he`, a copy of it
+  that never applies the payload's locale reads "language IGNORED", and the
+  English-only patterns page reads "fixed language".
 """
 
 from __future__ import annotations
@@ -176,6 +181,29 @@ def smoke_preview(problems: list) -> None:
                                 "the framed page is what makes a theme bug visible"
                                 % needle)
 
+        # The language: ?locale= picks it and its direction goes with it, an
+        # unknown one falls back to English, and ?switch= is carried to the
+        # page that posts manaurum:locale-change.
+        for query, locale, direction, switch in (
+                ("locale=he", "he", "rtl", "null"),
+                ("locale=ru&switch=he", "ru", "ltr", '"he"'),
+                ("locale=fr&switch=xx", "en", "ltr", "null"),
+                ("", "en", "ltr", "null")):
+            page = fetch(base, "/__shell?" + query)[1].decode("utf-8")
+            init = re.search(r"var INIT = (\{.*?\});\n", page.replace("\r\n", "\n"))
+            payload = json.loads(init.group(1)) if init else {}
+            if (payload.get("locale"), payload.get("dir")) != (locale, direction):
+                problems.append("templates/preview.py: /__shell?%s sent locale=%r dir=%r, "
+                                "expected %s/%s" % (query, payload.get("locale"),
+                                                    payload.get("dir"), locale, direction))
+            if "var SWITCH_TO = %s;" % switch not in page:
+                problems.append("templates/preview.py: /__shell?%s does not carry the "
+                                "switch as %s" % (query, switch))
+            for needle in ("manaurum:locale-change", 'id="localecheck"', 'data-locale="he"'):
+                if needle not in page:
+                    problems.append("templates/preview.py: /__shell?%s has no %r - the "
+                                    "language check is gone" % (query, needle))
+
         expectations = [
             ("/api/me", "GET", 200, {"user_id": "u-1"}),
             ("/api/items", "GET", 200, [{"id": 1}]),
@@ -226,8 +254,11 @@ def find_browser():
 
 def dump_dom(browser: str, url: str, profile: Path) -> str:
     """The framed page's DOM after preview's timers have run."""
+    # --lang pins the browser's own language, so a starter's standalone guess
+    # is English on every runner and a Hebrew case means the shell said so.
     args = [browser, "--headless=new", "--disable-gpu", "--user-data-dir=%s" % profile,
-            "--virtual-time-budget=4000", "--window-size=1240,1000", "--dump-dom", url]
+            "--lang=en-US", "--virtual-time-budget=4000", "--window-size=1240,1000",
+            "--dump-dom", url]
     if os.name != "nt":
         args.insert(1, "--no-sandbox")
     try:
@@ -255,6 +286,17 @@ def loud_copy(html: str) -> str:
         raise AssertionError("templates/patterns/index.html: no Topic chip group to replace")
     return html.replace('<span class="row-foot">',
                         '<span class="row-foot"><span class="badge badge-accent">strong</span>')
+
+
+def deaf_copy(html: str) -> str:
+    """The starter with the payload's language never applied: it answers the
+    handshake and keeps its own guess from the browser."""
+    for old, new in (("        applyShellLocale(payload);\n", ""),
+                     ("if (applyShellLocale(payload)) window", "if (false) window")):
+        if old not in html.replace("\r\n", "\n"):
+            raise AssertionError("templates/v2-starter/src/static/index.html: no %r" % old)
+        html = html.replace("\r\n", "\n").replace(old, new, 1)
+    return html
 
 
 def accent_budgets_agree(problems: list) -> None:
@@ -305,6 +347,10 @@ def smoke_meter(problems: list) -> None:
         (site / "patterns" / "index.html").write_text(html, encoding="utf-8")
         (site / "loud").mkdir()
         (site / "loud" / "index.html").write_text(loud_copy(html), encoding="utf-8")
+        (site / "deaf").mkdir()
+        (site / "deaf" / "index.html").write_text(
+            deaf_copy((STARTER_STATIC / "index.html").read_text(encoding="utf-8")),
+            encoding="utf-8")
     except (AssertionError, OSError) as exc:
         problems.append("scripts/smoke_tools.py: could not build the meter's pages - %s" % exc)
         shutil.rmtree(workdir, ignore_errors=True)
@@ -350,6 +396,27 @@ def smoke_meter(problems: list) -> None:
                 problems.append("templates/preview.py: the %s page (%s) should read green "
                                 "with at least one accent element, it read accent=%s "
                                 "badge-flood=%s" % (label, path, count, flood))
+
+        # The language badge (3.16.0): the starter follows Hebrew and a live
+        # switch; a starter that never applies the payload's locale reads red,
+        # because its own guess from the browser is English; the patterns page
+        # is English on purpose (data-languages="en") and reads "fixed".
+        languages = (
+            ("starter in Hebrew", "/__shell?entry=/index.html&locale=he", "ok"),
+            ("starter switched live", "/__shell?entry=/index.html&locale=en&switch=he", "ok"),
+            ("starter in Russian", "/__shell?entry=/index.html&locale=ru", "ok"),
+            ("patterns in Hebrew", "/__shell?entry=/patterns/index.html%23post&locale=he",
+             "fixed"),
+            ("deaf copy", "/__shell?entry=/deaf/index.html&locale=he", "bad"),
+            ("deaf copy switched live", "/__shell?entry=/deaf/index.html&locale=en&switch=he",
+             "bad"),
+        )
+        for index, (label, path, want) in enumerate(languages):
+            dom = dump_dom(browser, base + path, workdir / ("lang%d" % index))
+            got = body_attr(dom, "data-locale-check")
+            if got != want:
+                problems.append("templates/preview.py: the language badge on the %s (%s) "
+                                "should read %s, it read %s" % (label, path, want, got))
     finally:
         process.terminate()
         try:
