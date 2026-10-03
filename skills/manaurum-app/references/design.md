@@ -24,6 +24,7 @@ markup. If you read nothing else on this page, read the table.
 | Hex values in the markup, or inline `style=` | You end up changing 40 rules instead of one token, and an inline colour cannot follow an appearance change. |
 | `alert()` / `confirm()` / `prompt()` | The shell's iframe has no `allow-modals`. They return silently, so a `confirm()`-gated delete button does nothing — and they work on the standalone URL, so testing there proves nothing. |
 | A `max-width` on your root without `margin-inline: auto` | Up to the cap it is pixel-identical to a centred page, so a 900px screenshot passes it. In a window wider than the cap — the first thing an owner does is maximise — the app sits on the left edge with the right third empty. Shipped in four apps from one line in the starter. |
+| `margin-left`, `padding-right`, `text-align: left` — any physical side | The person may read Hebrew, and then the shell tells your app `dir="rtl"`. Logical properties (`margin-inline-start`, `text-align: start`) mirror by themselves; physical ones leave a Hebrew screen half mirrored. `check_ui.py` fails on them. See "Right to left" below. |
 | `overflow: hidden` + a fixed height on your root | The window cannot scroll an iframe app. Clip the root and the bottom of every long view is unreachable, with no scrollbar anywhere. |
 | Gold or yellow as a palette, `hue-rotate`, a hot-linked webfont | The first two are banned across Manaurum surfaces; a font that arrives late reflows your app and one that never arrives changes its metrics. |
 
@@ -381,6 +382,29 @@ not full width, the rows look like buttons". Put one delegated handler on the
 click. `check_ui.py` fails on both halves of this rule.
 
 Never remove the focus ring; keyboard users navigate your app too.
+
+## Right to left
+
+Hebrew is one of the OS's three languages, and a person who reads it gets your
+app with `<html dir="rtl">` (`references/sdk-api.md` → "The person's
+language"). The starter mirrors as a whole — check it with
+`preview.py`'s `?locale=he` — and four habits keep yours mirroring too:
+
+- **Sides are logical.** `margin-inline-start` / `-end`, `padding-inline-*`,
+  `border-inline-*`, `inset-inline-*`, `text-align: start` / `end`,
+  `float: inline-start`. Flexbox and grid already follow `dir`. Centring with
+  `left: 50%` and `translateX(-50%)` is direction-neutral and fine.
+- **Mirror what points along the line, and nothing else.** A back or forward
+  arrow, the chevron at the end of a row, a "next" caret: give it `.flip-rtl`.
+  A clock, a play button, a check mark, a logo or a photo stays as it is.
+- **Numbers and code stay left to right.** Digits keep their order inside
+  Hebrew by themselves. A code name, host, path or id inside a sentence goes in
+  `<span class="mono" dir="ltr">`, or the punctuation at its edge jumps to the
+  wrong side; a field the person types into takes `dir="auto"`.
+- **Format with `Intl`, never by hand.** `Intl.NumberFormat` and
+  `Intl.DateTimeFormat` with `en`, `ru-RU` or `he-IL` get the separators, the
+  month names, the date order and the 24-hour clock right; `'Saved at ' +
+  h + ':' + m` gets one language right.
 
 ## Mobile
 

@@ -1,3 +1,66 @@
+# 3.16.0 - apps speak the language the person chose, and switch when it changes
+
+Summary: Apps built with the SDK now use the language the person picked in ManAurum (English, Russian or Hebrew) and switch the moment it changes; Hebrew screens read right to left.
+
+### Why
+
+The shell has told every window the person's language since MAN-2289: `locale` and `dir`
+in `manaurum:init`, and `manaurum:locale-change` whenever the person switches. Nothing in
+the SDK used it. `manaurum-v2.mjs` 2.3.0 drops both (MAN-3233), the starter never read
+them, its interface was English-only, and its stylesheet said `margin-left` and
+`text-align: left` - so an app copied from it stayed English for a Russian reader and
+was laid out left to right for a Hebrew one. `sdk-api.md` had one sentence about it; no
+check, no preview and no line of starter code did.
+
+### What changed
+
+* **Starter `index.html`.** The inline shell listener (sender check, handshake,
+  appearance and device untouched) applies `payload.locale` / `payload.dir` from
+  `manaurum:init` and `manaurum:locale-change` to `<html lang dir>` and
+  `window.__manaurum`, and fires `manaurum-locale`. A standalone tab guesses from
+  `navigator.languages` (en / ru / he, else English). Every visible string now comes from
+  one `STRINGS = { en, ru, he }` table through `t(key)` and `data-i18n`; numbers and
+  dates go through `Intl` with the OS's tags (`en`, `ru-RU`, `he-IL`); the page
+  re-renders on a switch. Inline code carries `dir="ltr"`, the note field `dir="auto"`,
+  and the back arrow `.flip-rtl`.
+* **Starter `app.css`.** Every physical side is logical now (`border-inline`,
+  `text-align: start`, `margin-inline-end`, `padding-inline-start`,
+  `border-inline-start`), `.mono` is bidi-isolated, `.flip-rtl` mirrors an arrow under
+  `dir="rtl"`, and the header names this as its fourth rule. Checked in headless Chrome:
+  the starter and the patterns page mirror completely under `?locale=he`.
+* **Starter tests.** `test_static.py` asserts that the listener applies `locale` and
+  `dir` on init and on `locale-change` behind the sender check, the standalone fallback,
+  that the three catalogues carry the same keys (and every key the page uses), the
+  `Intl` tags, and no physical side in `app.css`.
+* **`check_ui.py`** fails an `index.html` that never writes `locale` / `dir` from the
+  payload onto `<html lang dir>` (the same shape as the appearance rule, so the
+  standalone guess does not count), one with no `manaurum:locale-change`, and every
+  physical side in a stylesheet - `margin-*`, `padding-*`, `border-left/right`,
+  `text-align` / `float` / `clear` left or right - naming the logical replacement.
+  `left:` / `right:` positioning and a rule that sets both sides alike are not flagged.
+  `linter_mutations.py` has seven red mutations and three must-stay-green cases for them;
+  one of the reds found that the starter's own `window.__manaurum.dir = dir` was being
+  counted as the document write.
+* **`preview.py`.** `?locale=en|ru|he` sends the matching `dir` in `manaurum:init`; the
+  bar has an en / ru / he switch that posts `manaurum:locale-change`, `&switch=he` posts
+  one by itself after ready, and the shell posts one on ready as the real shell does. A
+  new badge reads the framed page's `<html lang>` and computed direction back:
+  `language applied` or `language IGNORED`, also on `<body data-locale-check>`.
+  `smoke_tools.py` checks the payload per locale and, in Chrome, that the starter and the
+  patterns page read green in Hebrew, Russian and after a live switch while a copy that
+  ignores the payload reads red.
+* **`patterns/index.html`** applies the language direction too, and its back arrow
+  mirrors.
+* **Docs.** `sdk-api.md` has a new section, "The person's language": where the setting
+  lives (on the account, `user_profiles.preferred_language`, and in the shell's own
+  cookie), how a window gets it, what the app does with it, the standalone fallback, and
+  plainly what cannot learn it - an app's server, the Assistant's `/agent` calls and a
+  standalone tab - because Core does not put it in `user_context`, the person pass or any
+  capability (MAN-3244, listed in `scripts/open-claims.txt`). `design.md` gains a "Right
+  to left" section and a `Never` row for physical sides; `checks.md` describes the new
+  rules, the fourth badge and the Hebrew screenshot; `SKILL.md` Step 2.5 gets a fourth
+  non-negotiable and three lines in the handshake snippet.
+
 # 3.15.0 - the app skill is half as long: the path stays, the detail moves to the references
 
 Summary: The main app-building guide is now half as long, so the AI reads less before it starts; nothing was dropped, the details moved to reference pages it opens when needed.

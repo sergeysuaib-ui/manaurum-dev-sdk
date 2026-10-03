@@ -18,6 +18,8 @@ Then:
     http://127.0.0.1:8765/__shell?appearance=dark   framed, dark
     http://127.0.0.1:8765/__shell?accent=lavender   framed, another accent
     http://127.0.0.1:8765/__shell?width=900         a narrow window, honestly
+    http://127.0.0.1:8765/__shell?locale=he         in Hebrew, right to left
+    http://127.0.0.1:8765/__shell?locale=en&switch=ru   a live switch after ready
     http://127.0.0.1:8765/__shell?entry=/index.html%23card/42    a second screen
     http://127.0.0.1:8765/                          the bare page, unframed
 
@@ -29,6 +31,15 @@ light inside a dark desktop. The third badge measures the page root: an app
 whose root has a `max-width` and no `margin-inline: auto` looks right in any
 frame narrower than the cap and sits on the left edge in any frame wider, so
 the badge says `layout OFF-CENTRE` with both gaps in pixels.
+
+The language badge reads the framed page's `<html lang>` and its computed
+direction back after init, the same way: `?locale=` is `en`, `ru` or `he`,
+and `dir` goes with it as the shell sends it. Like the shell, preview posts
+`manaurum:locale-change` once when the app answers ready, and again from the
+en / ru / he switch in the bar - or by itself, half a second after ready,
+when the URL carries `&switch=he`, which is how a headless run photographs a
+live switch. `language IGNORED` means the app did not follow. The result also
+lands on the shell page's <body> as `data-locale-check` (`ok` / `bad`).
 
 It also measures the first screen of the rendered app, because these are the
 failures a rule list does not name and a hurried look does not see (PR #27):
@@ -134,6 +145,9 @@ SHELL_PAGE = """<!doctype html>
   .pill-ok { background: rgba(48,209,88,.22); color: var(--ok-fg); }
   .pill-bad { background: #d0342c; color: #fff; }
   .pill-info { background: rgba(128,128,128,.14); }
+  .hud button { font: inherit; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px;
+                background: transparent; color: inherit; cursor: pointer; }
+  .hud button[aria-pressed="true"] { background: var(--line); font-weight: 600; }
   .frame { flex: 1; min-height: 0; display: flex; justify-content: center;
            align-items: stretch; overflow: auto; }
   iframe { flex: 1; width: 100%; height: 100%; border: 0; background: transparent; }
@@ -152,8 +166,13 @@ SHELL_PAGE = """<!doctype html>
     <span>accent <b>__ACCENT__</b></span>
     <span>device <b>__DEVICE__</b></span>
     <span __SIZE_HIDDEN__>size <b>__SIZE_LABEL__</b></span>
+    <span id="langswitch">language
+      <button type="button" data-locale="en">en</button>
+      <button type="button" data-locale="ru">ru</button>
+      <button type="button" data-locale="he">he</button></span>
     <span id="handshake" class="pill pill-wait">waiting for manaurum:ready...</span>
     <span id="themecheck" class="pill pill-wait">checking appearance...</span>
+    <span id="localecheck" class="pill pill-wait">checking language...</span>
     <span id="layoutcheck" class="pill pill-wait">checking layout...</span>
     <span id="accentcheck" class="pill pill-wait">counting accent...</span>
     <span id="badgecheck" class="pill pill-wait" hidden></span>
@@ -172,11 +191,65 @@ SHELL_PAGE = """<!doctype html>
   var theme = document.getElementById('themecheck');
   var ready = false;
 
+  // The language, as the shell carries it: `locale` and `dir` in init, then
+  // `manaurum:locale-change` once on ready and on every switch
+  // (IframeAppHost.tsx). LOCALE_DIR is the OS's own table.
+  var LOCALE_DIR = { en: 'ltr', ru: 'ltr', he: 'rtl' };
+  var SWITCH_TO = __SWITCH__;
+  var current = { locale: INIT.locale, dir: INIT.dir };
+  var lang = document.getElementById('localecheck');
+  var switches = document.querySelectorAll('#langswitch button');
+
+  function markSwitch() {
+    for (var i = 0; i < switches.length; i++) {
+      switches[i].setAttribute('aria-pressed',
+        switches[i].getAttribute('data-locale') === current.locale ? 'true' : 'false');
+    }
+  }
+  markSwitch();
+
+  function postLocale(locale) {
+    current = { locale: locale, dir: LOCALE_DIR[locale] };
+    markSwitch();
+    app.contentWindow.postMessage({ type: 'manaurum:locale-change', payload: current },
+                                  location.origin);
+    setTimeout(checkLocale, 300);
+  }
+  for (var s = 0; s < switches.length; s++) {
+    switches[s].addEventListener('click', function () {
+      if (ready) postLocale(this.getAttribute('data-locale'));
+    });
+  }
+
+  // Did the app put the language on <html>? The computed direction, not the
+  // attribute: a stylesheet can also set `direction`, and what mirrors the
+  // page is what the browser computes.
+  function checkLocale() {
+    var doc = null;
+    try { doc = app.contentDocument; } catch (err) { doc = null; }
+    if (!doc || !doc.documentElement) return;
+    var root = doc.documentElement;
+    var gotLang = (root.getAttribute('lang') || '').toLowerCase().split('-')[0];
+    var gotDir = app.contentWindow.getComputedStyle(root).direction;
+    var ok = gotLang === current.locale && gotDir === current.dir;
+    lang.className = ok ? 'pill pill-ok' : 'pill pill-bad';
+    lang.textContent = ok
+      ? 'language applied (' + current.locale + ', ' + current.dir + ')'
+      : 'language IGNORED - shell said ' + current.locale + '/' + current.dir +
+        ', app is ' + (gotLang || 'unset') + '/' + gotDir +
+        ' (set <html lang dir> from payload.locale and payload.dir)';
+    document.body.setAttribute('data-locale-check', ok ? 'ok' : 'bad');
+  }
+
   window.addEventListener('message', function (e) {
     if (e.data && e.data.type === 'manaurum:ready') {
+      var first = !ready;
       ready = true;
       badge.className = 'pill pill-ok';
       badge.textContent = 'manaurum:ready OK';
+      if (!first) return;
+      postLocale(current.locale);
+      if (SWITCH_TO) setTimeout(function () { postLocale(SWITCH_TO); }, 500);
     }
   });
 
@@ -389,12 +462,14 @@ SHELL_PAGE = """<!doctype html>
   app.addEventListener('load', function () {
     app.contentWindow.postMessage({ type: 'manaurum:init', payload: INIT }, location.origin);
     setTimeout(checkTheme, 400);
+    setTimeout(checkLocale, 400);
     setTimeout(checkLayout, 400);
     setTimeout(measure, 600);
     // The real shell waits 10s and then covers the app with "App is not
     // responding". Three seconds is enough to put the failure in a screenshot.
     setTimeout(function () {
       checkTheme();
+      checkLocale();
       checkLayout();
       measure();
       if (ready) return;
@@ -414,7 +489,10 @@ SHELL_PAGE = """<!doctype html>
 """
 
 
-def build_init(appearance, accent, device):
+LOCALE_DIR = {"en": "ltr", "ru": "ltr", "he": "rtl"}
+
+
+def build_init(appearance, accent, device, locale="en"):
     """The payload the shell posts, per references/sdk-api.md.
 
     The mobile column of that file's "Platform fields" table is reproduced
@@ -438,8 +516,8 @@ def build_init(appearance, accent, device):
         "user": {"nickname": "Preview"},
         # 'en' | 'ru' | 'he' and its direction, as the shell sends them
         # (IframeAppHost.tsx, MAN-2289).
-        "locale": "en",
-        "dir": "ltr",
+        "locale": locale,
+        "dir": LOCALE_DIR[locale],
         "permissions": [],
         "appId": "preview-app",
         "offline_token": "",
@@ -566,6 +644,12 @@ class Handler(SimpleHTTPRequestHandler):
         device = q.get("device", ["desktop"])[0].lower()
         if device not in ("desktop", "mobile"):
             device = "desktop"
+        locale = q.get("locale", ["en"])[0].lower()
+        if locale not in LOCALE_DIR:
+            locale = "en"
+        switch = q.get("switch", [""])[0].lower()
+        if switch not in LOCALE_DIR:
+            switch = ""
         # `entry` is the one caller-controlled string that lands in the page.
         # It must be a path, and it is escaped before it reaches the attribute.
         entry = q.get("entry", ["/index.html"])[0]
@@ -595,7 +679,8 @@ class Handler(SimpleHTTPRequestHandler):
                 .replace("__FRAME_STYLE__", style)
                 .replace("__SIZE_HIDDEN__", "" if style else "hidden")
                 .replace("__SIZE_LABEL__", size_label)
-                .replace("__INIT__", json.dumps(build_init(appearance, accent, device))))
+                .replace("__SWITCH__", json.dumps(switch or None))
+                .replace("__INIT__", json.dumps(build_init(appearance, accent, device, locale))))
         blob = page.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -642,6 +727,7 @@ def main():
     say("serving %s" % root)
     say("  framed light : %s/__shell" % base)
     say("  framed dark  : %s/__shell?appearance=dark" % base)
+    say("  in Hebrew    : %s/__shell?locale=he" % base)
     say("  unframed     : %s/" % base)
     try:
         server.serve_forever()

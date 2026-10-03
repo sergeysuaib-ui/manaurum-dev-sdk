@@ -28,7 +28,7 @@
     http://127.0.0.1:8765/__shell?entry=/patterns/index.html%23library
 
   The <head> script is the starter's, shortened: handshake, appearance,
-  device, and the check that the message came from the shell (MAN-2506). A
+  language direction, device, and the check that the message came from the shell (MAN-2506). A
   real app copies the starter's whole block - this page has no SDK import and
   no session runtime to protect, so it leaves out what only those need.
 
@@ -46,6 +46,17 @@
       if (payload.accent) root.dataset.accent = payload.accent;
     }
 
+    // The person's language. This page's words stay English - it is a page
+    // of shapes - but its layout follows <html dir>, so ?locale=he in the
+    // preview shows every pattern mirrored. A real app also re-renders its
+    // strings here: see the starter.
+    var LOCALE_DIR = { en: 'ltr', ru: 'ltr', he: 'rtl' };
+    function applyShellLocale(payload) {
+      if (!LOCALE_DIR.hasOwnProperty(payload.locale)) return;
+      root.lang = payload.locale;
+      root.dir = payload.dir === 'rtl' || payload.dir === 'ltr' ? payload.dir : LOCALE_DIR[payload.locale];
+    }
+
     var SHELL_ORIGINS = ['https://manaurum.com', 'https://app.manaurum.com'];
     if (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)) {
       SHELL_ORIGINS.push(location.origin);
@@ -58,6 +69,9 @@
       var payload = data.payload || {};
       if (data.type === 'manaurum:init' || data.type === 'manaurum:theme-change') {
         applyShellTheme(payload);
+      }
+      if (data.type === 'manaurum:init' || data.type === 'manaurum:locale-change') {
+        applyShellLocale(payload);
       }
       if ((data.type === 'manaurum:init' || data.type === 'manaurum:device-change') && payload.device) {
         window.__device = payload.device;
@@ -168,7 +182,7 @@
         <!-- The way back sits in the text column, not at the window edge:
              on a wide window the two would be a screen apart. -->
         <div class="toolbar">
-          <a class="btn btn-ghost" href="#library">&larr; All posts</a>
+          <a class="btn btn-ghost" href="#library"><span class="flip-rtl" aria-hidden="true">&larr;</span> All posts</a>
         </div>
         <h1 class="article-title">Why clients leave after the first month, and the one reason we can fix</h1>
         <p class="article-meta"><span>12 March 2026</span><span>Customers</span><span>4 min read</span></p>

@@ -49,12 +49,61 @@
      `manaurum:session-*` is let through untouched: Core injects a session
      runtime into this page that talks to a Core-origin frame of its own and
      checks that frame's origin and source itself.
+
+  4. LANGUAGE. The person picks English, Russian or Hebrew in ManAurum's
+     settings, and the shell hands it over as `locale` ('en' | 'ru' | 'he')
+     and `dir` ('ltr' | 'rtl') in `manaurum:init`, then posts
+     `manaurum:locale-change` {locale, dir} whenever they switch. We write
+     both onto <html lang dir> and window.__manaurum and fire
+     `manaurum-locale`; the strings at the bottom of this file re-render on
+     it, and app.css uses logical properties so the whole page mirrors under
+     dir="rtl" by itself. manaurum-v2.mjs 2.3.0 passes neither value on
+     (MAN-3233), which is why this listener reads them. A standalone tab never
+     hears the shell: it guesses from the browser's languages instead.
 -->
 <script>
   (function () {
     var root = document.documentElement;
 
-    window.__manaurum = { init: null, device: 'desktop', framed: false };
+    window.__manaurum = { init: null, device: 'desktop', framed: false, locale: 'en', dir: 'ltr' };
+
+    // The OS's own table (frontend/src/i18n/config.ts): three languages, and
+    // the direction each one is written in.
+    var LOCALE_DIR = { en: 'ltr', ru: 'ltr', he: 'rtl' };
+
+    // Standalone default: the first browser language we have strings for,
+    // else English. Once the shell sends a locale it wins. A standalone tab
+    // cannot read the OS setting - it lives on the shell's origin, not ours.
+    function applyBrowserLocale() {
+      var tags = navigator.languages && navigator.languages.length
+        ? navigator.languages : [navigator.language];
+      var locale = 'en';
+      for (var i = 0; i < tags.length; i++) {
+        var base = String(tags[i] || '').toLowerCase().split('-')[0];
+        if (LOCALE_DIR.hasOwnProperty(base)) { locale = base; break; }
+      }
+      root.lang = locale;
+      root.dir = LOCALE_DIR[locale];
+      window.__manaurum.locale = locale;
+      window.__manaurum.dir = LOCALE_DIR[locale];
+    }
+    applyBrowserLocale();
+
+    // Returns true when the language actually changed. A locale this app has
+    // no strings for reads as English, left to right - never English text
+    // laid out right to left.
+    function applyShellLocale(payload) {
+      if (!payload.locale) return false;
+      var locale = LOCALE_DIR.hasOwnProperty(payload.locale) ? payload.locale : 'en';
+      var dir = locale === payload.locale && (payload.dir === 'ltr' || payload.dir === 'rtl')
+        ? payload.dir : LOCALE_DIR[locale];
+      var changed = locale !== window.__manaurum.locale || dir !== window.__manaurum.dir;
+      root.lang = locale;
+      root.dir = dir;
+      window.__manaurum.locale = locale;
+      window.__manaurum.dir = dir;
+      return changed;
+    }
 
     // Standalone default, applied before first paint so there is no flash.
     // Once the shell sends an appearance this is never consulted again.
@@ -100,6 +149,7 @@
         window.__manaurum.framed = true;
         if (payload.device) window.__manaurum.device = payload.device;
         applyShellTheme(payload);
+        applyShellLocale(payload);
         try {
           event.source.postMessage(
             { type: 'manaurum:ready', payload: { sdk_version: 'starter' } },
@@ -109,7 +159,16 @@
           console.error('[my-app] failed to answer manaurum:ready', e);
         }
         window.dispatchEvent(new CustomEvent('manaurum-device'));
+        window.dispatchEvent(new CustomEvent('manaurum-locale'));
         window.dispatchEvent(new CustomEvent('manaurum-init'));
+        return;
+      }
+
+      // The person switched language while the app is open. The shell also
+      // posts this once right after ready, with the values init carried;
+      // nothing changed then, so nothing re-renders.
+      if (data.type === 'manaurum:locale-change') {
+        if (applyShellLocale(payload)) window.dispatchEvent(new CustomEvent('manaurum-locale'));
         return;
       }
 
@@ -141,13 +200,17 @@
     <header class="page-header">
       <div>
         <h1>my-app</h1>
+        <!-- LANGUAGE. Every word a person reads carries data-i18n="key" and
+             comes from STRINGS at the bottom of this file. A code name, a
+             host or a path is not translated and sits OUTSIDE the key, in a
+             .mono span with dir="ltr", which stays left to right in Hebrew. -->
         <p class="subtitle">
-          A Platform v2 starter, running as a container at
-          <span class="mono">my-app.apps.manaurum.com</span>.
+          <span data-i18n="header.subtitle">A Platform v2 starter, running as a container at</span>
+          <span class="mono" dir="ltr">my-app.apps.manaurum.com</span>
         </p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-secondary" id="reload" type="button">Reload</button>
+        <button class="btn btn-secondary" id="reload" type="button" data-i18n="header.reload">Reload</button>
       </div>
     </header>
 
@@ -169,18 +232,22 @@
     <!-- FORM. Label above the input, help text below, one primary action,
          feedback next to the button that caused it. -->
     <section class="card">
-      <h2 class="card-title">Your note</h2>
-      <p class="card-hint">Stored per user through the <span class="mono">os.kv</span> capability.</p>
+      <h2 class="card-title" data-i18n="note.title">Your note</h2>
+      <p class="card-hint"><span data-i18n="note.hint">Stored per person, through the capability</span>
+        <span class="mono" dir="ltr">os.kv</span></p>
 
+      <!-- dir="auto": what a person TYPES takes its direction from the text,
+           so a Hebrew note in an English window still reads right to left. -->
       <div class="field">
-        <label class="field-label" for="note">Note</label>
-        <textarea class="input" id="note"
+        <label class="field-label" for="note" data-i18n="note.label">Note</label>
+        <textarea class="input" id="note" dir="auto"
+                  data-i18n-placeholder="note.placeholder"
                   placeholder="Anything at all — then Save and reload the window."></textarea>
-        <p class="field-help" id="note-help">Saved against your user id, private to you.</p>
+        <p class="field-help" id="note-help" data-i18n="note.help">Saved against your user id, private to you.</p>
       </div>
 
       <div class="form-actions">
-        <button class="btn btn-primary" id="save" type="button" disabled>Save</button>
+        <button class="btn btn-primary" id="save" type="button" disabled data-i18n="note.save">Save</button>
         <span class="status" id="note-status"></span>
       </div>
     </section>
@@ -188,10 +255,10 @@
     <!-- LOADING → CONTENT. The skeleton is the shape of the answer, so the
          layout does not jump when the data lands. -->
     <section class="card">
-      <h2 class="card-title">Signed-in user</h2>
+      <h2 class="card-title" data-i18n="me.title">Signed-in user</h2>
       <p class="card-hint">
-        From <span class="mono">GET /api/me</span> — an <span class="mono">auth: "user"</span>
-        route. The gateway mints the JWT; this app only verifies it.
+        <span class="mono" dir="ltr">GET /api/me</span>:
+        <span data-i18n="me.hint">a route with auth "user". The gateway mints the token; this app only verifies it.</span>
       </p>
       <div id="me-skeleton" class="stack" aria-hidden="true">
         <div class="skeleton skeleton-line w-60"></div>
@@ -212,24 +279,20 @@
          it is rare"). The card hint already says it. -->
     <section class="card card-flush">
       <div class="card-head">
-        <h2 class="card-title">Granted capabilities</h2>
-        <p class="card-hint">What this install is actually allowed to call.</p>
+        <h2 class="card-title" data-i18n="caps.title">Granted capabilities</h2>
+        <p class="card-hint" data-i18n="caps.hint">What this install is actually allowed to call.</p>
       </div>
       <ul class="list" id="caps"></ul>
       <div class="empty" id="caps-empty" hidden>
         <div class="empty-glyph" aria-hidden="true">◇</div>
-        <p class="empty-title" id="caps-empty-title">No capabilities granted</p>
-        <p class="empty-body" id="caps-empty-body">
-          Every <span class="mono">os.*</span> call will return
-          <span class="mono">403 capability_not_granted</span> until a tenant admin
-          grants them on the install.
-        </p>
+        <p class="empty-title" id="caps-empty-title"></p>
+        <p class="empty-body" id="caps-empty-body"></p>
       </div>
     </section>
 
     <!-- Shell context. Useful while building; delete it in a real app. -->
     <section class="card">
-      <h2 class="card-title">Shell context</h2>
+      <h2 class="card-title" data-i18n="ctx.title">Shell context</h2>
       <dl class="kv" id="shell-ctx"></dl>
     </section>
 
@@ -241,7 +304,10 @@
          delegated handler rather than a button each. -->
     <div data-view="cap" hidden>
       <div class="toolbar">
-        <a class="btn btn-ghost" href="#overview">&larr; All capabilities</a>
+        <!-- An arrow that means "back" points the other way in Hebrew:
+             .flip-rtl mirrors it under dir="rtl". -->
+        <a class="btn btn-ghost" href="#overview"><span class="flip-rtl" aria-hidden="true">&larr;</span>
+          <span data-i18n="cap.back">All capabilities</span></a>
       </div>
       <section class="card">
         <h2 class="card-title mono" id="cap-name">—</h2>
@@ -253,6 +319,201 @@
   </div>
 
 <script type="module">
+  const $ = (id) => document.getElementById(id);
+
+  // ── Language. The person picks it in ManAurum's settings; the inline
+  // listener in <head> has already put it on <html lang dir> and on
+  // window.__manaurum, and fires `manaurum-locale` when it changes while the
+  // app is open. Every word a person reads comes from STRINGS through t(),
+  // every number and date through Intl with the OS's own tag, so a switch is
+  // one re-render. Keep the three catalogues on the same keys -
+  // tests/test_static.py fails when one is missing a key; at run time a
+  // missing key reads as English. Code names (os.kv, HTTP codes) stay as
+  // they are in every language.
+  const STRINGS = {
+    en: {
+      'header.subtitle': 'A Platform v2 starter, running as a container at',
+      'header.reload': 'Reload',
+      'note.title': 'Your note',
+      'note.hint': 'Stored per person, through the capability',
+      'note.label': 'Note',
+      'note.placeholder': 'Anything at all — then Save and reload the window.',
+      'note.help': 'Saved against your user id, private to you.',
+      'note.save': 'Save',
+      'note.saving': 'Saving…',
+      'note.saved': 'Saved at {time}',
+      'note.loadFailed': 'Could not load the note (HTTP {status})',
+      'note.saveFailed': 'Could not save (HTTP {status})',
+      'error.network': 'Could not reach the app’s server',
+      'me.title': 'Signed-in user',
+      'me.hint': 'a route with auth "user". The gateway mints the token; this app only verifies it.',
+      'me.failed': 'Could not load (HTTP {status})',
+      'caps.title': 'Granted capabilities',
+      'caps.hint': 'What this install is actually allowed to call.',
+      'caps.none.title': 'No capabilities granted',
+      'caps.none.body': 'Every os.* call returns 403 capability_not_granted until a tenant admin grants them on this install.',
+      'caps.standalone.title': 'Not running inside Manaurum',
+      'caps.standalone.body': 'Open the app as a desktop window to see what it was granted. The standalone URL never receives manaurum:init.',
+      'caps.row.sub': 'granted on this install',
+      'ctx.title': 'Shell context',
+      'ctx.framed': 'framed',
+      'ctx.device': 'device',
+      'ctx.appearance': 'appearance',
+      'ctx.accent': 'accent',
+      'ctx.language': 'language',
+      'ctx.user': 'user',
+      'ctx.app': 'app id',
+      'ctx.formatted': 'number and date',
+      'ctx.yes': 'yes',
+      'ctx.no': 'no (standalone URL)',
+      'ctx.unset': '(unset)',
+      'ctx.accentDefault': '(the shell has not said; using the default)',
+      'cap.back': 'All capabilities',
+      'cap.grantedHint': 'This install may call it. The call goes from your container to the gateway.',
+      'cap.notGrantedHint': 'Not granted on this install — every call returns 403 capability_not_granted.',
+      'cap.k.capability': 'capability',
+      'cap.k.status': 'status',
+      'cap.k.endpoint': 'endpoint',
+      'cap.k.called': 'called',
+      'cap.v.granted': 'granted',
+      'cap.v.notGranted': 'not granted',
+      'cap.v.called': 'from the container, never from this page',
+    },
+    ru: {
+      'header.subtitle': 'Стартовый шаблон Platform v2, работает как контейнер по адресу',
+      'header.reload': 'Обновить',
+      'note.title': 'Ваша заметка',
+      'note.hint': 'Хранится отдельно для каждого человека, через возможность',
+      'note.label': 'Заметка',
+      'note.placeholder': 'Что угодно — потом «Сохранить» и перезагрузите окно.',
+      'note.help': 'Сохраняется под вашим идентификатором и видна только вам.',
+      'note.save': 'Сохранить',
+      'note.saving': 'Сохраняем…',
+      'note.saved': 'Сохранено в {time}',
+      'note.loadFailed': 'Не удалось загрузить заметку (HTTP {status})',
+      'note.saveFailed': 'Не удалось сохранить (HTTP {status})',
+      'error.network': 'Сервер приложения не отвечает',
+      'me.title': 'Кто вошёл',
+      'me.hint': 'маршрут с auth "user". Токен выпускает шлюз, приложение его только проверяет.',
+      'me.failed': 'Не удалось загрузить (HTTP {status})',
+      'caps.title': 'Выданные возможности',
+      'caps.hint': 'Что этой установке на самом деле разрешено вызывать.',
+      'caps.none.title': 'Возможности не выданы',
+      'caps.none.body': 'Любой вызов os.* вернёт 403 capability_not_granted, пока администратор организации не выдаст их этой установке.',
+      'caps.standalone.title': 'Приложение открыто не в Manaurum',
+      'caps.standalone.body': 'Откройте приложение окном на рабочем столе, чтобы увидеть, что ему выдано. Отдельная вкладка никогда не получает manaurum:init.',
+      'caps.row.sub': 'выдана этой установке',
+      'ctx.title': 'Контекст оболочки',
+      'ctx.framed': 'в окне',
+      'ctx.device': 'устройство',
+      'ctx.appearance': 'оформление',
+      'ctx.accent': 'акцент',
+      'ctx.language': 'язык',
+      'ctx.user': 'пользователь',
+      'ctx.app': 'id приложения',
+      'ctx.formatted': 'число и дата',
+      'ctx.yes': 'да',
+      'ctx.no': 'нет (отдельная вкладка)',
+      'ctx.unset': '(не задано)',
+      'ctx.accentDefault': '(оболочка не сообщила; по умолчанию)',
+      'cap.back': 'Все возможности',
+      'cap.grantedHint': 'Этой установке её вызывать можно. Вызов идёт из вашего контейнера в шлюз.',
+      'cap.notGrantedHint': 'Не выдана этой установке — каждый вызов вернёт 403 capability_not_granted.',
+      'cap.k.capability': 'возможность',
+      'cap.k.status': 'статус',
+      'cap.k.endpoint': 'адрес',
+      'cap.k.called': 'откуда вызывать',
+      'cap.v.granted': 'выдана',
+      'cap.v.notGranted': 'не выдана',
+      'cap.v.called': 'из контейнера, никогда не со страницы',
+    },
+    he: {
+      'header.subtitle': 'תבנית פתיחה של Platform v2, שרצה כקונטיינר בכתובת',
+      'header.reload': 'רענון',
+      'note.title': 'הפתק שלך',
+      'note.hint': 'נשמר בנפרד לכל אדם, דרך היכולת',
+      'note.label': 'פתק',
+      'note.placeholder': 'כל דבר שתרצו — ואז שמירה וטעינה מחדש של החלון.',
+      'note.help': 'נשמר תחת מזהה המשתמש שלך וגלוי רק לך.',
+      'note.save': 'שמירה',
+      'note.saving': 'שומר…',
+      'note.saved': 'נשמר ב־{time}',
+      'note.loadFailed': 'טעינת הפתק נכשלה (HTTP {status})',
+      'note.saveFailed': 'השמירה נכשלה (HTTP {status})',
+      'error.network': 'אין חיבור לשרת של האפליקציה',
+      'me.title': 'מי מחובר',
+      'me.hint': 'נתיב למשתמשים מחוברים בלבד. השער מנפיק את האסימון, והאפליקציה רק מאמתת אותו.',
+      'me.failed': 'הטעינה נכשלה (HTTP {status})',
+      'caps.title': 'יכולות שהוענקו',
+      'caps.hint': 'מה ההתקנה הזו רשאית לקרוא בפועל.',
+      'caps.none.title': 'לא הוענקו יכולות',
+      'caps.none.body': 'כל קריאה ל־os.* תחזיר 403 capability_not_granted עד שמנהל הארגון יעניק אותן להתקנה הזו.',
+      'caps.standalone.title': 'האפליקציה לא פתוחה בתוך Manaurum',
+      'caps.standalone.body': 'פתחו את האפליקציה כחלון בשולחן העבודה כדי לראות מה הוענק לה. כתובת עצמאית אף פעם לא מקבלת manaurum:init.',
+      'caps.row.sub': 'הוענקה להתקנה הזו',
+      'ctx.title': 'הקשר המעטפת',
+      'ctx.framed': 'בתוך חלון',
+      'ctx.device': 'מכשיר',
+      'ctx.appearance': 'מראה',
+      'ctx.accent': 'צבע הדגשה',
+      'ctx.language': 'שפה',
+      'ctx.user': 'משתמש',
+      'ctx.app': 'מזהה אפליקציה',
+      'ctx.formatted': 'מספר ותאריך',
+      'ctx.yes': 'כן',
+      'ctx.no': 'לא (כתובת עצמאית)',
+      'ctx.unset': '(לא הוגדר)',
+      'ctx.accentDefault': '(המעטפת לא מסרה; ברירת מחדל)',
+      'cap.back': 'כל היכולות',
+      'cap.grantedHint': 'ההתקנה הזו רשאית לקרוא לה. הקריאה יוצאת מהקונטיינר שלך אל השער.',
+      'cap.notGrantedHint': 'לא הוענקה להתקנה הזו — כל קריאה תחזיר 403 capability_not_granted.',
+      'cap.k.capability': 'יכולת',
+      'cap.k.status': 'סטטוס',
+      'cap.k.endpoint': 'כתובת',
+      'cap.k.called': 'מאיפה קוראים',
+      'cap.v.granted': 'הוענקה',
+      'cap.v.notGranted': 'לא הוענקה',
+      'cap.v.called': 'מהקונטיינר, אף פעם לא מהדף',
+    },
+  };
+  // The BCP-47 tags the OS itself hands to Intl (frontend/src/i18n/config.ts).
+  const INTL_LOCALE = { en: 'en', ru: 'ru-RU', he: 'he-IL' };
+
+  const lang = () => (STRINGS[window.__manaurum.locale] ? window.__manaurum.locale : 'en');
+  function t(key, vars) {
+    let text = STRINGS[lang()][key] ?? STRINGS.en[key] ?? key;
+    for (const [name, value] of Object.entries(vars || {})) {
+      text = text.split('{' + name + '}').join(String(value));
+    }
+    return text;
+  }
+  // Numbers and dates in the person's language: 1,234.5 / 1 234,5 / 1,234.5,
+  // and the month name, the order and the 24-hour clock that go with it.
+  const formatNumber = (n, options) => new Intl.NumberFormat(INTL_LOCALE[lang()], options).format(n);
+  const formatDate = (d, options) => new Intl.DateTimeFormat(
+    INTL_LOCALE[lang()], options || { dateStyle: 'medium', timeStyle: 'short' }).format(d);
+
+  // A message set from code keeps its key on the element, so a language
+  // switch translates it again instead of leaving it in the old language.
+  function say(el, key, vars) {
+    el.dataset.i18n = key;
+    el.dataset.i18nVars = JSON.stringify(vars || {});
+    el.textContent = t(key, vars);
+  }
+  function applyStrings() {
+    for (const el of document.querySelectorAll('[data-i18n]')) {
+      el.textContent = t(el.dataset.i18n, el.dataset.i18nVars ? JSON.parse(el.dataset.i18nVars) : null);
+    }
+    for (const el of document.querySelectorAll('[data-i18n-placeholder]')) {
+      el.placeholder = t(el.dataset.i18nPlaceholder);
+    }
+  }
+  // Both before the SDK import below: the words are right before it loads,
+  // and a `manaurum-locale` that fires while the import is still in flight
+  // (init usually arrives then) is not missed.
+  applyStrings();
+  window.addEventListener('manaurum-locale', applyStrings);
+
   // The v2 SDK is optional sugar — mainly `app.fetch()` (same-origin, cookies
   // included, JSON Accept, retry on idempotent verbs). Imported dynamically so
   // a network failure degrades to plain fetch() instead of a blank app.
@@ -273,8 +534,6 @@
   const request = (path, init) =>
     sdk ? sdk.fetch(path, init) : fetch(path, { credentials: 'same-origin', ...init });
 
-  const $ = (id) => document.getElementById(id);
-
   // ── Device. The shell supplies 'mobile' | 'desktop'; branch on that rather
   // than on window width — an app window can be narrow on a desktop.
   //
@@ -291,9 +550,14 @@
 
   // ── GET /api/me → key/value panel, replacing the skeleton.
   (async () => {
+    const box = $('me-error');
     try {
       const res = await request('/api/me');
-      if (!res.ok) throw new Error(`HTTP ${res.status} — ${(await res.text()).slice(0, 120)}`);
+      if (!res.ok) {
+        say(box, 'me.failed', { status: res.status });
+        box.hidden = false;
+        return;
+      }
       const me = await res.json();
       const dl = $('me');
       dl.innerHTML = '';
@@ -306,8 +570,8 @@
       }
       dl.hidden = false;
     } catch (err) {
-      const box = $('me-error');
-      box.textContent = String(err.message || err);
+      console.error('[my-app] /api/me', err);
+      say(box, 'error.network');
       box.hidden = false;
     } finally {
       $('me-skeleton').remove();
@@ -316,15 +580,20 @@
 
   // ── GET/PUT /api/notes → the os.kv round trip.
   (async () => {
+    const s = $('note-status');
     try {
       const res = await request('/api/notes');
-      if (!res.ok) throw new Error(`load failed (HTTP ${res.status})`);
+      if (!res.ok) {
+        s.className = 'status status-error';
+        say(s, 'note.loadFailed', { status: res.status });
+        return;
+      }
       $('note').value = (await res.json()).text || '';
       $('save').disabled = false;
     } catch (err) {
-      const s = $('note-status');
-      s.textContent = String(err.message || err);
+      console.error('[my-app] /api/notes', err);
       s.className = 'status status-error';
+      say(s, 'error.network');
     }
   })();
 
@@ -332,19 +601,24 @@
     const status = $('note-status');
     $('save').disabled = true;
     status.className = 'status';
-    status.textContent = 'Saving…';
+    say(status, 'note.saving');
     try {
       const res = await request('/api/notes', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: $('note').value }),
       });
-      if (!res.ok) throw new Error(`Save failed (HTTP ${res.status})`);
-      status.className = 'status status-success';
-      status.textContent = 'Saved';
+      if (res.ok) {
+        status.className = 'status status-success';
+        say(status, 'note.saved', { time: formatDate(new Date(), { timeStyle: 'short' }) });
+      } else {
+        status.className = 'status status-error';
+        say(status, 'note.saveFailed', { status: res.status });
+      }
     } catch (err) {
+      console.error('[my-app] save', err);
       status.className = 'status status-error';
-      status.textContent = String(err.message || err);
+      say(status, 'error.network');
     }
     $('save').disabled = false;
   });
@@ -361,15 +635,15 @@
     if (!init) {
       // Opened at the standalone URL: there is no shell, so this is unknown
       // rather than empty. Saying "none" here would be a lie.
-      $('caps-empty-title').textContent = 'Not running inside Manaurum';
-      $('caps-empty-body').innerHTML =
-        'Open the app as a desktop window to see what it was granted. ' +
-        'The standalone URL never receives <span class="mono">manaurum:init</span>.';
+      $('caps-empty-title').textContent = t('caps.standalone.title');
+      $('caps-empty-body').textContent = t('caps.standalone.body');
       empty.hidden = false;
       return;
     }
 
     if (caps.length === 0) {
+      $('caps-empty-title').textContent = t('caps.none.title');
+      $('caps-empty-body').textContent = t('caps.none.body');
       empty.hidden = false;
       return;
     }
@@ -392,7 +666,7 @@
       title.textContent = name;
       const sub = document.createElement('span');
       sub.className = 'row-sub';
-      sub.textContent = 'granted on this install';
+      sub.textContent = t('caps.row.sub');
       main.append(title, sub);
       li.append(main);
       list.append(li);
@@ -418,21 +692,19 @@
       .map((c) => (typeof c === 'string' ? c : c.name || String(c)));
 
     $('cap-name').textContent = name || '—';
-    $('cap-hint').textContent = granted.includes(name)
-      ? 'This install may call it. The call itself goes from your container to the gateway.'
-      : 'Not in this install’s grant set — every call returns 403 capability_not_granted.';
+    $('cap-hint').textContent = t(granted.includes(name) ? 'cap.grantedHint' : 'cap.notGrantedHint');
 
-    const rows = {
-      capability: name || '—',
-      status: granted.includes(name) ? 'granted' : 'not granted',
-      endpoint: 'POST ${MANAURUM_CORE_URL}/api/capability/' + (name || ''),
-      called: 'from the container, never from this page',
-    };
+    const rows = [
+      ['cap.k.capability', name || '—'],
+      ['cap.k.status', t(granted.includes(name) ? 'cap.v.granted' : 'cap.v.notGranted')],
+      ['cap.k.endpoint', 'POST ${MANAURUM_CORE_URL}/api/capability/' + (name || '')],
+      ['cap.k.called', t('cap.v.called')],
+    ];
     const dl = $('cap-kv');
     dl.innerHTML = '';
-    for (const [k, v] of Object.entries(rows)) {
+    for (const [key, v] of rows) {
       const dt = document.createElement('dt');
-      dt.textContent = k;
+      dt.textContent = t(key);
       const dd = document.createElement('dd');
       dd.textContent = v;
       dl.append(dt, dd);
@@ -459,19 +731,21 @@
   function renderShellCtx() {
     const init = window.__manaurum.init;
     const root = document.documentElement;
-    const rows = {
-      framed: init ? 'yes' : 'no (standalone URL)',
-      device: window.__manaurum.device,
-      appearance: root.dataset.appearance || '(unset)',
-      accent: root.dataset.accent || '(shell has not said; using default)',
-      user: (init && init.user && init.user.nickname) || '—',
-      appId: (init && init.appId) || '—',
-    };
+    const rows = [
+      ['ctx.framed', t(init ? 'ctx.yes' : 'ctx.no')],
+      ['ctx.device', window.__manaurum.device],
+      ['ctx.appearance', root.dataset.appearance || t('ctx.unset')],
+      ['ctx.accent', root.dataset.accent || t('ctx.accentDefault')],
+      ['ctx.language', root.lang + ' · ' + root.dir],
+      ['ctx.formatted', formatNumber(1234567.89) + ' · ' + formatDate(new Date())],
+      ['ctx.user', (init && init.user && init.user.nickname) || '—'],
+      ['ctx.app', (init && init.appId) || '—'],
+    ];
     const dl = $('shell-ctx');
     dl.innerHTML = '';
-    for (const [k, v] of Object.entries(rows)) {
+    for (const [key, v] of rows) {
       const dt = document.createElement('dt');
-      dt.textContent = k;
+      dt.textContent = t(key);
       const dd = document.createElement('dd');
       dd.textContent = v;
       dl.append(dt, dd);
@@ -488,6 +762,13 @@
   // Appearance/accent changed: app.css has already repainted (it reads the
   // data attributes), this only refreshes the values we display.
   window.addEventListener('manaurum-theme', renderShellCtx);
+  // Language switched: <html lang dir> is already set and app.css mirrors on
+  // its own (logical properties); applyStrings (top of this script) has
+  // retranslated the static text, and this redraws what code wrote.
+  window.addEventListener('manaurum-locale', () => {
+    route();
+    renderShellState();
+  });
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 /* ============================================================================
    my-app — stylesheet
-   manaurum-starter app.css 3.15.0 — keep this line when you copy the file.
+   manaurum-starter app.css 3.16.0 — keep this line when you copy the file.
    It is how the platform tells which template an app's stylesheet came from,
    and so which apps still carry a defect fixed in a later one.
    ----------------------------------------------------------------------------
@@ -26,12 +26,18 @@
    can fall back to `fetch()`, but a `<link>` that fails to load leaves your
    user staring at unstyled HTML.
 
-   THREE RULES THIS FILE ENCODES, because they are the ones that get missed:
+   FOUR RULES THIS FILE ENCODES, because they are the ones that get missed:
      1. The OS draws the title bar. Never draw your own.
      2. Fill the content area. No margin against the window edge.
      3. Appearance (light/dark) and accent come from the SHELL, not from the
         browser. `index.html` sets `data-appearance` / `data-accent` on <html>;
         every colour below reads off those. See the handshake there.
+     4. Left and right are the READING direction, and Hebrew reads the other
+        way. `index.html` sets <html dir="rtl"> for it, and every side here is
+        a logical one - `margin-inline-start`, `padding-inline-end`,
+        `border-inline-start`, `text-align: start` - so the page mirrors by
+        itself. Never `margin-left` / `text-align: left`: `check_ui.py` fails
+        on them. An arrow that means back or forward takes `.flip-rtl`.
    ========================================================================= */
 
 /* ── Tokens: light (the default) ─────────────────────────────────────────── */
@@ -340,11 +346,11 @@ a { color: var(--accent); text-underline-offset: 2px; }
      `.btn` does the same thing four blocks down; a row needs it just as much. */
   appearance: none;
   -webkit-appearance: none;
-  border-left: 0; border-right: 0; border-bottom: 0;
+  border-inline: 0; border-bottom: 0;
   background: none;
   font: inherit;
   color: inherit;
-  text-align: left;
+  text-align: start;
   text-decoration: none;
   width: 100%;
 }
@@ -379,9 +385,10 @@ a { color: var(--accent); text-underline-offset: 2px; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* `.row-meta` hugs the right edge, which only works for SHORT values of
+/* `.row-meta` hugs the end edge (the right in English, the left in Hebrew),
+   which only works for SHORT values of
    similar length: a date, a count, an amount. A category name is neither -
-   thirteen categories of different lengths make the right edge jagged and the
+   thirteen categories of different lengths make that edge jagged and the
    long ones push the title into an ellipsis. Variable-length metadata goes in
    `.row-foot`, under the text. The cap below keeps a long value from eating
    the row when it lands here anyway. */
@@ -452,7 +459,7 @@ a { color: var(--accent); text-underline-offset: 2px; }
 }
 .row-foot > * + *::before {
   content: "\00B7";
-  margin-right: var(--space-2);
+  margin-inline-end: var(--space-2);
   color: var(--text-tertiary);
 }
 /* A badge is its own separator - a dot inside the pill reads as part of it. */
@@ -821,7 +828,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 }
 .article-meta > * + *::before {
   content: "\00B7";
-  margin-right: var(--space-2);
+  margin-inline-end: var(--space-2);
 }
 
 .lead {
@@ -856,7 +863,7 @@ textarea.input { min-height: 96px; resize: vertical; }
 .prose > h2,
 .prose > h3 { margin-top: var(--space-8); }
 .prose ul,
-.prose ol { padding-left: var(--space-6); }
+.prose ol { padding-inline-start: var(--space-6); }
 .prose li + li { margin-top: var(--space-1); }
 .prose a { text-decoration: underline; text-decoration-thickness: 1px; }
 .prose img { display: block; max-width: 100%; height: auto; border-radius: var(--radius-card); }
@@ -873,8 +880,9 @@ textarea.input { min-height: 96px; resize: vertical; }
    reading screen has one thing to look at, and it is the text. */
 .pull {
   margin-block: var(--space-6);
-  padding: var(--space-1) 0 var(--space-1) var(--space-5);
-  border-left: 3px solid var(--border-hairline-strong);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-5) 0;
+  border-inline-start: 3px solid var(--border-hairline-strong);
   font-family: var(--font-display);
   font-size: var(--fs-subhead);
   line-height: var(--lh-snug);
@@ -893,7 +901,18 @@ textarea.input { min-height: 96px; resize: vertical; }
 /* ── Utilities ──────────────────────────────────────────────────────────── */
 
 .muted { color: var(--text-secondary); }
-.mono { font-family: var(--font-mono); font-size: var(--fs-footnote); }
+/* Code, hosts and paths read left to right in every language. Isolated, a
+   code name inside a sentence cannot reorder the words around it; and an
+   INLINE one inside Hebrew text also takes `dir="ltr"` in the markup
+   (`<span class="mono" dir="ltr">/api/me</span>`), or the slash at its edge
+   takes the page's direction and jumps to the wrong side. Not here as
+   `direction: ltr`: that would also move a block of code (`.row-title.mono`)
+   to the left edge of a right-to-left page. */
+.mono { font-family: var(--font-mono); font-size: var(--fs-footnote); unicode-bidi: isolate; }
+/* An arrow that means back or forward points the other way in Hebrew. A
+   clock, a play button or a check mark does not - leave those alone. */
+.flip-rtl { display: inline-block; }
+[dir="rtl"] .flip-rtl { transform: scaleX(-1); }
 .stack { display: flex; flex-direction: column; gap: var(--space-4); }
 
 /* Visually hidden but announced. For labels a sighted user gets from context. */
