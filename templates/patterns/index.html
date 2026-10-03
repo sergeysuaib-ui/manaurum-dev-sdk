@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr" data-languages="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -27,8 +27,14 @@
     python templates/preview.py --app templates
     http://127.0.0.1:8765/__shell?entry=/patterns/index.html%23library
 
+  It is written in English only, and says so on <html> with
+  data-languages="en": its sample text has no Russian or Hebrew, and English
+  laid out right to left is wrong for a reader and for a screen reader alike.
+  An app in three languages follows the starter instead. To see these shapes
+  mirrored, copy one into the starter and open it with ?locale=he.
+
   The <head> script is the starter's, shortened: handshake, appearance,
-  language direction, device, and the check that the message came from the shell (MAN-2506). A
+  device, and the check that the message came from the shell (MAN-2506). A
   real app copies the starter's whole block - this page has no SDK import and
   no session runtime to protect, so it leaves out what only those need.
 
@@ -46,17 +52,6 @@
       if (payload.accent) root.dataset.accent = payload.accent;
     }
 
-    // The person's language. This page's words stay English - it is a page
-    // of shapes - but its layout follows <html dir>, so ?locale=he in the
-    // preview shows every pattern mirrored. A real app also re-renders its
-    // strings here: see the starter.
-    var LOCALE_DIR = { en: 'ltr', ru: 'ltr', he: 'rtl' };
-    function applyShellLocale(payload) {
-      if (!LOCALE_DIR.hasOwnProperty(payload.locale)) return;
-      root.lang = payload.locale;
-      root.dir = payload.dir === 'rtl' || payload.dir === 'ltr' ? payload.dir : LOCALE_DIR[payload.locale];
-    }
-
     var SHELL_ORIGINS = ['https://manaurum.com', 'https://app.manaurum.com'];
     if (/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname)) {
       SHELL_ORIGINS.push(location.origin);
@@ -69,9 +64,6 @@
       var payload = data.payload || {};
       if (data.type === 'manaurum:init' || data.type === 'manaurum:theme-change') {
         applyShellTheme(payload);
-      }
-      if (data.type === 'manaurum:init' || data.type === 'manaurum:locale-change') {
-        applyShellLocale(payload);
       }
       if ((data.type === 'manaurum:init' || data.type === 'manaurum:device-change') && payload.device) {
         window.__device = payload.device;

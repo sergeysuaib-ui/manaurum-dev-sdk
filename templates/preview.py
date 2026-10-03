@@ -38,8 +38,10 @@ and `dir` goes with it as the shell sends it. Like the shell, preview posts
 `manaurum:locale-change` once when the app answers ready, and again from the
 en / ru / he switch in the bar - or by itself, half a second after ready,
 when the URL carries `&switch=he`, which is how a headless run photographs a
-live switch. `language IGNORED` means the app did not follow. The result also
-lands on the shell page's <body> as `data-locale-check` (`ok` / `bad`).
+live switch. `language IGNORED` means the app did not follow. An app that
+declares one language on purpose (`<html data-languages="he">`) reads `fixed
+language` instead. The result also lands on the shell page's <body> as
+`data-locale-check` (`ok` / `bad` / `fixed`).
 
 It also measures the first screen of the rendered app, because these are the
 failures a rule list does not name and a hurried look does not see (PR #27):
@@ -231,6 +233,16 @@ SHELL_PAGE = """<!doctype html>
     var root = doc.documentElement;
     var gotLang = (root.getAttribute('lang') || '').toLowerCase().split('-')[0];
     var gotDir = app.contentWindow.getComputedStyle(root).direction;
+    // One language on purpose, said out loud: not a failure to follow, and
+    // not a pass either - just what it is.
+    var declared = (root.getAttribute('data-languages') || '').trim().split(/ +/);
+    if (declared.length === 1 && declared[0]) {
+      lang.className = 'pill pill-info';
+      lang.textContent = 'fixed language (' + gotLang + ', ' + gotDir +
+                         ') - data-languages="' + declared[0] + '"';
+      document.body.setAttribute('data-locale-check', 'fixed');
+      return;
+    }
     var ok = gotLang === current.locale && gotDir === current.dir;
     lang.className = ok ? 'pill pill-ok' : 'pill pill-bad';
     lang.textContent = ok

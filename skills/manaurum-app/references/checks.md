@@ -48,9 +48,14 @@ And the person's language (3.16.0): it fails an `index.html` that never writes
 `locale` and `dir` from the payload onto `<html lang dir>`, or never handles
 `manaurum:locale-change`; and it fails every physical side in a stylesheet —
 `margin-left`, `padding-right`, `border-left`, `text-align: left`,
-`float: right` — naming the logical property to use instead, because those do
-not mirror for Hebrew. `left:` / `right:` positioning is not flagged, nor a
-rule that sets both sides to the same value.
+`float: right`, a corner like `border-top-left-radius`, `left: 0` / `right:
+8px` positioning, and a four-value shorthand whose left and right differ
+(`padding: 4px 0 4px 20px`) — naming the logical property to use instead,
+because those do not mirror for Hebrew. What mirrors anyway is not flagged:
+both sides alike in one rule, `margin: 0 auto`, `left: 50%`. An app written
+in one language on purpose declares it, `<html lang="he" dir="rtl"
+data-languages="he">`, and is held to that instead (`sdk-api.md` → "The
+person's language").
 
 Exit 0 or fix what it names. Do this *before* the screenshots: it is cheaper,
 and half of what it finds would otherwise reach the owner rather than you.
@@ -67,7 +72,11 @@ one that says whether the language reached `<html lang dir>`, and one that
 measures whether your page is *centred* in the frame. `?locale=he` frames the
 app in Hebrew, right to left; the en / ru / he switch in the bar posts
 `manaurum:locale-change` the way the shell does when the person switches, and
-`&switch=he` does it by itself half a second after ready, for a headless run. Keep it
+`&switch=he` does it by itself half a second after ready, for a headless run. The
+language badge compares the page with what the shell said, so it cannot tell
+an app that ignores the shell from one that follows it when `?locale=` equals
+your browser's own language (the app's standalone guess lands on the same
+value): photograph a language that is not yours. Keep it
 **beside** the app directory, never inside it: everything inside is packed into
 the deploy.
 

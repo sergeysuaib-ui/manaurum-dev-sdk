@@ -367,10 +367,10 @@ rather than retyping this one. Four things are non-negotiable:
    the payload is a shipped bug: the window works and renders in its own palette inside
    a dark desktop.
 4. **Follow the person's language.** Apply `p.locale` / `p.dir` to `<html lang dir>` on
-   init and on every `manaurum:locale-change`. Write UI strings for en, ru and he,
-   re-render on a switch, format numbers and dates with `Intl`, and use logical CSS
-   (`margin-inline-start`, never `margin-left`) so Hebrew mirrors; `check_ui.py` fails
-   without it. What your server cannot learn:
+   init and on every `manaurum:locale-change`, and use logical CSS (`margin-inline-start`,
+   never `margin-left`) so Hebrew mirrors — `check_ui.py` fails on all three. Write UI
+   strings for en, ru and he, re-render on a switch, and format numbers and dates with
+   `Intl`, as the starter does. What your server cannot learn:
    `references/sdk-api.md` → "The person's language".
 
 postMessage is for this handshake and window framing only: never send the v1 data verbs

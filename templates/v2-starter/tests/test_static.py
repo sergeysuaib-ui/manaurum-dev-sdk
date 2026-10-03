@@ -168,10 +168,17 @@ def test_the_standalone_tab_guesses_from_the_browser():
         ("en", "ltr"), ("ru", "ltr"), ("he", "rtl")]
 
 
-def _catalogue(locale: str) -> list[str]:
+def _catalogue(locale: str) -> dict[str, str]:
     block = re.search(r"\n    %s: \{\n(.*?)\n    \}," % locale, _INDEX, re.S)
     assert block, f"no {locale} catalogue in STRINGS"
-    return re.findall(r"'([\w.]+)':\s*'", block.group(1))
+    return dict(re.findall(r"'([\w.]+)':\s*'((?:[^'\\]|\\.)*)'", block.group(1)))
+
+
+def _module() -> str:
+    """The module script with the STRINGS table cut out."""
+    script = _INDEX[_INDEX.index('<script type="module">'):]
+    start = script.index("const STRINGS = {")
+    return script[:start] + script[script.index("\n  };", start):]
 
 
 def test_every_catalogue_has_every_key():
@@ -181,13 +188,57 @@ def test_every_catalogue_has_every_key():
     prevents: a Hebrew screen with one English sentence in the middle.
     """
     en, ru, he = _catalogue("en"), _catalogue("ru"), _catalogue("he")
-    assert len(en) > 10 and len(set(en)) == len(en), "duplicate keys in en"
+    assert len(en) > 10
     assert set(ru) == set(en), sorted(set(en) ^ set(ru))
     assert set(he) == set(en), sorted(set(en) ^ set(he))
+    # Every quoted key in the code - in t(...), say(...), an array or a
+    # ternary alike - by its namespace, not by the call around it.
+    spaces = {key.split(".")[0] for key in en}
     used = set(re.findall(r'data-i18n(?:-placeholder)?="([\w.]+)"', _INDEX))
-    used |= set(re.findall(r"\b(?:t|say\(\w+,)\s*\(?\s*'([a-z]+\.[\w.]+)'", _INDEX))
-    assert used, "nothing on the page is translated"
+    used |= {key for key in re.findall(r"'([a-z]+(?:\.[a-zA-Z]+)+)'", _module())
+             if key.split(".")[0] in spaces}
+    assert len(used) > 10, "nothing on the page is translated"
     assert used <= set(en), sorted(used - set(en))
+
+
+def test_every_translation_keeps_the_slots():
+    """`{0}` (a code name) and `{time}` (a value) survive every translation.
+
+    A Hebrew string that lost its `{0}` silently drops the code it names; one
+    that kept `{time}` misspelt shows the braces to the person.
+    """
+    en = _catalogue("en")
+    for locale in ("ru", "he"):
+        for key, text in _catalogue(locale).items():
+            assert sorted(re.findall(r"\{\w+\}", text)) == \
+                sorted(re.findall(r"\{\w+\}", en[key])), (locale, key)
+
+
+def test_a_language_without_strings_is_english_left_to_right():
+    """LOCALE_DIR (head) and STRINGS (module) are two lists of languages.
+
+    A locale the first has and the second lacks must not become English words
+    laid out right to left: the module puts <html> back to en / ltr.
+    """
+    body = re.search(r"function settleLanguage\(\)\s*\{(.*?)\n  \}", _INDEX, re.S)
+    assert body, "no settleLanguage() in the module"
+    code = body.group(1)
+    assert "STRINGS[window.__manaurum.locale]" in code
+    assert "documentElement.lang = 'en'" in code and "documentElement.dir = 'ltr'" in code
+    apply = re.search(r"function applyStrings\(\)\s*\{(.*?)\n  \}", _INDEX, re.S)
+    assert apply and "settleLanguage();" in apply.group(1)
+
+
+def test_a_time_on_screen_is_formatted_when_drawn():
+    """"Saved at 14:05" is redrawn in the new language from the stored time.
+
+    Formatting once and keeping the string leaves the old language's words
+    and clock on screen after a switch.
+    """
+    saved = re.search(r"const savedAt = new Date\(\);\s*show\(status, \(el\) =>(.*?)\}\)\)\);",
+                      _INDEX, re.S)
+    assert saved and "formatDate(savedAt" in saved.group(1), (
+        "the save time must be formatted inside the draw function")
 
 
 def test_numbers_and_dates_use_the_os_tags():

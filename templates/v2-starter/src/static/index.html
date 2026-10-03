@@ -68,7 +68,9 @@
     window.__manaurum = { init: null, device: 'desktop', framed: false, locale: 'en', dir: 'ltr' };
 
     // The OS's own table (frontend/src/i18n/config.ts): three languages, and
-    // the direction each one is written in.
+    // the direction each one is written in. Keep it in step with STRINGS at
+    // the bottom of this file: a language here with no catalogue there is
+    // shown in English, left to right (settleLanguage), not in its own.
     var LOCALE_DIR = { en: 'ltr', ru: 'ltr', he: 'rtl' };
 
     // Standalone default: the first browser language we have strings for,
@@ -202,11 +204,12 @@
         <h1>my-app</h1>
         <!-- LANGUAGE. Every word a person reads carries data-i18n="key" and
              comes from STRINGS at the bottom of this file. A code name, a
-             host or a path is not translated and sits OUTSIDE the key, in a
-             .mono span with dir="ltr", which stays left to right in Hebrew. -->
-        <p class="subtitle">
-          <span data-i18n="header.subtitle">A Platform v2 starter, running as a container at</span>
-          <span class="mono" dir="ltr">my-app.apps.manaurum.com</span>
+             host or a path is not translated: the string has a {0} slot, the
+             code is in data-code, and it renders as a .mono span with
+             dir="ltr", which stays left to right inside Hebrew. -->
+        <p class="subtitle" data-i18n="header.subtitle" data-code="my-app.apps.manaurum.com">
+          A Platform v2 starter, running as a container at
+          <span class="mono" dir="ltr">my-app.apps.manaurum.com</span>.
         </p>
       </div>
       <div class="header-actions">
@@ -233,8 +236,8 @@
          feedback next to the button that caused it. -->
     <section class="card">
       <h2 class="card-title" data-i18n="note.title">Your note</h2>
-      <p class="card-hint"><span data-i18n="note.hint">Stored per person, through the capability</span>
-        <span class="mono" dir="ltr">os.kv</span></p>
+      <p class="card-hint" data-i18n="note.hint" data-code="os.kv">Stored per user through the
+        <span class="mono" dir="ltr">os.kv</span> capability.</p>
 
       <!-- dir="auto": what a person TYPES takes its direction from the text,
            so a Hebrew note in an English window still reads right to left. -->
@@ -256,9 +259,10 @@
          layout does not jump when the data lands. -->
     <section class="card">
       <h2 class="card-title" data-i18n="me.title">Signed-in user</h2>
-      <p class="card-hint">
-        <span class="mono" dir="ltr">GET /api/me</span>:
-        <span data-i18n="me.hint">a route with auth "user". The gateway mints the token; this app only verifies it.</span>
+      <p class="card-hint" data-i18n="me.hint" data-code='GET /api/me|auth: "user"'>
+        From <span class="mono" dir="ltr">GET /api/me</span> — an
+        <span class="mono" dir="ltr">auth: "user"</span> route. The gateway mints the JWT;
+        this app only verifies it.
       </p>
       <div id="me-skeleton" class="stack" aria-hidden="true">
         <div class="skeleton skeleton-line w-60"></div>
@@ -328,14 +332,17 @@
   // every number and date through Intl with the OS's own tag, so a switch is
   // one re-render. Keep the three catalogues on the same keys -
   // tests/test_static.py fails when one is missing a key; at run time a
-  // missing key reads as English. Code names (os.kv, HTTP codes) stay as
-  // they are in every language.
+  // missing key reads as English.
+  //
+  // `{0}`, `{1}` in a string are code names - os.kv, a path, an error code.
+  // They are the same in every language, so they are not in the catalogue:
+  // they render as <span class="mono" dir="ltr">, left to right in Hebrew too.
   const STRINGS = {
     en: {
-      'header.subtitle': 'A Platform v2 starter, running as a container at',
+      'header.subtitle': 'A Platform v2 starter, running as a container at {0}.',
       'header.reload': 'Reload',
       'note.title': 'Your note',
-      'note.hint': 'Stored per person, through the capability',
+      'note.hint': 'Stored per user through the {0} capability.',
       'note.label': 'Note',
       'note.placeholder': 'Anything at all — then Save and reload the window.',
       'note.help': 'Saved against your user id, private to you.',
@@ -346,14 +353,14 @@
       'note.saveFailed': 'Could not save (HTTP {status})',
       'error.network': 'Could not reach the app’s server',
       'me.title': 'Signed-in user',
-      'me.hint': 'a route with auth "user". The gateway mints the token; this app only verifies it.',
+      'me.hint': 'From {0} — an {1} route. The gateway mints the JWT; this app only verifies it.',
       'me.failed': 'Could not load (HTTP {status})',
       'caps.title': 'Granted capabilities',
       'caps.hint': 'What this install is actually allowed to call.',
       'caps.none.title': 'No capabilities granted',
-      'caps.none.body': 'Every os.* call returns 403 capability_not_granted until a tenant admin grants them on this install.',
+      'caps.none.body': 'Every {0} call will return {1} until a tenant admin grants them on the install.',
       'caps.standalone.title': 'Not running inside Manaurum',
-      'caps.standalone.body': 'Open the app as a desktop window to see what it was granted. The standalone URL never receives manaurum:init.',
+      'caps.standalone.body': 'Open the app as a desktop window to see what it was granted. The standalone URL never receives {0}.',
       'caps.row.sub': 'granted on this install',
       'ctx.title': 'Shell context',
       'ctx.framed': 'framed',
@@ -369,8 +376,8 @@
       'ctx.unset': '(unset)',
       'ctx.accentDefault': '(the shell has not said; using the default)',
       'cap.back': 'All capabilities',
-      'cap.grantedHint': 'This install may call it. The call goes from your container to the gateway.',
-      'cap.notGrantedHint': 'Not granted on this install — every call returns 403 capability_not_granted.',
+      'cap.grantedHint': 'This install may call it. The call itself goes from your container to the gateway.',
+      'cap.notGrantedHint': 'Not in this install’s grant set — every call returns {0}.',
       'cap.k.capability': 'capability',
       'cap.k.status': 'status',
       'cap.k.endpoint': 'endpoint',
@@ -380,12 +387,12 @@
       'cap.v.called': 'from the container, never from this page',
     },
     ru: {
-      'header.subtitle': 'Стартовый шаблон Platform v2, работает как контейнер по адресу',
+      'header.subtitle': 'Стартовый шаблон Platform v2, работающий как контейнер по адресу {0}.',
       'header.reload': 'Обновить',
       'note.title': 'Ваша заметка',
-      'note.hint': 'Хранится отдельно для каждого человека, через возможность',
+      'note.hint': 'Хранится отдельно для каждого человека через возможность {0}.',
       'note.label': 'Заметка',
-      'note.placeholder': 'Что угодно — потом «Сохранить» и перезагрузите окно.',
+      'note.placeholder': 'Что угодно — потом нажмите «Сохранить» и перезагрузите окно.',
       'note.help': 'Сохраняется под вашим идентификатором и видна только вам.',
       'note.save': 'Сохранить',
       'note.saving': 'Сохраняем…',
@@ -394,14 +401,14 @@
       'note.saveFailed': 'Не удалось сохранить (HTTP {status})',
       'error.network': 'Сервер приложения не отвечает',
       'me.title': 'Кто вошёл',
-      'me.hint': 'маршрут с auth "user". Токен выпускает шлюз, приложение его только проверяет.',
+      'me.hint': 'Из {0} — маршрута с {1}. Токен выпускает шлюз, приложение его только проверяет.',
       'me.failed': 'Не удалось загрузить (HTTP {status})',
       'caps.title': 'Выданные возможности',
       'caps.hint': 'Что этой установке на самом деле разрешено вызывать.',
       'caps.none.title': 'Возможности не выданы',
-      'caps.none.body': 'Любой вызов os.* вернёт 403 capability_not_granted, пока администратор организации не выдаст их этой установке.',
+      'caps.none.body': 'Любой вызов {0} вернёт {1}, пока администратор организации не выдаст их этой установке.',
       'caps.standalone.title': 'Приложение открыто не в Manaurum',
-      'caps.standalone.body': 'Откройте приложение окном на рабочем столе, чтобы увидеть, что ему выдано. Отдельная вкладка никогда не получает manaurum:init.',
+      'caps.standalone.body': 'Откройте приложение как окно на рабочем столе, чтобы увидеть, что ему выдано. Отдельная вкладка никогда не получает {0}.',
       'caps.row.sub': 'выдана этой установке',
       'ctx.title': 'Контекст оболочки',
       'ctx.framed': 'в окне',
@@ -417,8 +424,8 @@
       'ctx.unset': '(не задано)',
       'ctx.accentDefault': '(оболочка не сообщила; по умолчанию)',
       'cap.back': 'Все возможности',
-      'cap.grantedHint': 'Этой установке её вызывать можно. Вызов идёт из вашего контейнера в шлюз.',
-      'cap.notGrantedHint': 'Не выдана этой установке — каждый вызов вернёт 403 capability_not_granted.',
+      'cap.grantedHint': 'Этой установке разрешено её вызывать. Вызов идёт из вашего контейнера в шлюз.',
+      'cap.notGrantedHint': 'Не выдана этой установке — каждый вызов вернёт {0}.',
       'cap.k.capability': 'возможность',
       'cap.k.status': 'статус',
       'cap.k.endpoint': 'адрес',
@@ -428,10 +435,10 @@
       'cap.v.called': 'из контейнера, никогда не со страницы',
     },
     he: {
-      'header.subtitle': 'תבנית פתיחה של Platform v2, שרצה כקונטיינר בכתובת',
+      'header.subtitle': 'תבנית פתיחה של Platform v2, שרצה כקונטיינר בכתובת {0}.',
       'header.reload': 'רענון',
       'note.title': 'הפתק שלך',
-      'note.hint': 'נשמר בנפרד לכל אדם, דרך היכולת',
+      'note.hint': 'נשמר בנפרד לכל אדם דרך היכולת {0}.',
       'note.label': 'פתק',
       'note.placeholder': 'כל דבר שתרצו — ואז שמירה וטעינה מחדש של החלון.',
       'note.help': 'נשמר תחת מזהה המשתמש שלך וגלוי רק לך.',
@@ -442,14 +449,14 @@
       'note.saveFailed': 'השמירה נכשלה (HTTP {status})',
       'error.network': 'אין חיבור לשרת של האפליקציה',
       'me.title': 'מי מחובר',
-      'me.hint': 'נתיב למשתמשים מחוברים בלבד. השער מנפיק את האסימון, והאפליקציה רק מאמתת אותו.',
+      'me.hint': 'מתוך {0} — נתיב עם {1}. השער מנפיק את האסימון, והאפליקציה רק מאמתת אותו.',
       'me.failed': 'הטעינה נכשלה (HTTP {status})',
       'caps.title': 'יכולות שהוענקו',
-      'caps.hint': 'מה ההתקנה הזו רשאית לקרוא בפועל.',
+      'caps.hint': 'מה ההתקנה הזו רשאית להפעיל בפועל.',
       'caps.none.title': 'לא הוענקו יכולות',
-      'caps.none.body': 'כל קריאה ל־os.* תחזיר 403 capability_not_granted עד שמנהל הארגון יעניק אותן להתקנה הזו.',
+      'caps.none.body': 'כל הפעלה של {0} תחזיר {1} עד שמנהל הארגון יעניק אותן להתקנה הזו.',
       'caps.standalone.title': 'האפליקציה לא פתוחה בתוך Manaurum',
-      'caps.standalone.body': 'פתחו את האפליקציה כחלון בשולחן העבודה כדי לראות מה הוענק לה. כתובת עצמאית אף פעם לא מקבלת manaurum:init.',
+      'caps.standalone.body': 'פתחו את האפליקציה כחלון בשולחן העבודה כדי לראות מה הוענק לה. כתובת עצמאית אף פעם לא מקבלת {0}.',
       'caps.row.sub': 'הוענקה להתקנה הזו',
       'ctx.title': 'הקשר המעטפת',
       'ctx.framed': 'בתוך חלון',
@@ -465,12 +472,12 @@
       'ctx.unset': '(לא הוגדר)',
       'ctx.accentDefault': '(המעטפת לא מסרה; ברירת מחדל)',
       'cap.back': 'כל היכולות',
-      'cap.grantedHint': 'ההתקנה הזו רשאית לקרוא לה. הקריאה יוצאת מהקונטיינר שלך אל השער.',
-      'cap.notGrantedHint': 'לא הוענקה להתקנה הזו — כל קריאה תחזיר 403 capability_not_granted.',
+      'cap.grantedHint': 'ההתקנה הזו רשאית להפעיל אותה. הבקשה יוצאת מהקונטיינר שלך אל השער.',
+      'cap.notGrantedHint': 'לא הוענקה להתקנה הזו — כל הפעלה תחזיר {0}.',
       'cap.k.capability': 'יכולת',
       'cap.k.status': 'סטטוס',
       'cap.k.endpoint': 'כתובת',
-      'cap.k.called': 'מאיפה קוראים',
+      'cap.k.called': 'מאיפה מפעילים',
       'cap.v.granted': 'הוענקה',
       'cap.v.notGranted': 'לא הוענקה',
       'cap.v.called': 'מהקונטיינר, אף פעם לא מהדף',
@@ -479,7 +486,19 @@
   // The BCP-47 tags the OS itself hands to Intl (frontend/src/i18n/config.ts).
   const INTL_LOCALE = { en: 'en', ru: 'ru-RU', he: 'he-IL' };
 
+  // LOCALE_DIR in <head> and STRINGS here are two lists of languages. A
+  // locale the first knows and the second does not would be English words
+  // laid out right to left, so the page falls back to English, left to right,
+  // whenever STRINGS has no catalogue for what the shell sent.
+  function settleLanguage() {
+    if (STRINGS[window.__manaurum.locale]) return;
+    window.__manaurum.locale = 'en';
+    window.__manaurum.dir = 'ltr';
+    document.documentElement.lang = 'en';
+    document.documentElement.dir = 'ltr';
+  }
   const lang = () => (STRINGS[window.__manaurum.locale] ? window.__manaurum.locale : 'en');
+
   function t(key, vars) {
     let text = STRINGS[lang()][key] ?? STRINGS.en[key] ?? key;
     for (const [name, value] of Object.entries(vars || {})) {
@@ -493,20 +512,42 @@
   const formatDate = (d, options) => new Intl.DateTimeFormat(
     INTL_LOCALE[lang()], options || { dateStyle: 'medium', timeStyle: 'short' }).format(d);
 
-  // A message set from code keeps its key on the element, so a language
-  // switch translates it again instead of leaving it in the old language.
-  function say(el, key, vars) {
-    el.dataset.i18n = key;
-    el.dataset.i18nVars = JSON.stringify(vars || {});
-    el.textContent = t(key, vars);
+  // A translated string into an element, each `{0}` slot filled with code.
+  function fill(el, text, codes) {
+    el.replaceChildren();
+    text.split(/\{(\d)\}/).forEach((part, i) => {
+      if (i % 2 === 0) {
+        if (part) el.append(part);
+        return;
+      }
+      const code = document.createElement('span');
+      code.className = 'mono';
+      code.dir = 'ltr';
+      code.textContent = (codes || [])[Number(part)] ?? '';
+      el.append(code);
+    });
   }
+  // What code writes is kept as HOW to draw it, not as the words it drew, so
+  // a switch draws it again: "Saved at 14:05" gets the new language's words
+  // and the new language's clock, from the time it was saved.
+  const drawn = new Map();
+  function show(el, draw) {
+    drawn.set(el, draw);
+    draw(el);
+  }
+  const say = (el, key, vars, codes) => show(el, (e) => fill(e, t(key, vars), codes));
+
+  // Static text carries data-i18n="key" (and data-code="os.kv|..." for its
+  // slots); placeholders carry data-i18n-placeholder.
   function applyStrings() {
+    settleLanguage();
     for (const el of document.querySelectorAll('[data-i18n]')) {
-      el.textContent = t(el.dataset.i18n, el.dataset.i18nVars ? JSON.parse(el.dataset.i18nVars) : null);
+      fill(el, t(el.dataset.i18n), el.dataset.code ? el.dataset.code.split('|') : []);
     }
     for (const el of document.querySelectorAll('[data-i18n-placeholder]')) {
       el.placeholder = t(el.dataset.i18nPlaceholder);
     }
+    for (const [el, draw] of drawn) draw(el);
   }
   // Both before the SDK import below: the words are right before it loads,
   // and a `manaurum-locale` that fires while the import is still in flight
@@ -610,7 +651,10 @@
       });
       if (res.ok) {
         status.className = 'status status-success';
-        say(status, 'note.saved', { time: formatDate(new Date(), { timeStyle: 'short' }) });
+        const savedAt = new Date();
+        show(status, (el) => fill(el, t('note.saved', {
+          time: formatDate(savedAt, { timeStyle: 'short' }),
+        })));
       } else {
         status.className = 'status status-error';
         say(status, 'note.saveFailed', { status: res.status });
@@ -636,14 +680,14 @@
       // Opened at the standalone URL: there is no shell, so this is unknown
       // rather than empty. Saying "none" here would be a lie.
       $('caps-empty-title').textContent = t('caps.standalone.title');
-      $('caps-empty-body').textContent = t('caps.standalone.body');
+      fill($('caps-empty-body'), t('caps.standalone.body'), ['manaurum:init']);
       empty.hidden = false;
       return;
     }
 
     if (caps.length === 0) {
       $('caps-empty-title').textContent = t('caps.none.title');
-      $('caps-empty-body').textContent = t('caps.none.body');
+      fill($('caps-empty-body'), t('caps.none.body'), ['os.*', '403 capability_not_granted']);
       empty.hidden = false;
       return;
     }
@@ -692,7 +736,8 @@
       .map((c) => (typeof c === 'string' ? c : c.name || String(c)));
 
     $('cap-name').textContent = name || '—';
-    $('cap-hint').textContent = t(granted.includes(name) ? 'cap.grantedHint' : 'cap.notGrantedHint');
+    fill($('cap-hint'), t(granted.includes(name) ? 'cap.grantedHint' : 'cap.notGrantedHint'),
+      ['403 capability_not_granted']);
 
     const rows = [
       ['cap.k.capability', name || '—'],

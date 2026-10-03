@@ -19,38 +19,51 @@ check, no preview and no line of starter code did.
   `manaurum:init` and `manaurum:locale-change` to `<html lang dir>` and
   `window.__manaurum`, and fires `manaurum-locale`. A standalone tab guesses from
   `navigator.languages` (en / ru / he, else English). Every visible string now comes from
-  one `STRINGS = { en, ru, he }` table through `t(key)` and `data-i18n`; numbers and
-  dates go through `Intl` with the OS's tags (`en`, `ru-RU`, `he-IL`); the page
-  re-renders on a switch. Inline code carries `dir="ltr"`, the note field `dir="auto"`,
-  and the back arrow `.flip-rtl`.
+  one `STRINGS = { en, ru, he }` table through `t(key)` and `data-i18n`, with `{0}` slots
+  for code names that render as `<span class="mono" dir="ltr">`; numbers and dates go
+  through `Intl` with the OS's tags (`en`, `ru-RU`, `he-IL`); the page re-renders on a
+  switch, and what code wrote is redrawn rather than kept, so "Saved at 14:05" follows
+  the new language's clock. A locale the shell sends that `STRINGS` has no table for
+  resets `<html>` to English, left to right, so the head's `LOCALE_DIR` and `STRINGS`
+  cannot drift into English laid out right to left. The note field has `dir="auto"`, and
+  the back arrow `.flip-rtl`.
 * **Starter `app.css`.** Every physical side is logical now (`border-inline`,
   `text-align: start`, `margin-inline-end`, `padding-inline-start`,
-  `border-inline-start`), `.mono` is bidi-isolated, `.flip-rtl` mirrors an arrow under
-  `dir="rtl"`, and the header names this as its fourth rule. Checked in headless Chrome:
-  the starter and the patterns page mirror completely under `?locale=he`.
+  `border-inline-start`), `.mono` is bidi-isolated, `.flip-rtl:dir(rtl)` mirrors an
+  arrow, and the header names this as its fourth rule. Checked in headless Chrome: the
+  starter mirrors completely under `?locale=he`, and switches live.
 * **Starter tests.** `test_static.py` asserts that the listener applies `locale` and
   `dir` on init and on `locale-change` behind the sender check, the standalone fallback,
-  that the three catalogues carry the same keys (and every key the page uses), the
-  `Intl` tags, and no physical side in `app.css`.
+  that the three catalogues carry the same keys and the same `{0}` / `{time}` slots,
+  that every key the code names exists, the fallback to English for a locale with no
+  table, the save time formatted when drawn, the `Intl` tags, and no physical side in
+  `app.css`.
 * **`check_ui.py`** fails an `index.html` that never writes `locale` / `dir` from the
   payload onto `<html lang dir>` (the same shape as the appearance rule, so the
   standalone guess does not count), one with no `manaurum:locale-change`, and every
-  physical side in a stylesheet - `margin-*`, `padding-*`, `border-left/right`,
-  `text-align` / `float` / `clear` left or right - naming the logical replacement.
-  `left:` / `right:` positioning and a rule that sets both sides alike are not flagged.
-  `linter_mutations.py` has seven red mutations and three must-stay-green cases for them;
-  one of the reds found that the starter's own `window.__manaurum.dir = dir` was being
-  counted as the document write.
+  physical side in a stylesheet - `margin-*`, `padding-*`, `border-left/right`, a
+  corner like `border-top-left-radius`, `left` / `right` positioning, a four-value
+  shorthand whose left and right differ (`padding: 4px 0 4px 20px`), `text-align` /
+  `float` / `clear` left or right - naming the logical replacement. What mirrors anyway
+  is not flagged: both sides alike in one rule, `margin: 0 auto`, `left: 50%`. A write
+  in a helper counts when the helper is called with the payload's values
+  (`setLanguage(p.locale, p.dir)`), and an app in one language on purpose declares it,
+  `<html lang="he" dir="rtl" data-languages="he">`, and is held to that instead.
+  `linter_mutations.py` has twelve red mutations and six must-stay-green cases for
+  them; one of the reds found that the starter's own `window.__manaurum.dir = dir` was
+  being counted as the document write.
 * **`preview.py`.** `?locale=en|ru|he` sends the matching `dir` in `manaurum:init`; the
   bar has an en / ru / he switch that posts `manaurum:locale-change`, `&switch=he` posts
   one by itself after ready, and the shell posts one on ready as the real shell does. A
   new badge reads the framed page's `<html lang>` and computed direction back:
-  `language applied` or `language IGNORED`, also on `<body data-locale-check>`.
-  `smoke_tools.py` checks the payload per locale and, in Chrome, that the starter and the
-  patterns page read green in Hebrew, Russian and after a live switch while a copy that
-  ignores the payload reads red.
-* **`patterns/index.html`** applies the language direction too, and its back arrow
-  mirrors.
+  `language applied`, `language IGNORED`, or `fixed language` for an app that declares
+  one, also on `<body data-locale-check>`. `smoke_tools.py` checks the payload per
+  locale and, in Chrome with the browser pinned to `en-US`, that the starter reads green
+  in Hebrew, Russian and after a live switch, a copy that ignores the payload reads red,
+  and the patterns page reads `fixed`.
+* **`patterns/index.html`** is English only, and says so with `data-languages="en"`:
+  its sample text has no Russian or Hebrew, and English laid out right to left is wrong
+  for a reader and a screen reader alike.
 * **Docs.** `sdk-api.md` has a new section, "The person's language": where the setting
   lives (on the account, `user_profiles.preferred_language`, and in the shell's own
   cookie), how a window gets it, what the app does with it, the standalone fallback, and

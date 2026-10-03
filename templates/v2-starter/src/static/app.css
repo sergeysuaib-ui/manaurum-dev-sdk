@@ -910,9 +910,11 @@ textarea.input { min-height: 96px; resize: vertical; }
    to the left edge of a right-to-left page. */
 .mono { font-family: var(--font-mono); font-size: var(--fs-footnote); unicode-bidi: isolate; }
 /* An arrow that means back or forward points the other way in Hebrew. A
-   clock, a play button or a check mark does not - leave those alone. */
+   clock, a play button or a check mark does not - leave those alone.
+   `:dir(rtl)` is the element's own resolved direction (Chrome 120+, Safari
+   16.4+, Firefox), so an arrow inside a dir="ltr" island does not flip. */
 .flip-rtl { display: inline-block; }
-[dir="rtl"] .flip-rtl { transform: scaleX(-1); }
+.flip-rtl:dir(rtl) { transform: scaleX(-1); }
 .stack { display: flex; flex-direction: column; gap: var(--space-4); }
 
 /* Visually hidden but announced. For labels a sighted user gets from context. */

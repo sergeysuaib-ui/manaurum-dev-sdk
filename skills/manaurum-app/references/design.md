@@ -392,7 +392,8 @@ language"). The starter mirrors as a whole — check it with
 
 - **Sides are logical.** `margin-inline-start` / `-end`, `padding-inline-*`,
   `border-inline-*`, `inset-inline-*`, `text-align: start` / `end`,
-  `float: inline-start`. Flexbox and grid already follow `dir`. Centring with
+  `float: inline-start`, and corners as `border-start-start-radius` and its three
+  siblings. Flexbox and grid already follow `dir`. Centring with
   `left: 50%` and `translateX(-50%)` is direction-neutral and fine.
 - **Mirror what points along the line, and nothing else.** A back or forward
   arrow, the chevron at the end of a row, a "next" caret: give it `.flip-rtl`.

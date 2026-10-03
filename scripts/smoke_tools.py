@@ -34,10 +34,10 @@ WHAT IS CHECKED, and why each one is here rather than left to a human:
   every row reads red on both. Needs Chrome or Edge; skipped with a note when
   neither is installed, and a failure when `CI` is set.
 * preview's language (3.16.0): `?locale=` sends the right `dir` and an unknown
-  one falls back to English; in the browser, the starter and the patterns
-  page read "language applied" in Hebrew, in Russian and after a live
-  `&switch=he`, and a copy of the starter that never applies the payload's
-  locale reads "language IGNORED".
+  one falls back to English; in the browser, the starter reads "language
+  applied" in Hebrew, in Russian and after a live `&switch=he`, a copy of it
+  that never applies the payload's locale reads "language IGNORED", and the
+  English-only patterns page reads "fixed language".
 """
 
 from __future__ import annotations
@@ -254,8 +254,11 @@ def find_browser():
 
 def dump_dom(browser: str, url: str, profile: Path) -> str:
     """The framed page's DOM after preview's timers have run."""
+    # --lang pins the browser's own language, so a starter's standalone guess
+    # is English on every runner and a Hebrew case means the shell said so.
     args = [browser, "--headless=new", "--disable-gpu", "--user-data-dir=%s" % profile,
-            "--virtual-time-budget=4000", "--window-size=1240,1000", "--dump-dom", url]
+            "--lang=en-US", "--virtual-time-budget=4000", "--window-size=1240,1000",
+            "--dump-dom", url]
     if os.name != "nt":
         args.insert(1, "--no-sandbox")
     try:
@@ -394,14 +397,16 @@ def smoke_meter(problems: list) -> None:
                                 "with at least one accent element, it read accent=%s "
                                 "badge-flood=%s" % (label, path, count, flood))
 
-        # The language badge (3.16.0): the starter and the patterns page follow
-        # Hebrew and a live switch; a starter that never applies the payload's
-        # locale reads red, because its own guess from the browser is English.
+        # The language badge (3.16.0): the starter follows Hebrew and a live
+        # switch; a starter that never applies the payload's locale reads red,
+        # because its own guess from the browser is English; the patterns page
+        # is English on purpose (data-languages="en") and reads "fixed".
         languages = (
             ("starter in Hebrew", "/__shell?entry=/index.html&locale=he", "ok"),
             ("starter switched live", "/__shell?entry=/index.html&locale=en&switch=he", "ok"),
             ("starter in Russian", "/__shell?entry=/index.html&locale=ru", "ok"),
-            ("patterns in Hebrew", "/__shell?entry=/patterns/index.html%23post&locale=he", "ok"),
+            ("patterns in Hebrew", "/__shell?entry=/patterns/index.html%23post&locale=he",
+             "fixed"),
             ("deaf copy", "/__shell?entry=/deaf/index.html&locale=he", "bad"),
             ("deaf copy switched live", "/__shell?entry=/deaf/index.html&locale=en&switch=he",
              "bad"),
