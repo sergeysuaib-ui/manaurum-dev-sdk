@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.12.0.** A plugin install caches one directory per
+> **This page is SDK 3.13.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -119,6 +119,14 @@ whole, `src/api/` split by surface, both auth levels), **`family-space-v2`** (th
 ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
 only tested one — copy its `conftest.py`). Copying the shape of a working app
 beats reconstructing it from this page.
+
+If the app keeps its data in Postgres, start from
+`<plugin>/templates/recipes/postgres/` rather than writing `db.py` yourself: a
+pool whose schema survives asyncpg's session reset, full-text search that does
+not answer a question with zero results, and the migrations for both — with
+tests that run against a real Postgres. Why each part is the way it is:
+`references/v2-platform.md` → "Connecting from the container" and
+"Full-text search".
 
 **And copy the look, don't invent it.**
 `<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
@@ -646,6 +654,9 @@ packs. Exit 0 or fix what it names.
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
 | `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
+| `migrations/`: a generated column on one of the common built-ins Postgres does not accept there (`array_to_string`, `concat`, one-argument `to_tsvector`, `now()`, `random()`) — not every refusal: a cast that depends on a setting, such as `::date` on a `timestamptz`, still gets through | a file the deploy's validator passes and Postgres then refuses, for every tenant |
+| a session `SET` (`SET search_path`) inside an asyncpg `create_pool(init=...)` | an app that works on the platform and fails on the second request on your own machine |
+| code that reads `DATABASE_URL` while the manifest says `"data": {"none": true}` | a green deploy and a crash on the first query — that mode injects no database |
 | an invented key in `runtime` (`"prot": 8000`) | a `422` at deploy, after the pack and the upload — the linter names it offline, with the keys you could have meant |
 | an `/agent/*` path listed in `api_routes` | nothing. It configures nothing while looking exactly like it did. |
 | a relative `frontend.icon` (`icons/app.svg`) | that literal string painted into the launcher tile |
@@ -737,6 +748,7 @@ use `MANAURUM_TENANT_ID` for display, never as a security filter.
 - **Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
 - **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql`, which the pipeline runs once per (app, tenant).
 - **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failed attempt raise, so the next request tries again. Never catch the failure into a "no database" mode: that app serves empty 200s behind a green `/healthz` until someone restarts it. The same goes for a secret or anything else you fetch from Core at startup. The pattern is ten lines, in `references/v2-platform.md` → "Your database can come up after your container".
+- **Don't `SET search_path` in a pool's `init=`.** asyncpg resets the session every time a connection goes back to the pool, so the setting lasts one request. Pass it in `server_settings` — `templates/recipes/postgres/db.py`, and `references/v2-platform.md` → "Connecting from the container" for why.
 - **Route outbound HTTP through `os.http.fetch`.** `egress_allowed_hosts` is enforced there and only there; the container's own connections are not filtered, which is not a licence to use them. Declare every third-party host.
 - **Don't try to deploy with an `mnu_*` token.** An `mnu_*` is a tenant token for MCP clients and Drive upload, not a deploy credential. Deploys use `mna_*` exclusively.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.

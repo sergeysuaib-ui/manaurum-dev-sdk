@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.12.0.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.13.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -209,10 +209,19 @@ parts inlined. Reading one real app beats reading four pages about apps.
   but not declared, declared and never called, or not registered on Core at all, a root
   key, `auth` mode, slug or Assistant tool name the deploy refuses, and migrations it
   would refuse (read through a small SQL lexer, so a function body, a string or a comment
-  is not a statement).
+  is not a statement), a generated column on one of the common built-ins Postgres refuses
+  there (`array_to_string`, `concat`, one-argument `to_tsvector`, clock, random and
+  sequence functions - not every refusal, so a setting-dependent cast still reaches
+  Postgres), a session `SET` in an asyncpg pool's `init=`, and code reading
+  `DATABASE_URL` under `"data": {"none": true}`.
   Routes are read with `ast` from decorators, `add_api_route` and `include_router`
   prefixes; for another language it says so and skips those rules rather than guessing.
   `python check_app.py my-app`, exit 1 on findings.
+* `templates/recipes/postgres/` — for an app that keeps its data in Postgres: `db.py` (an
+  asyncpg pool whose `search_path` survives the pool's `RESET ALL`), `search.py` (full-text
+  search that falls back from all-words to some-words instead of answering zero, with an
+  XSS-safe snippet), the migrations for both, and a pytest suite that runs against a real
+  Postgres — in CI too, including the broken `init=` pool it replaces.
 * `templates/manifest_v2.schema.json` + `templates/platform-contract.json` +
   `scripts/platform-strings.json` — the copy of Core's contract the linters and
   `check_repo.py` read: the manifest schema, the 32 registered capabilities, the reserved

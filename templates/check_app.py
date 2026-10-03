@@ -165,6 +165,53 @@ FORBIDDEN = (
 )
 # All migration files together, as the deploy measures them (MAN-2622).
 MAX_MIGRATION_BYTES = 64 * 1024
+# `GENERATED ALWAYS AS (...)`, not `GENERATED ALWAYS AS IDENTITY`.
+GENERATED_AS = re.compile(r"(?i)\bGENERATED\s+ALWAYS\s+AS\s*\(")
+# Common built-ins Postgres refuses in a generated column ("generation
+# expression is not immutable"), as people actually write them, each with the
+# fix that is right for IT - wrapping `now()` in an IMMUTABLE function makes
+# Postgres accept a column whose value is then a lie. Volatility as `pg_proc`
+# has it on Postgres 16. Not every refusal: a cast that depends on a setting
+# (`ts::date` on a timestamptz) needs column types this script does not have,
+# and a function of the app's own is not judged here.
+NOT_IMMUTABLE = (
+    (re.compile(r"(?i)\barray_to_string\s*\("), "array_to_string() (STABLE)",
+     "for a text[] column, wrap it in your own one-line LANGUAGE sql IMMUTABLE "
+     "function - honest only for text[], where no setting changes the output"),
+    (re.compile(r"(?i)\bconcat(?:_ws)?\s*\("), "concat()/concat_ws() (STABLE)",
+     "join with || and wrap each nullable part in coalesce(col, '')"),
+    (re.compile(r"(?i)\b(?:now|clock_timestamp|statement_timestamp|"
+                r"transaction_timestamp|timeofday|random|gen_random_uuid|"
+                r"nextval)\s*\("), "a clock, random or sequence function",
+     "a value fixed at insert is a DEFAULT, one that changes on update is a "
+     "BEFORE UPDATE trigger - never an IMMUTABLE wrapper, which makes Postgres "
+     "accept a column whose value is wrong"),
+    (re.compile(r"(?i)\b(?:current_(?:date|time|timestamp)|localtime(?:stamp)?)\b"),
+     "current_date/current_timestamp (STABLE)",
+     "a value fixed at insert is a DEFAULT, one that changes on update is a "
+     "BEFORE UPDATE trigger - never an IMMUTABLE wrapper"),
+)
+TO_TSVECTOR_ADVICE = ("name the configuration: to_tsvector('english', ...), the same "
+                      "one your queries use")
+# `to_tsvector(text)` reads default_text_search_config and is STABLE;
+# `to_tsvector('russian', text)` is IMMUTABLE. Told apart by argument count.
+TO_TSVECTOR = re.compile(r"(?i)\bto_tsvector\s*\(")
+# A session setting at the start of a statement in a Python string: what an
+# asyncpg pool's `RESET ALL` undoes. `SET LOCAL` ends with its transaction
+# anyway; ROLE and SESSION AUTHORIZATION are not reset by RESET ALL.
+SESSION_SET = re.compile(
+    r"(?is)(?:^|;)\s*SET\s+(?:SESSION\s+)?"
+    r"(?!LOCAL\b|ROLE\b|SESSION\b|AUTHORIZATION\b|CHARACTERISTICS\b|"
+    r"TRANSACTION\b|CONSTRAINTS\b)"
+    r"(TIME\s+ZONE|[A-Za-z_][\w.]*)")
+SET_CONFIG = re.compile(r"(?is)\bset_config\s*\(\s*'([\w.]+)'\s*,[^;]*?,\s*false\s*\)")
+SET_ALIASES = {"time zone": "timezone", "schema": "search_path", "names": "client_encoding"}
+# Outside Python, read as text with C-style comments removed:
+# `process.env.DATABASE_URL`, `Deno.env.get("DATABASE_URL")`, Go's
+# `os.Getenv("DATABASE_URL")`. Python is read with `ast` instead.
+READS_DATABASE_URL = re.compile(r"""(?i)(?:environ|getenv|env)[\w.\[(\s"']{0,8}DATABASE_URL""")
+C_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
+C_STYLE_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go"}
 # What makes an /agent/ handler safe: a verified caller, as code. One of these
 # called directly, or passed to Depends()/Security() on the handler, its route
 # decorator, its router or the include_router that mounts it.
@@ -1259,6 +1306,11 @@ def check_migrations(root: Path, manifest: dict, problems: list,
         else:
             numbers.setdefault(int(match.group(1)), []).append(path.name)
 
+        body = sql_code(decoded)
+        # Not a deploy rule, so it runs whichever engine judges the rest:
+        # the validator passes this file and Postgres refuses it, per tenant.
+        check_generated_columns(path.name, body, problems)
+
         if validator is not None:
             # The authority. One file at a time, exactly as the deploy reads
             # them - handing it several concatenated would answer a different
@@ -1283,7 +1335,6 @@ def check_migrations(root: Path, manifest: dict, problems: list,
                                 "not parse this - %s" % (path.name, exc))
             continue
 
-        body = sql_code(read(path))
         for statement in (part.strip() for part in body.split(";")):
             for pattern, label in FORBIDDEN:
                 if statement and pattern.search(statement):
@@ -1323,6 +1374,220 @@ def check_migrations(root: Path, manifest: dict, problems: list,
                         "the wrong order")
 
 
+def inside_parens(text: str, start: int) -> str:
+    """The text up to the `)` that closes the `(` just before `start`.
+
+    Run on `sql_code()` output, where no string or identifier holds a bracket.
+    """
+    depth, i = 1, start
+    while i < len(text) and depth:
+        depth += {"(": 1, ")": -1}.get(text[i], 0)
+        i += 1
+    return text[start:i - 1]
+
+
+def top_level_commas(text: str) -> int:
+    depth, count = 0, 0
+    for c in text:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "," and depth == 0:
+            count += 1
+    return count
+
+
+def check_generated_columns(name: str, body: str, problems: list) -> None:
+    """A generated column on a function Postgres will not accept there.
+
+    The deploy's validator passes it - `ADD COLUMN` is additive, and
+    volatility is not its question - and then Postgres refuses it with
+    "generation expression is not immutable", for every tenant, at apply
+    time. Two of these look like they should work: `array_to_string()` and
+    the one-argument `to_tsvector()`. Each finding carries the fix for that
+    function, because the fixes differ.
+    """
+    for match in GENERATED_AS.finditer(body):
+        expression = inside_parens(body, match.end())
+        found = [(label, advice) for pattern, label, advice in NOT_IMMUTABLE
+                 if pattern.search(expression)]
+        for call in TO_TSVECTOR.finditer(expression):
+            if top_level_commas(inside_parens(expression, call.end())) == 0:
+                found.append(("to_tsvector() without a configuration (STABLE: it "
+                              "reads default_text_search_config)", TO_TSVECTOR_ADVICE))
+        for label, advice in found:
+            problems.append(
+                "migrations/%s: a generated column uses %s, and Postgres refuses "
+                "it (\"generation expression is not immutable\") after the deploy's "
+                "validator has passed it. Fix: %s - see "
+                "templates/recipes/postgres/migrations" % (name, label, advice))
+
+
+def _reached_strings(expr, functions: dict, depth: int = 3) -> list:
+    """String constants in `expr` and in the module functions it names.
+
+    `init=configure`, `init=lambda c: configure(c, schema)` and
+    `init=make_init(schema)` all end up running the same body, and that body
+    is where the SET is. Docstrings are not SQL, so they are left out.
+    """
+    docstrings = set()
+    for fn in functions.values():
+        first = fn.body[0] if fn.body else None
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            docstrings.add(id(first.value))
+    strings, seen, frontier = [], set(), [expr]
+    for _ in range(depth):
+        following = []
+        for node in frontier:
+            for sub in ast.walk(node):
+                if (isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                        and id(sub) not in docstrings):
+                    strings.append(sub.value)
+                if isinstance(sub, ast.Name) and sub.id in functions and sub.id not in seen:
+                    seen.add(sub.id)
+                    following.append(functions[sub.id])
+        frontier = following
+    return strings
+
+
+def _settings_in(strings: list) -> set:
+    names = set()
+    for text in strings:
+        for match in SESSION_SET.finditer(text):
+            word = " ".join(match.group(1).lower().split())
+            names.add(SET_ALIASES.get(word, word))
+        names.update(m.group(1).lower() for m in SET_CONFIG.finditer(text))
+    return names
+
+
+def is_test_file(path: Path, root: Path) -> bool:
+    name = path.name
+    return ("tests" in path.relative_to(root).parts or name.startswith("test_")
+            or name.endswith(("_test.py", "_test.go", ".test.js", ".test.ts",
+                              ".spec.js", ".spec.ts")))
+
+
+def check_pool_session_settings(root: Path, problems: list) -> None:
+    """A session `SET` in an asyncpg pool's `init=` lasts one request.
+
+    That is asyncpg's behaviour, not the platform's: the pool runs `RESET
+    ALL` on every connection it takes back, and `init=` runs only when a
+    connection is created. So the second request on a connection runs with
+    the ROLE's default. On the platform the role's default search_path is
+    the app's schema and nothing shows; on a local Postgres it is `"$user",
+    public`, and the app fails with `relation ... does not exist` the moment
+    someone runs it by hand. A value in `server_settings=` survives the
+    reset, and so does one `setup=` sets on every acquire.
+
+    Says nothing when it cannot see: a `**options` spread, a `reset=`, a
+    `server_settings` that is not a literal dict, or a `setup=` whose SQL is
+    out of reach. Test files are skipped - the recipe's own test builds the
+    broken pool on purpose.
+
+    What it cannot see at all, so a `clean` does not cover it: `create_pool`
+    imported under another name, a pool built as `asyncpg.Pool(...)`, an
+    `init=` that is a method (`self._init`) or lives in another module, and
+    SQL held in a module-level constant rather than written in the function.
+    """
+    for path in source_files(root, {".py"}):
+        if is_test_file(path, root):
+            continue
+        text = read(path)
+        if "create_pool" not in text or "asyncpg" not in text:
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue  # find_routes reports it
+        functions = {node.name: node for node in ast.walk(tree)
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for call in ast.walk(tree):
+            if not (isinstance(call, ast.Call) and _name_of(call.func) == "create_pool"):
+                continue
+            init = _keyword(call, "init")
+            if init is None or _keyword(call, "reset") is not None or \
+                    any(kw.arg is None for kw in call.keywords):
+                continue
+            lost = _settings_in(_reached_strings(init, functions))
+            setup = _keyword(call, "setup")
+            if setup is not None:
+                kept = _settings_in(_reached_strings(setup, functions))
+                if not kept:
+                    continue
+                lost -= kept
+            settings = _keyword(call, "server_settings")
+            if settings is not None:
+                if not isinstance(settings, ast.Dict):
+                    continue
+                lost -= {key.value.lower() for key in settings.keys
+                         if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+            for name in sorted(lost):
+                problems.append(
+                    "%s:%d: SET %s inside create_pool(init=...) - asyncpg runs "
+                    "RESET ALL when a connection goes back to the pool, so the next "
+                    "request on it runs without it (for search_path: relation ... "
+                    "does not exist, on any Postgres but the platform's). Pass "
+                    "server_settings={\"%s\": ...} instead - see "
+                    "templates/recipes/postgres/db.py"
+                    % (rel(path, root), call.lineno, name, name))
+
+
+def python_reads_database_url(text: str) -> bool:
+    """`os.environ["DATABASE_URL"]`, `os.environ.get(...)`, `os.getenv(...)`.
+
+    Read with `ast`, so a comment or a docstring that names the variable -
+    "we never read DATABASE_URL here" - is not a read.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False  # find_routes reports it
+
+    def is_name(node) -> bool:
+        return isinstance(node, ast.Constant) and node.value == "DATABASE_URL"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and _name_of(node.value) == "environ" \
+                and is_name(node.slice):
+            return True
+        if isinstance(node, ast.Call) and node.args and is_name(node.args[0]):
+            func = node.func
+            if _name_of(func) == "getenv":
+                return True
+            if isinstance(func, ast.Attribute) and func.attr == "get" \
+                    and _name_of(func.value) == "environ":
+                return True
+    return False
+
+
+def check_database_mode(root: Path, manifest: dict, problems: list) -> None:
+    """Code that reads DATABASE_URL in an app that asked for no database.
+
+    `"data": {"none": true}` is the starter's setting, and the platform then
+    injects no DATABASE_URL at all. An app that grew a database while keeping
+    the starter's manifest deploys green and fails on its first query.
+    """
+    data = manifest.get("data")
+    if not (isinstance(data, dict) and data.get("none")):
+        return
+    for path in source_files(root, {".py"} | C_STYLE_SUFFIXES):
+        if is_test_file(path, root):
+            continue
+        if path.suffix == ".py":
+            found = python_reads_database_url(read(path))
+        else:
+            found = bool(READS_DATABASE_URL.search(C_COMMENT.sub(" ", read(path))))
+        if found:
+            problems.append(
+                "%s: reads DATABASE_URL, but manifest.json declares "
+                "\"data\": {\"none\": true} - the platform injects no database "
+                "then, so this deploys green and fails on the first query. "
+                "Remove the `data` block to get the managed schema"
+                % rel(path, root))
+            return
+
+
 def load_manifest(root: Path, problems: list):
     path = root / "manifest.json"
     if not path.is_file():
@@ -1359,6 +1624,8 @@ def check(root: Path) -> tuple:
     check_env_files(root, problems)
     check_capabilities(root, manifest, problems, contract)
     check_migrations(root, manifest, problems, notes)
+    check_pool_session_settings(root, problems)
+    check_database_mode(root, manifest, problems)
     check_manifest_shape(manifest, problems, notes, schema, contract)
     check_secret_literals(root, problems)
     note_missing_tests(root, notes)

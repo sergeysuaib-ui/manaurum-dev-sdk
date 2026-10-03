@@ -1,0 +1,5 @@
+# What the recipe's tests need. asyncpg as Core's own backend pins it; pytest
+# and pytest-asyncio as the starter's requirements-dev.txt does.
+asyncpg==0.30.0
+pytest==8.3.4
+pytest-asyncio==0.25.2
