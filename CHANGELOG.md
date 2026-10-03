@@ -1,3 +1,23 @@
+# 3.12.0 - the plugin installs in Codex too (MAN-1439)
+
+Summary: The ManAurum SDK can now also be installed in Codex / ChatGPT, using the same skills and templates as Claude Code.
+
+### Why
+
+PR #34 added Codex packaging in September, cut at 3.0.0; it sat unmerged and conflicting
+while the skills moved on. Its README and setup edits are superseded by later releases;
+its manifests are not.
+
+### What changed
+
+* **`.codex-plugin/plugin.json`** and a portable root **`plugin.json`** (from PR #34): Codex
+  reads the same `skills/` and `templates/`, nothing is copied.
+* **README**: "Install in Codex / ChatGPT Work", with what is not verified yet (an install
+  in a fresh ChatGPT chat, MAN-1439) and what does not carry over (the skills' slash-command
+  cross-references, the stale-copy check, the session-start update hook).
+* **`check_repo.py`**: both new manifests carry the plugin's version, or the build fails —
+  PR #34's had stayed at 3.0.0.
+
 # 3.11.0 - document the code in the edit that writes it, and the starter checks it
 
 Summary: Apps built with the SDK now explain their own code as they are written, and the starter's tests fail if a function is left unexplained.
