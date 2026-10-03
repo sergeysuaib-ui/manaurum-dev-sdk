@@ -22,8 +22,9 @@ CREATE FUNCTION documents_tags_text(tags text[]) RETURNS text
 
 -- Weights: A for the title, B for tags, D for the body, so ts_rank_cd puts a
 -- title hit above a body hit. Adding a STORED column rewrites the table under
--- a lock, inside the deploy's 30s statement timeout - fine for thousands of
--- rows, worth a thought for millions.
+-- an exclusive lock, inside the deploy's 30s statement_timeout and after
+-- waiting at most 5s for that lock (lock_timeout) - fine for thousands of rows
+-- on a quiet table, worth a thought for millions or a busy one.
 ALTER TABLE documents ADD COLUMN search tsvector GENERATED ALWAYS AS (
     setweight(to_tsvector('russian', coalesce(title, '')), 'A') ||
     setweight(to_tsvector('russian', documents_tags_text(tags)), 'B') ||

@@ -31,17 +31,19 @@ import search  # noqa: E402
 DSN = os.environ.get("MANAURUM_TEST_PG_DSN", "").strip()
 MIGRATIONS = sorted((HERE / "migrations").glob("*.sql"))
 
-if not DSN and os.environ.get("MANAURUM_TEST_PG_REQUIRED"):
-    raise RuntimeError("MANAURUM_TEST_PG_REQUIRED is set but MANAURUM_TEST_PG_DSN is not")
+if not DSN and os.environ.get("MANAURUM_TEST_PG_REQUIRED", "").strip() == "1":
+    raise RuntimeError("MANAURUM_TEST_PG_REQUIRED=1 but MANAURUM_TEST_PG_DSN is not set")
 
 
 async def apply_migrations(conn: asyncpg.Connection, schema: str) -> None:
-    """What the deploy does, per file: search_path on the schema, then the SQL.
+    """The deploy's order, per file: search_path on the schema, then the SQL.
 
-    One `execute` per file. A file holding a single CONCURRENTLY statement
-    runs outside a transaction block that way, exactly as the platform runs
-    it; a file that mixed it with anything else would fail here as it fails
-    there.
+    Not the deploy's identity: this runs as whoever the DSN logs in as, not
+    the platform's NOLOGIN migrator role, and without its statement and lock
+    timeouts. What it does reproduce is the shape - one `execute` per file,
+    so a file holding only a CONCURRENTLY statement runs outside a
+    transaction block, and a file that mixed it with anything else would
+    fail here as it fails there.
     """
     await conn.execute("SET search_path TO %s, public" % db.quote_ident(schema))
     for path in MIGRATIONS:
@@ -209,6 +211,17 @@ async def test_the_snippet_is_escaped_before_it_is_marked(conn):
     assert "<img" not in danger["snippet_html"]
     assert "&lt;img src=x onerror=alert" in danger["snippet_html"]
     assert danger["snippet_html"].startswith("<mark>Маржа</mark>")
+
+
+async def test_a_document_cannot_forge_a_mark(conn):
+    # The markers are control characters; a body that carries them must not
+    # turn its own words into <mark>, so they are stripped before ts_headline.
+    await conn.execute("INSERT INTO documents (title, body) VALUES ($1, $2)",
+                       "Подделка", "\x02фальшь\x03 и маржа")
+    result = await search.search(conn, "маржа")
+    forged = next(i for i in result["items"] if i["title"] == "Подделка")
+    assert "<mark>фальшь</mark>" not in forged["snippet_html"]
+    assert "<mark>маржа</mark>" in forged["snippet_html"]
 
 
 def test_relaxed_query_shape():

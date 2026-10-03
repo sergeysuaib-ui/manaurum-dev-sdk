@@ -209,9 +209,11 @@ parts inlined. Reading one real app beats reading four pages about apps.
   but not declared, declared and never called, or not registered on Core at all, a root
   key, `auth` mode, slug or Assistant tool name the deploy refuses, and migrations it
   would refuse (read through a small SQL lexer, so a function body, a string or a comment
-  is not a statement), a generated column on a function Postgres refuses there, a session
-  `SET` in an asyncpg pool's `init=`, and code reading `DATABASE_URL` under
-  `"data": {"none": true}`.
+  is not a statement), a generated column on one of the common built-ins Postgres refuses
+  there (`array_to_string`, `concat`, one-argument `to_tsvector`, clock, random and
+  sequence functions - not every refusal, so a setting-dependent cast still reaches
+  Postgres), a session `SET` in an asyncpg pool's `init=`, and code reading
+  `DATABASE_URL` under `"data": {"none": true}`.
   Routes are read with `ast` from decorators, `add_api_route` and `include_router`
   prefixes; for another language it says so and skips those rules rather than guessing.
   `python check_app.py my-app`, exit 1 on findings.

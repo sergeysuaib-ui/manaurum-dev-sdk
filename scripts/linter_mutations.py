@@ -650,6 +650,61 @@ def search_path_set_in_pool_setup(app: Path) -> None:
         encoding="utf-8")
 
 
+def a_generated_column_on_concat(app: Path) -> None:
+    # concat() looks like || and is STABLE: it formats arguments of any type.
+    a_migration(app, (
+        "CREATE TABLE person (id text primary key, first text, last text,\n"
+        "  full_name text GENERATED ALWAYS AS (concat_ws(' ', first, last)) STORED);\n"))
+
+
+def a_generated_column_on_now(app: Path) -> None:
+    # "When was this last touched" as a generated column. The fix is a
+    # trigger, and the finding has to say so rather than "wrap it".
+    a_migration(app, (
+        "CREATE TABLE note (id text primary key, body text,\n"
+        "  touched_at timestamptz GENERATED ALWAYS AS (now()) STORED);\n"))
+
+
+def search_path_in_init_and_in_server_settings(app: Path) -> None:
+    # MUST STAY GREEN. Redundant, not broken: server_settings is what RESET
+    # ALL restores, so the SET in init= loses nothing.
+    patch_manifest(app, lambda data: data.pop("data"))
+    (app / "src" / "db.py").write_text(SET_IN_INIT.replace(
+        "init=_on_connect)",
+        "init=_on_connect,\n"
+        "            server_settings={\"search_path\": "
+        "os.environ[\"MANAURUM_TARGET_SCHEMA\"]})"), encoding="utf-8")
+
+
+def set_local_inside_a_transaction(app: Path) -> None:
+    # MUST STAY GREEN. init= registers codecs and runs a one-off check in a
+    # transaction with SET LOCAL, which ends with that transaction by design
+    # - nothing for RESET ALL to take away.
+    patch_manifest(app, lambda data: data.pop("data"))
+    anchor = ("    await conn.execute(f'SET search_path TO "
+              "\"{os.environ[\"MANAURUM_TARGET_SCHEMA\"]}\", public')\n")
+    if anchor not in SET_IN_INIT:
+        raise AssertionError("anchor not found in SET_IN_INIT")
+    (app / "src" / "db.py").write_text(SET_IN_INIT.replace(
+        anchor,
+        "    await conn.set_type_codec('jsonb', encoder=str, decoder=str,\n"
+        "                              schema='pg_catalog')\n"
+        "    async with conn.transaction():\n"
+        "        await conn.execute(\"SET LOCAL statement_timeout = '5s'\")\n"
+        "        await conn.fetchval('SELECT 1')\n"), encoding="utf-8")
+
+
+def database_url_named_in_a_comment(app: Path) -> None:
+    # MUST STAY GREEN. Under data.none, saying that the app does NOT read
+    # the variable is not reading it.
+    edit(app / "src" / "capability.py", '"""',
+         '"""We never read os.environ["DATABASE_URL"] here: data.none injects none.\n\n')
+    path = app / "src" / "capability.py"
+    path.write_text(path.read_text(encoding="utf-8")
+                    + '\n# os.getenv("DATABASE_URL") would be None under data.none.\n',
+                    encoding="utf-8")
+
+
 def database_url_with_no_database(app: Path) -> None:
     # The starter's manifest says `"data": {"none": true}`; the app grew a
     # database anyway. Deploys green, and the first query has no DSN.
@@ -808,6 +863,16 @@ APP_MUTATIONS = [
      search_path_set_in_pool_setup, None),
     ("data: DATABASE_URL under data.none", database_url_with_no_database,
      "src/db.py: reads DATABASE_URL"),
+    ("data: DATABASE_URL named in a comment and a docstring stays green",
+     database_url_named_in_a_comment, None),
+    ("migrations: a generated column on concat_ws()", a_generated_column_on_concat,
+     "join with || and wrap each nullable part in coalesce"),
+    ("migrations: a generated column on now()", a_generated_column_on_now,
+     "BEFORE UPDATE trigger - never an IMMUTABLE wrapper"),
+    ("postgres: SET in init= with server_settings stays green",
+     search_path_in_init_and_in_server_settings, None),
+    ("postgres: SET LOCAL in a transaction stays green",
+     set_local_inside_a_transaction, None),
 ]
 
 

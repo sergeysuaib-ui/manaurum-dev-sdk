@@ -29,9 +29,11 @@ That text came from people, and ts_headline is not a sanitiser: it drops what
 its parser takes for a complete tag, and passes a fragment such as
 `<img src=x onerror=alert` straight through (measured, Postgres 16). Put its
 output into `innerHTML` as it comes and the search box is an XSS hole. So the
-markers are control characters no text contains, the snippet is HTML-escaped
-first, and only then do the markers become `<mark>`. The browser gets
-`snippet_html` that is safe to insert.
+markers are two control characters, stripped from the body before
+ts_headline sees it (so a document cannot forge a mark), the snippet is
+HTML-escaped, and only then do the markers become `<mark>`. The browser gets
+`snippet_html` that is safe to insert - and ONLY that field: `title` comes
+back as stored, so render it with `textContent`, never `innerHTML`.
 
 `ts_headline` is slow - it re-parses each document - so it runs only over the
 page being returned, never over every match.
@@ -65,7 +67,8 @@ page AS (
      LIMIT $3 OFFSET $4
 )
 SELECT p.id, p.title, p.created_at, p.rank,
-       ts_headline($1::regconfig, p.body, q.query, $5) AS snippet
+       ts_headline($1::regconfig, translate(p.body, chr(2) || chr(3), ''),
+                   q.query, $5) AS snippet
   FROM page p, q
  ORDER BY p.rank DESC, p.created_at DESC, p.id
 """

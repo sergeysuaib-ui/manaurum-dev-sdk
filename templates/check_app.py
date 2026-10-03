@@ -167,18 +167,32 @@ FORBIDDEN = (
 MAX_MIGRATION_BYTES = 64 * 1024
 # `GENERATED ALWAYS AS (...)`, not `GENERATED ALWAYS AS IDENTITY`.
 GENERATED_AS = re.compile(r"(?i)\bGENERATED\s+ALWAYS\s+AS\s*\(")
-# Built-ins Postgres refuses in a generated column ("generation expression is
-# not immutable"), as people actually write them. Volatility as `pg_proc`
-# has it on Postgres 16; a function of the app's own is not judged here.
+# Common built-ins Postgres refuses in a generated column ("generation
+# expression is not immutable"), as people actually write them, each with the
+# fix that is right for IT - wrapping `now()` in an IMMUTABLE function makes
+# Postgres accept a column whose value is then a lie. Volatility as `pg_proc`
+# has it on Postgres 16. Not every refusal: a cast that depends on a setting
+# (`ts::date` on a timestamptz) needs column types this script does not have,
+# and a function of the app's own is not judged here.
 NOT_IMMUTABLE = (
-    (re.compile(r"(?i)\barray_to_string\s*\("), "array_to_string() (STABLE)"),
-    (re.compile(r"(?i)\bconcat(?:_ws)?\s*\("), "concat()/concat_ws() (STABLE)"),
+    (re.compile(r"(?i)\barray_to_string\s*\("), "array_to_string() (STABLE)",
+     "for a text[] column, wrap it in your own one-line LANGUAGE sql IMMUTABLE "
+     "function - honest only for text[], where no setting changes the output"),
+    (re.compile(r"(?i)\bconcat(?:_ws)?\s*\("), "concat()/concat_ws() (STABLE)",
+     "join with || and wrap each nullable part in coalesce(col, '')"),
     (re.compile(r"(?i)\b(?:now|clock_timestamp|statement_timestamp|"
                 r"transaction_timestamp|timeofday|random|gen_random_uuid|"
-                r"nextval)\s*\("), "a clock, random or sequence function"),
+                r"nextval)\s*\("), "a clock, random or sequence function",
+     "a value fixed at insert is a DEFAULT, one that changes on update is a "
+     "BEFORE UPDATE trigger - never an IMMUTABLE wrapper, which makes Postgres "
+     "accept a column whose value is wrong"),
     (re.compile(r"(?i)\b(?:current_(?:date|time|timestamp)|localtime(?:stamp)?)\b"),
-     "current_date/current_timestamp (STABLE)"),
+     "current_date/current_timestamp (STABLE)",
+     "a value fixed at insert is a DEFAULT, one that changes on update is a "
+     "BEFORE UPDATE trigger - never an IMMUTABLE wrapper"),
 )
+TO_TSVECTOR_ADVICE = ("name the configuration: to_tsvector('english', ...), the same "
+                      "one your queries use")
 # `to_tsvector(text)` reads default_text_search_config and is STABLE;
 # `to_tsvector('russian', text)` is IMMUTABLE. Told apart by argument count.
 TO_TSVECTOR = re.compile(r"(?i)\bto_tsvector\s*\(")
@@ -192,9 +206,12 @@ SESSION_SET = re.compile(
     r"(TIME\s+ZONE|[A-Za-z_][\w.]*)")
 SET_CONFIG = re.compile(r"(?is)\bset_config\s*\(\s*'([\w.]+)'\s*,[^;]*?,\s*false\s*\)")
 SET_ALIASES = {"time zone": "timezone", "schema": "search_path", "names": "client_encoding"}
-# `os.environ["DATABASE_URL"]`, `os.getenv(...)`, `process.env.DATABASE_URL`,
-# Go's `os.Getenv(...)`.
+# Outside Python, read as text with C-style comments removed:
+# `process.env.DATABASE_URL`, `Deno.env.get("DATABASE_URL")`, Go's
+# `os.Getenv("DATABASE_URL")`. Python is read with `ast` instead.
 READS_DATABASE_URL = re.compile(r"""(?i)(?:environ|getenv|env)[\w.\[(\s"']{0,8}DATABASE_URL""")
+C_COMMENT = re.compile(r"/\*.*?\*/|(?<![:\w])//[^\n]*", re.S)
+C_STYLE_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go"}
 # What makes an /agent/ handler safe: a verified caller, as code. One of these
 # called directly, or passed to Depends()/Security() on the handler, its route
 # decorator, its router or the include_router that mounts it.
@@ -1388,23 +1405,23 @@ def check_generated_columns(name: str, body: str, problems: list) -> None:
     volatility is not its question - and then Postgres refuses it with
     "generation expression is not immutable", for every tenant, at apply
     time. Two of these look like they should work: `array_to_string()` and
-    the one-argument `to_tsvector()`.
+    the one-argument `to_tsvector()`. Each finding carries the fix for that
+    function, because the fixes differ.
     """
     for match in GENERATED_AS.finditer(body):
         expression = inside_parens(body, match.end())
-        found = [label for pattern, label in NOT_IMMUTABLE if pattern.search(expression)]
+        found = [(label, advice) for pattern, label, advice in NOT_IMMUTABLE
+                 if pattern.search(expression)]
         for call in TO_TSVECTOR.finditer(expression):
             if top_level_commas(inside_parens(expression, call.end())) == 0:
-                found.append("to_tsvector() without a configuration (STABLE: it "
-                             "reads default_text_search_config)")
-        for label in found:
+                found.append(("to_tsvector() without a configuration (STABLE: it "
+                              "reads default_text_search_config)", TO_TSVECTOR_ADVICE))
+        for label, advice in found:
             problems.append(
                 "migrations/%s: a generated column uses %s, and Postgres refuses "
                 "it (\"generation expression is not immutable\") after the deploy's "
-                "validator has passed it. Write to_tsvector('english', ...) with the "
-                "configuration, or wrap the function in your own LANGUAGE sql "
-                "IMMUTABLE function - see templates/recipes/postgres/migrations"
-                % (name, label))
+                "validator has passed it. Fix: %s - see "
+                "templates/recipes/postgres/migrations" % (name, label, advice))
 
 
 def _reached_strings(expr, functions: dict, depth: int = 3) -> list:
@@ -1467,6 +1484,11 @@ def check_pool_session_settings(root: Path, problems: list) -> None:
     `server_settings` that is not a literal dict, or a `setup=` whose SQL is
     out of reach. Test files are skipped - the recipe's own test builds the
     broken pool on purpose.
+
+    What it cannot see at all, so a `clean` does not cover it: `create_pool`
+    imported under another name, a pool built as `asyncpg.Pool(...)`, an
+    `init=` that is a method (`self._init`) or lives in another module, and
+    SQL held in a module-level constant rather than written in the function.
     """
     for path in source_files(root, {".py"}):
         if is_test_file(path, root):
@@ -1511,6 +1533,34 @@ def check_pool_session_settings(root: Path, problems: list) -> None:
                     % (rel(path, root), call.lineno, name, name))
 
 
+def python_reads_database_url(text: str) -> bool:
+    """`os.environ["DATABASE_URL"]`, `os.environ.get(...)`, `os.getenv(...)`.
+
+    Read with `ast`, so a comment or a docstring that names the variable -
+    "we never read DATABASE_URL here" - is not a read.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False  # find_routes reports it
+
+    def is_name(node) -> bool:
+        return isinstance(node, ast.Constant) and node.value == "DATABASE_URL"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and _name_of(node.value) == "environ" \
+                and is_name(node.slice):
+            return True
+        if isinstance(node, ast.Call) and node.args and is_name(node.args[0]):
+            func = node.func
+            if _name_of(func) == "getenv":
+                return True
+            if isinstance(func, ast.Attribute) and func.attr == "get" \
+                    and _name_of(func.value) == "environ":
+                return True
+    return False
+
+
 def check_database_mode(root: Path, manifest: dict, problems: list) -> None:
     """Code that reads DATABASE_URL in an app that asked for no database.
 
@@ -1521,10 +1571,14 @@ def check_database_mode(root: Path, manifest: dict, problems: list) -> None:
     data = manifest.get("data")
     if not (isinstance(data, dict) and data.get("none")):
         return
-    for path in source_files(root, CODE_SUFFIXES):
+    for path in source_files(root, {".py"} | C_STYLE_SUFFIXES):
         if is_test_file(path, root):
             continue
-        if READS_DATABASE_URL.search(read(path)):
+        if path.suffix == ".py":
+            found = python_reads_database_url(read(path))
+        else:
+            found = bool(READS_DATABASE_URL.search(C_COMMENT.sub(" ", read(path))))
+        if found:
             problems.append(
                 "%s: reads DATABASE_URL, but manifest.json declares "
                 "\"data\": {\"none\": true} - the platform injects no database "
