@@ -195,7 +195,12 @@
 
     <!-- SORTING. Records, so the old row is right: the name is a label, it
          truncates, and short even values (an amount, a date) hug the right.
-         One badge, on the one row that needs a decision. One primary. -->
+         One badge, on the one row that needs a decision. One primary.
+
+         These rows are inert here, so they carry no is-interactive, tabindex
+         or data-id: a hover on a row that does nothing is a promise the page
+         does not keep. In a real app a row opens its order - add all three
+         then, with one delegated click AND keydown handler, as #posts has. -->
     <div data-view="orders" hidden>
       <header class="page-header">
         <div>
@@ -215,32 +220,32 @@
 
       <section class="card card-flush">
         <ul class="list">
-          <li class="row is-interactive" data-id="312" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Ivanova Maria</span><span class="row-sub">#312 &middot; 4 items &middot; pickup</span></div>
             <span class="badge badge-danger">overdue</span>
             <span class="row-meta">2 480 ₽</span>
           </li>
-          <li class="row is-interactive" data-id="313" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Petrov Alexei</span><span class="row-sub">#313 &middot; 1 item &middot; delivery</span></div>
             <span class="row-meta">890 ₽</span>
           </li>
-          <li class="row is-interactive" data-id="314" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Kafe Solnce</span><span class="row-sub">#314 &middot; 12 items &middot; delivery</span></div>
             <span class="row-meta">14 200 ₽</span>
           </li>
-          <li class="row is-interactive" data-id="315" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Sidorova Anna</span><span class="row-sub">#315 &middot; 2 items &middot; pickup</span></div>
             <span class="row-meta">1 150 ₽</span>
           </li>
-          <li class="row is-interactive" data-id="316" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Orlov Dmitry</span><span class="row-sub">#316 &middot; 3 items &middot; delivery</span></div>
             <span class="row-meta">3 040 ₽</span>
           </li>
-          <li class="row is-interactive" data-id="317" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Studio Linia</span><span class="row-sub">#317 &middot; 6 items &middot; delivery</span></div>
             <span class="row-meta">7 600 ₽</span>
           </li>
-          <li class="row is-interactive" data-id="318" tabindex="0">
+          <li class="row">
             <div class="row-main"><span class="row-title">Morozov Ilya</span><span class="row-sub">#318 &middot; 1 item &middot; pickup</span></div>
             <span class="row-meta">420 ₽</span>
           </li>
@@ -265,9 +270,19 @@
     });
   });
 
-  document.getElementById('posts').addEventListener('click', function (e) {
-    var row = e.target.closest('.row[data-id]');
+  // One delegated handler, and a keyboard path: a row that only answers the
+  // mouse is half a control.
+  var posts = document.getElementById('posts');
+  function openPost(row) {
     if (row) location.hash = 'post';
+  }
+  posts.addEventListener('click', function (e) {
+    openPost(e.target.closest('.row[data-id]'));
+  });
+  posts.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    openPost(e.target.closest('.row[data-id]'));
   });
 
   var views = Array.prototype.slice.call(document.querySelectorAll('[data-view]'));

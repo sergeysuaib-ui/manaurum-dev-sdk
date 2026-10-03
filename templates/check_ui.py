@@ -95,6 +95,15 @@ VIEW_SPLIT = re.compile(r"data-view\s*=")
 # selected one ends up coloured - so it is not on this list. From PR #27.
 ACCENT_CLASS = re.compile(r"\b(btn-primary|btn-ghost|badge-accent)\b")
 ACCENT_BUDGET = 4
+# Inside a loop, what paints: `className = 'btn btn-ghost'`, `classList.add(
+# 'badge-accent')`, a `class="..."` template. What does not: a selector
+# (`querySelector('.btn-primary')` - the class follows a dot), a
+# `classList.remove(...)`, and `classList.toggle(cls, condition)`, which puts
+# the class on the items the condition picks - the chip pattern. A one-argument
+# toggle flips it onto every item that lacked it, so that one still counts.
+PAINTED_ACCENT = re.compile(r"(?<![\w.-])(btn-primary|btn-ghost|badge-accent)\b")
+NOT_PAINTING = re.compile(r"classList\.remove\s*\([^)]*\)|"
+                          r"classList\.toggle\s*\(\s*[^,()]+,[^)]*\)")
 LOOP_HEAD = re.compile(r"\bfor\s*\(|\bwhile\s*\(|\.(?:forEach|map|flatMap)\s*\(")
 
 # Anchors are not colours. `href="#card"` must not read as a hardcoded hex,
@@ -420,7 +429,7 @@ def check(static_dir: Path) -> list:
         # Only code has loops: in an .html file that is the scripts and the
         # inline handlers, so "for (example)" in a paragraph is not one.
         looped = sorted({m.group(1) for body in loop_bodies(code)
-                         for m in ACCENT_CLASS.finditer(body)})
+                         for m in PAINTED_ACCENT.finditer(NOT_PAINTING.sub("", body))})
         if looped:
             problems.append("%s: an accent class (%s) set inside a loop - one per item "
                             "is a column of accent. A repeated control is a .chip "
@@ -434,9 +443,17 @@ def check(static_dir: Path) -> list:
 
     html = strip_comments(entry.read_text(encoding="utf-8", errors="replace"))
 
+    # Elements, not mentions: a class counts where it sits in a `class="..."`
+    # value of the markup. A `<style>` block that styles `.btn-primary`, or a
+    # script that names it in a selector, puts nothing on the screen.
+    markup_only = without_style_blocks(SCRIPT_BLOCK.sub("", html) if "</script>" in html
+                                       else html)
+    chunks = [" ".join(ATTR_CLASS.findall(chunk))
+              for chunk in VIEW_SPLIT.split(markup_only)]
+
     # One primary action per VIEW, not per file: a hash-routed app keeps every
     # view in index.html, and each view is allowed its own primary button.
-    worst = max((len(PRIMARY.findall(chunk)) for chunk in VIEW_SPLIT.split(html)), default=0)
+    worst = max((len(PRIMARY.findall(chunk)) for chunk in chunks), default=0)
     if worst > 1:
         problems.append("index.html: %d primary buttons in one view - one per view, and "
                         "never one per row" % worst)
@@ -444,15 +461,18 @@ def check(static_dir: Path) -> list:
     # Accent is a pointer. One primary button is not enough if every ghost
     # button and badge beside it is accent too - that is how a screen with no
     # broken rule ended up with twenty accent-coloured things on it (PR #27).
+    # The budget is per FIRST SCREEN, and what comes before the first view (a
+    # page header) is on screen with every view, so it counts towards each.
     # Only the static markup is counted here; preview.py counts the rendered
     # frame, and the loop rule above covers what a script hands out.
-    markup_only = SCRIPT_BLOCK.sub("", html) if "</script>" in html else html
-    loudest = max((len(ACCENT_CLASS.findall(chunk))
-                   for chunk in VIEW_SPLIT.split(markup_only)), default=0)
+    shared = len(ACCENT_CLASS.findall(chunks[0])) if chunks else 0
+    views = chunks[1:] or [""]
+    loudest = shared + max(len(ACCENT_CLASS.findall(chunk)) for chunk in views)
     if loudest > ACCENT_BUDGET:
         problems.append("index.html: %d accent-coloured elements (btn-primary, btn-ghost, "
-                        "badge-accent) in one view - %d at most; filters are .chip, "
-                        "secondary actions .btn-secondary" % (loudest, ACCENT_BUDGET))
+                        "badge-accent) on one view's first screen, counting what sits "
+                        "above the views - %d at most; filters are .chip, secondary "
+                        "actions .btn-secondary" % (loudest, ACCENT_BUDGET))
 
     if "manaurum:ready" not in html:
         problems.append("index.html: no manaurum:ready - after 10s the shell covers the "

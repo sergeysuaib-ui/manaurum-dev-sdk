@@ -237,6 +237,8 @@ SHELL_PAGE = """<!doctype html>
   // nobody has to remember to count (PR #27). They are the questions a rule
   // list does not ask: is anything allowed to stand out, does a badge mark the
   // few rows it should, and how far down does the content start.
+  // The same number as ACCENT_BUDGET in check_ui.py; smoke_tools.py fails
+  // when the two disagree. Not imported: this file is copied on its own.
   var ACCENT_BUDGET = 4;
   var NONE = 'rgba(0, 0, 0, 0)';
 
@@ -272,8 +274,18 @@ SHELL_PAGE = """<!doctype html>
     // first paint, so every .btn fades from blue. Measured on Chrome: teal
     // counted 0. Switching transitions off lands every element on its final
     // value before we read it.
+    //
+    // And the accent is swapped for a colour nothing else on the page can
+    // have. Matched against the real value, graphite in light IS
+    // --text-tertiary (#8e8e93) and green in dark IS --color-success
+    // (#30d158), so every caption and success badge counted as accent:
+    // the patterns list read 24 under graphite. An app with no --accent token
+    // gets none injected - that case is reported, not measured.
+    var hasAccent = resolved(doc, win, 'color', '--accent') !== NONE;
     var freeze = doc.createElement('style');
-    freeze.textContent = '*, *::before, *::after { transition: none !important; }';
+    freeze.textContent = '*, *::before, *::after { transition: none !important; }' +
+      (hasAccent ? ' :root { --accent: rgb(1, 2, 3) !important;' +
+                   ' --accent-soft: rgb(3, 2, 1) !important; }' : '');
     (doc.head || doc.documentElement).appendChild(freeze);
     void doc.body.offsetHeight;
     var accent = resolved(doc, win, 'color', '--accent');
@@ -308,6 +320,10 @@ SHELL_PAGE = """<!doctype html>
         : 'accent ' + count + ' on the first screen';
     }
     document.body.setAttribute('data-accent-count', String(count));
+    // The real accent back first, while transitions are still off - or the
+    // screenshot can catch every button fading in from the placeholder.
+    freeze.textContent = '*, *::before, *::after { transition: none !important; }';
+    void doc.body.offsetHeight;
     freeze.remove();
 
     // 2. Badges. A badge that sits on most rows of a list has stopped being a

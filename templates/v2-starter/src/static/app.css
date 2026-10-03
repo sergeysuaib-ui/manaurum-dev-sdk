@@ -938,6 +938,9 @@ body[data-device="mobile"] .chips::-webkit-scrollbar { display: none; }
 body[data-device="mobile"] .chip { min-height: 36px; flex-shrink: 0; }
 /* Content: the phone is already a narrow column, so the reader only needs
    its sizes brought down a step. */
+/* A text row keeps its 16px top and bottom: the `.row` line above would
+   otherwise outrank `.row.row-text` and squeeze two-line headlines together. */
+body[data-device="mobile"] .row.row-text { padding-top: var(--space-4); padding-bottom: var(--space-4); }
 body[data-device="mobile"] .row-headline { font-size: var(--fs-callout); }
 body[data-device="mobile"] .reader { padding-block: 0 var(--space-8); }
 body[data-device="mobile"] .article-title { font-size: var(--fs-title-3); }

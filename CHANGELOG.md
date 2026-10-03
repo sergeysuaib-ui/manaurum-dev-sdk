@@ -61,6 +61,17 @@ starter's overview cards before this release, 16px after.
   its own bottom margin on top of the column gap: 32px above the card in the starter's
   detail view, 16px now. A toolbar inside anything else (with chips under it, in a
   `.reader`) keeps its margin.
+* **Review fixes before release.** `preview.py` swaps the accent for a placeholder colour
+  while it counts: graphite in light equals `--text-tertiary` and green in dark equals
+  `--color-success`, so captions and success badges read as accent (the patterns list
+  read 24). `check_ui.py` counts accent classes only in `class="..."` values outside
+  `<style>` and `<script>` (the primary-button count too), adds a page header above the
+  views to each view's first screen, and in a loop no longer flags a selector,
+  `classList.remove` or `classList.toggle(cls, condition)`. The starter's capability
+  rows lose their "granted" badge - on every row it marked nothing. The patterns page's
+  order rows are inert, so they lose `is-interactive`; its post rows answer Enter and
+  Space. Mobile text rows keep 16px. `smoke_tools.py` adds graphite-light and green-dark
+  meter cases and fails if the two accent budgets drift.
 
 # 3.13.0 - a database template that lasts past one request, and search that answers
 

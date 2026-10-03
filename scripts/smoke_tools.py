@@ -257,6 +257,24 @@ def loud_copy(html: str) -> str:
                         '<span class="row-foot"><span class="badge badge-accent">strong</span>')
 
 
+def accent_budgets_agree(problems: list) -> None:
+    """check_ui.py and preview.py each carry the budget; they must not drift.
+
+    preview.py cannot import it - it is copied beside an app on its own.
+    """
+    found = {}
+    for name, pattern in (("templates/check_ui.py", r"(?m)^ACCENT_BUDGET\s*=\s*(\d+)"),
+                          ("templates/preview.py", r"var ACCENT_BUDGET\s*=\s*(\d+);")):
+        match = re.search(pattern, (ROOT / name).read_text(encoding="utf-8"))
+        if not match:
+            problems.append("%s: no ACCENT_BUDGET found" % name)
+            return
+        found[name] = match.group(1)
+    if len(set(found.values())) > 1:
+        problems.append("the accent budget differs: %s" % ", ".join(
+            "%s says %s" % item for item in sorted(found.items())))
+
+
 def smoke_meter(problems: list) -> None:
     """preview's first-screen meter, in a real headless browser.
 
@@ -274,15 +292,23 @@ def smoke_meter(problems: list) -> None:
         return
 
     workdir = Path(tempfile.mkdtemp(prefix="smoke-meter-"))
-    site = workdir / "site"
-    css = site / "v2-starter" / "src" / "static"
-    css.mkdir(parents=True)
-    shutil.copy(STARTER_STATIC / "app.css", css / "app.css")
-    (site / "patterns").mkdir()
-    html = PATTERNS.read_text(encoding="utf-8")
-    (site / "patterns" / "index.html").write_text(html, encoding="utf-8")
-    (site / "loud").mkdir()
-    (site / "loud" / "index.html").write_text(loud_copy(html), encoding="utf-8")
+    try:
+        site = workdir / "site"
+        css = site / "v2-starter" / "src" / "static"
+        css.mkdir(parents=True)
+        shutil.copy(STARTER_STATIC / "app.css", css / "app.css")
+        # The starter itself at the root, where its `/app.css` resolves.
+        shutil.copy(STARTER_STATIC / "app.css", site / "app.css")
+        shutil.copy(STARTER_STATIC / "index.html", site / "index.html")
+        (site / "patterns").mkdir()
+        html = PATTERNS.read_text(encoding="utf-8")
+        (site / "patterns" / "index.html").write_text(html, encoding="utf-8")
+        (site / "loud").mkdir()
+        (site / "loud" / "index.html").write_text(loud_copy(html), encoding="utf-8")
+    except (AssertionError, OSError) as exc:
+        problems.append("scripts/smoke_tools.py: could not build the meter's pages - %s" % exc)
+        shutil.rmtree(workdir, ignore_errors=True)
+        return
 
     port = free_port()
     base = "http://127.0.0.1:%d" % port
@@ -299,6 +325,12 @@ def smoke_meter(problems: list) -> None:
             # counted 0 while a transition was still running
             ("patterns", "/__shell?entry=/patterns/index.html%23library&accent=teal", False),
             ("patterns", "/__shell?entry=/patterns/index.html%23orders&accent=verdant", False),
+            # Accents that equal another token: graphite in light is
+            # --text-tertiary, green in dark is --color-success. Matched on
+            # the real colour, every caption and success badge read as accent.
+            ("patterns", "/__shell?entry=/patterns/index.html%23library&accent=graphite"
+                         "&appearance=light", False),
+            ("starter", "/__shell?entry=/index.html&accent=green&appearance=dark", False),
             ("loud copy", "/__shell?entry=/loud/index.html%23library&accent=green", True),
         )
         for index, (label, path, loud) in enumerate(cases):
@@ -453,6 +485,7 @@ def main() -> int:
     problems = []
     smoke_json(problems)
     smoke_preview(problems)
+    accent_budgets_agree(problems)
     smoke_meter(problems)
     smoke_version_check(problems)
     for problem in problems:

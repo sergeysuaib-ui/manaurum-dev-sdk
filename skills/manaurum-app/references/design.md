@@ -243,8 +243,10 @@ you never choose it, you only decide how many things wear it.
 `preview.py` counts the accent-coloured elements in the first screen of the
 frame and prints the count in its top bar, so the number is in every
 screenshot. `check_ui.py` fails on an accent class (`btn-primary`,
-`btn-ghost`, `badge-accent`) assigned inside a loop in your scripts, and on
-more than four of them in one view of `index.html`.
+`btn-ghost`, `badge-accent`) put on every item inside a loop in your scripts
+(`classList.toggle(cls, isCurrent)` is fine - it picks one), and on more than
+four of them on one view's first screen of `index.html`, counting a page
+header above the views.
 
 ## Layout: how to compose a page
 
@@ -300,7 +302,7 @@ Classes are in `app.css`; this is the judgement that goes with them.
 |---|---|---|
 | Card | `.card`, `.card-title` (the small uppercase eyebrow), `.card-hint` | A group of related things. One card per group, never one per field. |
 | Card with a full-width list | `.card.card-flush` + `.card-head` | A card whose rows run edge to edge: `.card-flush` drops the padding so the hairlines reach the border, and `.card-head` puts it back around the heading only. |
-| View | `[data-view]` directly inside `.app` | One screen of a hash-routed app. `app.css` gives it `.app`'s own rhythm, so the cards inside it are spaced like cards outside it. |
+| View | `[data-view]` directly inside `.app` | One screen of a hash-routed app. A plain wrapper — no padding, background or border of its own; the one rule `app.css` gives it (`.app > [data-view]`) is `.app`'s flex column and gap, so the cards inside it are spaced like cards outside it. A `.toolbar` directly in it is spaced by that gap alone. |
 | List | `.list` / `.row` | Any collection. Rows separated by hairlines — never boxes inside boxes. |
 | Row content (records) | `.row-main`, `.row-title`, `.row-sub`, `.row-meta` | Title and optional subtitle left, metadata hugging right. `.row-meta` is for *short, even* values — a date, a count, an amount; a category name goes under the text. Titles truncate. |
 | Row content (texts) | `.row.row-text` + `.row-headline`, `.row-excerpt`, `.row-foot` | A list of things people read. A headline that wraps to two lines, a two-line excerpt, and metadata under it. |
