@@ -53,6 +53,14 @@ starter's overview cards before this release, 16px after.
   (chips toggled in a loop, four accent things in a view, "for (" in running text).
   `smoke_tools.py` drives a real headless Chrome through the meter: the patterns page must
   read green, a copy with thirteen ghost filters and a badge on every row red on both.
+* **A flush card is flush on mobile too.** `body[data-device="mobile"] .card` outranked
+  `.card.card-flush`, so on a phone every list row sat 16px inside its card and the
+  hairlines stopped short (the starter's capabilities card, and the patterns lists).
+  Measured in headless Chrome at 390px with `device: mobile`: 16px inset before, 0 after.
+* **A toolbar in a view is spaced once.** A `.toolbar` directly in `.app` or a view kept
+  its own bottom margin on top of the column gap: 32px above the card in the starter's
+  detail view, 16px now. A toolbar inside anything else (with chips under it, in a
+  `.reader`) keeps its margin.
 
 # 3.13.0 - a database template that lasts past one request, and search that answers
 

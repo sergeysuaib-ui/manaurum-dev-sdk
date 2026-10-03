@@ -522,6 +522,12 @@ a.btn { text-decoration: none; }
    `.toolbar-spacer` - the one element here that grows. */
 .toolbar .input { width: auto; flex: 0 1 320px; min-width: 160px; }
 .toolbar-spacer { flex: 1; }
+/* A toolbar that is itself an item of `.app` or of a view is spaced by that
+   column's gap; its own margin on top made 32px (the starter's detail view,
+   until 3.14.0). Inside anything else - a wrapper with chips under it, a
+   `.reader` - the margin is what spaces it, so it stays. */
+.app > .toolbar,
+.app > [data-view] > .toolbar { margin-bottom: 0; }
 /* The same field with its label, as the forms rule asks. Then the flex item
    is the `.field`, not the input, so the width moves to it - otherwise the
    input shrinks to the browser's default size. In a toolbar the label may be
@@ -906,6 +912,11 @@ body[data-device="mobile"] .page-header { flex-direction: column; align-items: s
 body[data-device="mobile"] .page-header h1 { font-size: var(--fs-title-3); }
 body[data-device="mobile"] .row { padding: var(--space-3) var(--space-4); }
 body[data-device="mobile"] .card { padding: var(--space-4); }
+/* ...except a flush card, whose rows own their padding. Without this line the
+   rule above (0,2,1) beats `.card.card-flush` (0,2,0) and a phone shows every
+   list row inset 16px from the card edge - the hairlines stop short. Until
+   3.14.0 that was the starter's capabilities card on mobile. */
+body[data-device="mobile"] .card.card-flush { padding: 0; }
 /* Keep a flush card's heading on the same left edge as its rows. */
 body[data-device="mobile"] .card-flush .card-head { padding: var(--space-4) var(--space-4) var(--space-3); }
 /* Comfortable tap targets. */
