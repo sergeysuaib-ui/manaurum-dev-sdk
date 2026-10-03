@@ -68,6 +68,27 @@ Content-Type: application/json
   a malformed date reaches the handler and usually comes back as `500 handler_exception`
   rather than `422`. Validate dates before you send them.
 
+The same call from Node, inside your container:
+
+```javascript
+const CORE = process.env.MANAURUM_CORE_URL;
+
+async function setKV(key, value) {
+  const resp = await fetch(`${CORE}/api/capability/os.kv.set`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.MANAURUM_RUNTIME_TOKEN}`,
+      'X-Manaurum-Tenant-Id': process.env.MANAURUM_TENANT_ID,
+      'X-Manaurum-App-Id':    process.env.MANAURUM_APP_ID,   // the UUID: os.kv.* only
+      'Content-Type':         'application/json',
+    },
+    body: JSON.stringify({ key, value }),
+  });
+  if (!resp.ok) throw new Error(`os.kv.set failed: ${resp.status}`);
+  return resp.json();  // { output: { ok: true }, correlation_id: "…" }
+}
+```
+
 **Success:** `{ "output": { … }, "correlation_id": "<uuid>" }` — read `output`.
 `os.apps.bulk_export` streams `application/x-ndjson` instead, with no wrapper.
 
@@ -120,7 +141,7 @@ not granted automatically at install; a tenant admin grants them explicitly.
 
 ## `os.kv.set` — store a value
 
-Per-app, per-tenant key/value in Postgres. **App id: the UUID.**
+Per-app, per-tenant key/value in Postgres (FORCE-RLS by tenant). **App id: the UUID.**
 
 **Input:**
 
@@ -286,6 +307,11 @@ The file system the USER owns and sees in the Files app. All six capabilities ar
 (60 s TTL — forward immediately, never store), or it is `403 user_context_required`.
 Declare each one you use in `requires_capabilities`. All but `os.drive.stage` answer
 `412 user_has_no_workspace_in_tenant` when the user has no workspace here.
+
+`os.files.*` is your app's PRIVATE scratch, which the user never sees. To put a document
+into the USER's file system, read a user-picked file, or work in a folder the user granted
+you, use these capabilities plus the browser-side `app.pickFromDrive()` picker — all
+consent-gated, and all requiring the forwarded `X-Manaurum-User-Context`.
 
 ### `os.drive.stage` — presigned PUT to a user-scoped staging key
 

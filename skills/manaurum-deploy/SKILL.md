@@ -50,7 +50,7 @@ description: Deploy a ManAurum OS app on Platform v2 (containerized — `manauru
   co-owner; another developer's deploy of the same slug in your tenant is
   `403 app_id_out_of_scope`, and in another tenant `409 slug_owned_by_another_tenant`.
 - A project directory containing `manifest.json` + `Dockerfile` + your source files. See
-  `manaurum-app/SKILL.md` for the full manifest reference.
+  `manaurum-app/references/v2-platform.md` § 1 for the full manifest reference.
 
 ### Pre-flight: two linters, then a small window with a lot of data
 

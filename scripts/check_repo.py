@@ -176,12 +176,14 @@ ALLOWED_CONTROL = {0x09, 0x0a, 0x0d}
 # preview.py's own docstring said so.
 PAIRED_CLAIMS = [
     ("--virtual-time-budget",
-     ["templates/preview.py", "skills/manaurum-app/SKILL.md"],
+     ["templates/preview.py", "skills/manaurum-app/SKILL.md",
+      "skills/manaurum-app/references/checks.md"],
      re.compile(r"(?i)(without\s+`?--virtual-time-budget|drop the flag)"),
      "must say the flag is DROPPED, not shortened, to photograph a loading "
      "state - Chrome pauses virtual time while a request is in flight"),
     ("headless viewport floor",
-     ["templates/preview.py", "skills/manaurum-app/SKILL.md"],
+     ["templates/preview.py", "skills/manaurum-app/SKILL.md",
+      "skills/manaurum-app/references/checks.md"],
      re.compile(r"(?i)floor[^.]{0,120}500px"),
      "must state the ~500px headless layout-viewport floor, or a reader will "
      "shrink the window instead of using ?width="),

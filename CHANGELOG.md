@@ -1,3 +1,57 @@
+# 3.15.0 - the app skill is half as long: the path stays, the detail moves to the references
+
+Summary: The main app-building guide is now half as long, so the AI reads less before it starts; nothing was dropped, the details moved to reference pages it opens when needed.
+
+### Why
+
+`skills/manaurum-app/SKILL.md` had grown to 827 lines and 9,727 words, and an agent loads
+all of it on every app request, before it has asked the person a single question. Most of
+that length was not the path but the reasons for it: incident stories, the full Step 3.5
+procedure with every measured browser quirk, the `check_app.py` findings table, the
+deploy rejection codes, and paragraphs that repeated what `v2-platform.md`, `sdk-api.md`
+and `design.md` already said. The rules that get apps rejected were in there, but an agent
+had to read past 9,000 words to be sure it had them all.
+
+### What changed
+
+* **`SKILL.md`: 9,727 → 5,020 words** (827 → 537 lines). It keeps the path in order —
+  Step 0, the reference apps, the seven rules (stories trimmed), the project layout and
+  token rule, the minimal manifest and the `api_routes` default-deny rule, the port rule,
+  the handshake script itself with its three non-negotiables (the sender check against
+  exactly the two shell origins plus loopback, an answer within 10 s, appearance from
+  `e.data.payload`), the capability headers, every mandatory step with its commands, and
+  Step 4's three carry-overs. Every heading other files cite is unchanged, and the "How to
+  use this skill" map now lists `references/checks.md`. Each place that lost detail
+  points at where it went.
+* **`references/checks.md` (new, 2,638 words)** - Steps 3.5 and 3.6 in full: all five
+  parts of the UI check with the `--virtual-time-budget`, ~500px viewport-floor, wide-
+  and narrow-window and fragment details; what `check_ui.py` covers rule by rule; the
+  `check_app.py` findings table and what it cannot see; the documentation rule behind
+  `tests/test_documented.py`; and the gateway and capability error codes those checks
+  prevent (deploy codes stay in `manaurum-deploy/SKILL.md`, which owns them).
+* **`references/v2-platform.md` (8,965 → 9,770)** - `api_routes` precedence and "one
+  rule covers every verb"; the `app.listen(80, 'localhost')` case and the traffic path; Core's
+  framing and CSP header rewrites; no host volumes; what the deploy packs (the exact
+  exclude list, why `.env*` must live one level up, why `.dockerignore` does not help);
+  the static nginx Dockerfile; the five deploy stages, ~8 s, no Core PR; the
+  developer-token and `mnu_*` rules; `permissions`
+  details (standalone URL unaffected, what a still photo needs); other tenants are a 403.
+* **`references/sdk-api.md` (3,298 → 3,563)** - why the handshake lets `manaurum:session-*`
+  through, what the loopback line is for, why the appearance is applied in the same
+  listener, what the starter's `index.html` adds, and the app that pinned only the apex.
+* **`references/design.md` (4,968 → 5,220)** - `window.print()` / `beforeunload` and the
+  native-dialog replacements; no downloads, new tabs or clipboard writes and what to do
+  instead; the small-window console check before a deploy; the "second app a week later"
+  history of the seven rules.
+* **`references/discovery.md` (2,194 → 2,276)** - why every screen gets a URL fragment
+  in Step 0. **`references/capabilities-reference.md` (7,769 → 7,892)** - the Node call
+  example, the private-files vs the user's Drive paragraph, `os.kv` is FORCE-RLS.
+* Every fact taken out of `SKILL.md` was checked against the old text and lives in one
+  of these files, or already lived in `manaurum-deploy/SKILL.md`; nothing was dropped.
+  `scripts/check_repo.py` now requires the two measured Step 3.5 facts (drop
+  `--virtual-time-budget` for a loading state; the ~500px headless viewport floor) in
+  `references/checks.md` as well.
+
 # 3.14.0 - screens people read, filters that stay quiet, and an accent budget (from PR #27)
 
 Summary: Apps made for reading now get their own layout, filters stop shouting in the accent colour, and the checks warn when too much of a screen is coloured.

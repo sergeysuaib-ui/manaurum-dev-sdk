@@ -224,6 +224,14 @@ brief changed, say which line you were following.
 | §5 never | absent endpoints, and the guardrails inside the ones that exist |
 | §6 assumed | what you re-read first when they say "this isn't right" |
 
+**Give every screen a URL fragment while the screens are still a list on
+paper** — `#customers`, `#customer/42`. It costs eight lines in `index.html`
+(the starter ships them), and it is what makes the app deep-linkable, gives the
+back button something to do, and lets the Step 3.5 screenshot reach past the
+first screen. Decide it now: bolting it on after the app exists is expensive,
+which is why it gets skipped, and then every check only ever photographs the
+home view.
+
 Two checks before you write code, and one after:
 
 - **Every line of §3 has a home** in the data model, and nothing is in the data
