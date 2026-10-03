@@ -101,9 +101,11 @@ To try a checkout locally, put this repository in your personal plugins director
 If you already have a personal marketplace, append only the entry in `plugins[]`. Restart
 ChatGPT, open the Plugins Directory, select the Personal source, and install **ManAurum
 Developer SDK**; start a new chat to load its skills. The Codex CLI alone does not install
-a local plugin. An install in a fresh ChatGPT chat is still not verified end to end
-(MAN-1439), and the skills were written for Claude Code: a step that names a Claude Code
-command (`/plugin`, a hook) has no Codex equivalent yet.
+a local plugin; installation is done in the ChatGPT desktop app. An install in a fresh
+ChatGPT chat is still not verified end to end (MAN-1439), and the skills were written for
+Claude Code: they name each other as slash commands (`/manaurum-deploy`), the stale-copy
+check at the top of `manaurum-app` assumes Claude Code's per-version plugin cache, and the
+session-start update check is a Claude Code hook that does not run in Codex.
 
 ## Install the CLI
 

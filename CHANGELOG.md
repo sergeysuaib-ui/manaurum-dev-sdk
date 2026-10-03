@@ -13,7 +13,8 @@ its manifests are not.
 * **`.codex-plugin/plugin.json`** and a portable root **`plugin.json`** (from PR #34): Codex
   reads the same `skills/` and `templates/`, nothing is copied.
 * **README**: "Install in Codex / ChatGPT Work", with what is not verified yet (an install
-  in a fresh ChatGPT chat, MAN-1439) and that the skills still name Claude Code commands.
+  in a fresh ChatGPT chat, MAN-1439) and what does not carry over (the skills' slash-command
+  cross-references, the stale-copy check, the session-start update hook).
 * **`check_repo.py`**: both new manifests carry the plugin's version, or the build fails —
   PR #34's had stayed at 3.0.0.
 
