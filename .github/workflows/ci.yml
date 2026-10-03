@@ -75,6 +75,7 @@ jobs:
         run: |
           python templates/check_ui.py templates/v2-starter/src/static
           python templates/check_app.py templates/v2-starter
+          python templates/check_ui.py templates/patterns
 
   tools:
     # Everything this plugin tells an agent to RUN. All stdlib, so no install
@@ -102,6 +103,9 @@ jobs:
         run: python scripts/linter_mutations.py
 
       - name: preview.py and version_check.py still work
+        # Includes preview's first-screen meter in a real headless Chrome,
+        # which the runner images ship. CI is set, so a missing browser is a
+        # failure here rather than a skipped note.
         run: python scripts/smoke_tools.py
 
   postgres:
@@ -189,6 +193,9 @@ jobs:
         run: python scripts/linter_mutations.py
 
       - name: preview.py and version_check.py still work
+        # Includes preview's first-screen meter in a real headless Chrome,
+        # which the runner images ship. CI is set, so a missing browser is a
+        # failure here rather than a skipped note.
         run: python scripts/smoke_tools.py
 
       # One command per step on purpose. This job's shell is PowerShell, and
@@ -200,3 +207,6 @@ jobs:
 
       - name: The reference app passes the manifest linter
         run: python templates/check_app.py templates/v2-starter
+
+      - name: The patterns page passes the UI linter
+        run: python templates/check_ui.py templates/patterns

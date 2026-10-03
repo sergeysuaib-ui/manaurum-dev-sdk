@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.13.0.** A plugin install caches one directory per
+> **This page is SDK 3.14.0.** A plugin install caches one directory per
 > version, and an update that lands mid-session does not reach a skill that is
 > already loaded — that gap has already cost one app its interface: 2.8.0
 > appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
@@ -79,6 +79,14 @@ not find out you guessed wrong until the app exists and is wrong.
    first screen. Decide it now: bolting it on after the app exists is expensive,
    which is why it gets skipped, and then every check only ever photographs the
    home view.
+6. **Say what kind each screen is, next to its fragment: sorting, reading or
+   entering.** Going through records, taking in text, or putting something in.
+   The three look different at the level of type scale, not palette, and the
+   choice decides the layout before any rule does — a knowledge base built on
+   the skeleton of a list-triage app passed every check on this page and was
+   rejected on sight, because it read like a ledger. Write it in `BRIEF.md` §2;
+   what each kind is built from is in `references/design.md` → "What kind of
+   screen is it".
 
 Two things this is not. It is **not a gate**: if they say "just build me a todo
 list", draft the brief yourself, show it, ask one confirming question, and go.
@@ -118,7 +126,10 @@ worth reading for: **`shift-checklist`** (22 files — a complete app you can re
 whole, `src/api/` split by surface, both auth levels), **`family-space-v2`** (the
 ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
 only tested one — copy its `conftest.py`). Copying the shape of a working app
-beats reconstructing it from this page.
+beats reconstructing it from this page — **for the backend.** Routes, auth,
+the database and the agent handlers do not care what a screen is for. The
+layout does: copy it only from an app whose screens are the same kind as yours
+(Step 0, item 6). None of the reference apps is a reader.
 
 If the app keeps its data in Postgres, start from
 `<plugin>/templates/recipes/postgres/` rather than writing `db.py` yourself: a
@@ -130,9 +141,12 @@ tests that run against a real Postgres. Why each part is the way it is:
 
 **And copy the look, don't invent it.**
 `<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
-Manaurum app — tokens, layout, lists, forms, empty states, skeletons, mobile —
-and `index.html` shows every pattern in use. `references/design.md` explains when
-to reach for each and which mistakes are expensive. An app that works and looks
+Manaurum app — tokens, layout, lists, filters, forms, reading, empty states,
+skeletons, mobile. The starter's `index.html` shows a form and a short record
+list; `<plugin>/templates/patterns/index.html` shows the other two kinds of
+screen — a list of texts with filters, one text on its own page, and a list of
+records to sort through. `references/design.md` explains when to reach for each
+and which mistakes are expensive. An app that works and looks
 unfinished is one a user abandons.
 
 `<plugin>` is the **plugin root** — the directory holding `skills/` and
@@ -164,10 +178,15 @@ yours to look for.
    desktop for as long as nobody looks; the standalone URL hides it, because
    the `prefers-color-scheme` fallback runs there. `prefers-color-scheme` is
    only that fallback — it tracks the *browser*, never Manaurum.
-3. **A badge is a word, not a sentence.** `overdue` — never "hasn't paid in over
-   90 days". A badge that holds a phrase turns a scannable list into a wall.
-4. **One primary button per view**, never one per row. A column of blue buttons
-   says nothing is the answer.
+3. **A badge is a word, not a sentence — and it marks the few.** `overdue` —
+   never "hasn't paid in over 90 days". A badge that holds a phrase turns a
+   scannable list into a wall; a badge that sits on half the rows has stopped
+   marking anything. Badge the exception, or make it a filter.
+4. **One primary button per view, and at most four accent-coloured things on
+   the first screen.** A column of blue buttons says nothing is the answer, and
+   so do thirteen accent filters beside one primary. Filters are `.chip`s,
+   quiet until chosen; repeated actions are `.btn-secondary`; `.btn-ghost` is
+   accent, so it is for one or two actions, never a set.
 5. **Hover if and only if the click does something.** No hover on an inert row —
    it is a promise the app does not keep; and no silent click target either, so
    a row with a handler gets `.row.is-interactive` (cursor, hover, focus ring)
@@ -521,7 +540,10 @@ half), including the three a screenshot cannot show
 either: a hex hidden inside a `var()` fallback whose token does not exist, a
 click target with no `is-interactive`, and appearance read off `e.data`
 instead of `e.data.payload`. It also fails a page root that caps its width and
-never centres it, which no screenshot at or under the cap can show. Exit 0 or fix what it names. Do this
+never centres it, which no screenshot at or under the cap can show, and the
+two halves of rule 4's accent budget it can read from source: an accent class
+(`btn-primary`, `btn-ghost`, `badge-accent`) handed out inside a loop, and
+more than four of them in one view. Exit 0 or fix what it names. Do this
 *before* the screenshots: it is cheaper, and half of what it finds would
 otherwise reach the owner rather than you.
 
@@ -619,16 +641,41 @@ shoot it with `…/__shell?entry=/index.html%23item/42`. The starter's
 `index.html` ships this router; decide the fragments in Step 0, because
 retrofitting them after the app exists is exactly why this check gets skipped.
 
-**4. Open the pictures and criticise them honestly**, against the seven rules
-above and the `Never` table that opens `references/design.md` — out loud, in
-your reply. Read the three badges first: a red one is a failure however good the
-picture looks. The linter has already taken the mechanical half; what is left is
-the half only a person (or you, looking) can see: is the hierarchy right, is the
-empty state saying something useful, would you show this to the person who asked
-for it. Name what is wrong and fix it before the deploy, not after the
-rejection. Also read the terminal: `preview.py` logs every `/api/*` your UI
-called, which is the cheapest way to find a route missing from
-`runtime.api_routes` before it 404s in production.
+**4. Read the bar across the top of each picture, then criticise the
+pictures honestly**, against the seven rules above and the `Never` table that
+opens `references/design.md` — out loud, in your reply. Besides the three
+badges, `preview.py` measures the first screen of the rendered app: how many
+elements are painted in the accent (red above four), whether one badge sits
+on more than half the rows of a list (red), and how far down the first list
+row starts. A red pill is a failure however good the picture looks. The linter
+has already taken the mechanical half; what is left is the half only a person
+(or you, looking) can see: is the hierarchy right, is the empty state saying
+something useful, would you show this to the person who asked for it. Also read
+the terminal: `preview.py` logs every `/api/*` your UI called, which is the
+cheapest way to find a route missing from `runtime.api_routes` before it 404s
+in production.
+
+**5. Answer the design review in writing, and put the answers in your
+reply.** Copy `<plugin>/templates/design-review.md` beside the app directory,
+not inside it. Looking at a screenshot does not work on its own: an agent
+that photographed its app, looked, and criticised it out loud against the
+list of prohibitions saw nothing wrong — every mistake the owner then named was
+in that picture, and none of them was a prohibition. The questions are not a
+list of prohibitions:
+
+1. What is the most important thing on this screen — and does it *look* the
+   most important?
+2. How many accent-coloured things are on it? (The bar says. Over four, redo.)
+3. Cover the metadata with your hand. Does each list row still make sense?
+4. How much of the first screen do the filters and controls take before the
+   first row of data?
+5. Is this a screen for reading, for entering, or for sorting through a list —
+   and is it laid out as that kind (Step 0, item 6)?
+
+The fifth is the one that catches the expensive mistake: a reader built as a
+list-triage screen passes every rule. Answer per screen, fix what the answers
+name, re-shoot, and only then deploy — name what is wrong and fix it before
+the deploy, not after the rejection.
 
 ## Step 3.6 — Check the app against its manifest (MANDATORY)
 

@@ -1,3 +1,59 @@
+# 3.14.0 - screens people read, filters that stay quiet, and an accent budget (from PR #27)
+
+Summary: Apps made for reading now get their own layout, filters stop shouting in the accent colour, and the checks warn when too much of a screen is coloured.
+
+### Why
+
+PR #27 (cut against 2.11.0) came from dindex-kb, a knowledge base over 1679 posts that
+passed every check and was rejected on sight. The author had copied the shape of a
+list-triage app, as the skill says to, and a reader came out looking like a ledger: titles
+one typographic step above their captions, metadata on the right, thirteen category
+filters built from accent-coloured `.btn-ghost`. Each rule was obeyed to the letter -
+one primary button per view held while over twenty accent-coloured things sat on the first
+screen, and "a badge is a word" held for a badge on 816 rows of 1679. Nothing in the SDK
+named the difference between an app you read and one you sort through, and `app.css` had
+nothing for the first kind. The PR sat unmerged and conflicting while main moved to 3.x;
+this release ports its design half. Its database half shipped separately (3.13.0).
+
+The same PR found a starter bug that is still on main: the cards inside a `[data-view]`
+touch. `.app` spaces its own children, and since the router (2.9.0) those are the header
+and the views. Measured through `preview.py` in headless Chrome: 0px between the
+starter's overview cards before this release, 16px after.
+
+### What changed
+
+* **`app.css`** gained the reading half, every class mobile-aware: `.row.row-text` with
+  `.row-headline` / `.row-excerpt` / `.row-foot`; `.reader`, `.article-title`,
+  `.article-meta`, `.lead`, `.prose`, `.pull`; `.chips` / `.chip` / `.chip-n` (quiet until
+  chosen, only the selected one accent, a sideways-scrolling row on mobile); the OS's own
+  `--lh-relaxed: 1.7` (`frontend/src/app/globals.css:258`); `a` in the accent instead of
+  the browser's blue; a capped, truncating `.row-meta`; and `.app > [data-view]` with
+  `.app`'s own rhythm - the touching-cards fix. A labelled search `.field` in a `.toolbar`
+  now takes the width the bare input has; it still does not grow (MAN-2849's rule stays).
+* **`templates/patterns/index.html` (new)** - the screens the starter does not show,
+  built only from `app.css`: a list of texts with chips, one article, a list of records
+  with one badge on the one row that needs it. Its head script keeps the shell-origin
+  check (MAN-2506) that PR #27's predates. CI holds it to `check_ui.py`.
+* **`references/design.md`** - "What kind of screen is it" (sorting, reading, entering,
+  and what each is built from), "Accent is a pointer, not a paint", four `Never` rows,
+  every new class in the pattern table. **SKILL.md**: Step 0 asks for the kind of every
+  screen (recorded in `BRIEF.md` §2); rules 3 and 4 add "it marks the few" and "at most
+  four accent-coloured things on the first screen"; Step 3.5 reads the new bar and ends in
+  **`templates/design-review.md` (new)**, five questions answered in writing per screen.
+  `discovery.md` maps the kind in §2 to a layout; `reference-apps.md` says none of the
+  three reference apps is a reader and points at the patterns page.
+* **`check_ui.py`** fails on an accent class (`btn-primary`, `btn-ghost`, `badge-accent`)
+  handed out inside a loop, and on more than four in one view of `index.html`. Unlike
+  PR #27's version, loops are read only from scripts and inline handlers, so "for (most)
+  teams" in a paragraph is not a loop. **`preview.py`** measures the rendered first
+  screen and shows it beside main's three badges: accent count (red above four), a badge
+  on more than half the rows of a list (red), where the first list row starts; transitions
+  are frozen while it reads, or a non-default accent counts 0 mid-fade.
+* **Tests**: `linter_mutations.py` - three red mutations and three that must stay green
+  (chips toggled in a loop, four accent things in a view, "for (" in running text).
+  `smoke_tools.py` drives a real headless Chrome through the meter: the patterns page must
+  read green, a copy with thirteen ghost filters and a badge on every row red on both.
+
 # 3.13.0 - a database template that lasts past one request, and search that answers
 
 Summary: Apps that keep their data in a database get a ready-made, tested starting point, including a search box that finds something when a question is phrased loosely.

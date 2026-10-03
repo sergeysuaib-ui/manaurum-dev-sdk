@@ -1092,6 +1092,56 @@ def nothing_reads_the_payload(app: Path) -> None:
     html_replace_all(app, "payload", "pl")
 
 
+# ── Accent is a pointer (3.14.0, from PR #27) ───────────────────────────────
+
+
+def accent_handed_out_in_a_loop(app: Path) -> None:
+    # Thirteen categories, thirteen blue buttons, and not one rule broken.
+    html_edit(app, "</body>",
+              "<script>for (const topic of topics) {\n"
+              "  const b = document.createElement('button');\n"
+              "  b.className = 'btn btn-ghost';\n  bar.append(b);\n}</script></body>")
+
+
+def accent_badges_mapped_in_a_script_file(app: Path) -> None:
+    # The same thing as a `.map()` callback, in a .js file of its own.
+    (app / "src" / "static" / "list.js").write_text(
+        "export const render = (rows) => rows.map((r) =>\n"
+        "  `<li class=\"row\"><span class=\"badge badge-accent\">${r.state}</span></li>`);\n",
+        encoding="utf-8")
+
+
+def too_much_accent_in_one_view(app: Path) -> None:
+    ghosts = "".join('<button class="btn btn-ghost" type="button">%d</button>' % i
+                     for i in range(5))
+    html_edit(app, '<div data-view="overview">',
+              '<div data-view="overview"><div class="toolbar">%s</div>' % ghosts)
+
+
+def chips_toggled_in_a_loop(app: Path) -> None:
+    # MUST STAY GREEN. The right way to do the thing above: every chip is
+    # visited, only the chosen one ends up accent.
+    html_edit(app, "</body>",
+              "<script>group.querySelectorAll('.chip').forEach(function (c) {\n"
+              "  c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');\n"
+              "  c.classList.toggle('is-on', c === chip);\n});</script></body>")
+
+
+def four_accent_things_in_one_view(app: Path) -> None:
+    # MUST STAY GREEN. The budget is four, and four is within it: the cap
+    # view's back link plus three more.
+    ghosts = "".join('<a class="btn btn-ghost" href="#overview">%d</a>' % i for i in range(3))
+    html_edit(app, '<div data-view="cap" hidden>', '<div data-view="cap" hidden>' + ghosts)
+
+
+def for_in_running_text(app: Path) -> None:
+    # MUST STAY GREEN. "for (" in a sentence is not a loop. PR #27's version
+    # read loops out of the whole page, and this paragraph - followed by the
+    # cap view's ghost link - read as a loop handing out accent.
+    html_edit(app, '<div data-view="cap" hidden>',
+              '<div data-view="cap" hidden><p class="muted">Good for (most) teams.</p>')
+
+
 UI_MUTATIONS = [
     ("ui: a width cap nothing centres", a_cap_nothing_centres,
      "caps its width"),
@@ -1138,6 +1188,15 @@ UI_MUTATIONS = [
     ("ui: the device never written", the_device_never_written,
      "device from the shell is never written"),
     ("ui: nothing reads the payload", nothing_reads_the_payload, "nothing reads `payload`"),
+    ("ui: an accent class handed out in a loop", accent_handed_out_in_a_loop,
+     "accent class (btn-ghost) set inside a loop"),
+    ("ui: accent badges from a .map() in a .js file", accent_badges_mapped_in_a_script_file,
+     "list.js: an accent class (badge-accent) set inside a loop"),
+    ("ui: more than four accent classes in one view", too_much_accent_in_one_view,
+     "6 accent-coloured elements"),
+    ("ui: chips toggled in a loop stay green", chips_toggled_in_a_loop, None),
+    ("ui: four accent things in one view stay green", four_accent_things_in_one_view, None),
+    ("ui: \"for (\" in running text stays green", for_in_running_text, None),
 ]
 
 
