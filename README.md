@@ -1,6 +1,6 @@
-# ManAurum OS Developer SDK — Claude Code plugin
+# ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.11.0.** Skills that teach Claude Code to build and ship apps for
+**Version 3.12.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -76,6 +76,34 @@ on disk at all: it reads the marketplace clone, and at most once a day the versi
 GitHub (2 s timeout; `MANAURUM_SDK_NO_UPDATE_CHECK=1` turns that off). It prints nothing
 when your copy is current, and it cannot fail a session — but it only speaks at session start, so after `/plugin update`
 the honest move is still to re-invoke the skill.
+
+## Install in Codex / ChatGPT Work
+
+The same `skills/` and `templates/` serve both agents; `.codex-plugin/plugin.json` (and
+the portable `plugin.json` at the root) supply the Codex metadata, so nothing is forked.
+To try a checkout locally, put this repository in your personal plugins directory as
+`~/.agents/plugins/plugins/manaurum-dev-sdk` and add it to
+`~/.agents/plugins/marketplace.json` as a local plugin:
+
+```json
+{
+  "name": "personal",
+  "interface": {"displayName": "Personal"},
+  "plugins": [{
+    "name": "manaurum-dev-sdk",
+    "source": {"source": "local", "path": "./plugins/manaurum-dev-sdk"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Developer Tools"
+  }]
+}
+```
+
+If you already have a personal marketplace, append only the entry in `plugins[]`. Restart
+ChatGPT, open the Plugins Directory, select the Personal source, and install **ManAurum
+Developer SDK**; start a new chat to load its skills. The Codex CLI alone does not install
+a local plugin. An install in a fresh ChatGPT chat is still not verified end to end
+(MAN-1439), and the skills were written for Claude Code: a step that names a Claude Code
+command (`/plugin`, a hook) has no Codex equivalent yet.
 
 ## Install the CLI
 

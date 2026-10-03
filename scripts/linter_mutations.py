@@ -1238,6 +1238,14 @@ def a_summary_that_is_a_paragraph(repo: Path) -> None:
     newest_summary(repo, lambda line: line + " And then" * 40 + ".")
 
 
+def a_codex_manifest_left_behind(repo: Path) -> None:
+    # PR #34's shape: the Codex manifest kept the version it was written at.
+    path = repo / ".codex-plugin" / "plugin.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["version"] = "3.0.0"
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 REPO_MUTATIONS = [
     ("repo: a version that disagrees", version_drift, "says version 1.0.0"),
     ("repo: a documented path that is not there", a_path_that_is_not_there,
@@ -1319,6 +1327,8 @@ REPO_MUTATIONS = [
      "has no `Summary:` line"),
     ("repo: a Summary that is a paragraph", a_summary_that_is_a_paragraph,
      "keep it to one sentence"),
+    ("repo: a Codex manifest left behind", a_codex_manifest_left_behind,
+     ".codex-plugin/plugin.json:"),
 ]
 
 

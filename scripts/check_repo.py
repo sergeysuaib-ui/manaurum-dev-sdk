@@ -313,7 +313,7 @@ def normalise(title: str) -> str:
 
 
 def check_versions(problems: list) -> None:
-    """One version, five files.
+    """One version, seven files.
 
     2.8.0 shipped with `**Version 2.7.3**` in the README. Nobody reading the
     README could tell which of the two numbers was the lie, and the plugin
@@ -325,6 +325,10 @@ def check_versions(problems: list) -> None:
     """
     sources = [
         (".claude-plugin/plugin.json", PLUGIN_VERSION, '"version"'),
+        # The Codex manifests (MAN-1439). PR #34 shipped them at 3.0.0 while
+        # the plugin was already past it, because nothing here read them.
+        (".codex-plugin/plugin.json", PLUGIN_VERSION, '"version"'),
+        ("plugin.json", PLUGIN_VERSION, '"version"'),
         ("README.md", README_VERSION, "**Version X.Y.Z**"),
         ("CHANGELOG.md", CHANGELOG_VERSION, "the newest `# X.Y.Z` heading"),
         ("skills/manaurum-app/SKILL.md", SKILL_VERSION, "This page is SDK X.Y.Z"),
