@@ -257,21 +257,18 @@ improving a sentence breaks the suite.
 
 ## When a check was skipped: the common codes
 
-What the checks above would have caught, as it looks when it reaches the
-platform instead. Deploy refusals and the job's failures in full:
-`manaurum-deploy/SKILL.md`. Capability errors in full:
-`capabilities-reference.md` → "Gates that run before your capability does".
+What the checks above would have caught, as it looks when the gateway or a
+capability call meets it instead. These are the gateway's and the capability
+gateway's codes only. Deploy refusals and the job's failures (`invalid_credential`,
+`manifest_validation_failed`, `version_already_published`, migration validation,
+`readiness_failed`, `docker build failed`) are in `manaurum-deploy/SKILL.md`, which
+owns them. Every capability error: `capabilities-reference.md` → "Gates that run
+before your capability does".
 
 | HTTP | Meaning | Fix |
 |---|---|---|
-| 401 `invalid_credential` | Bad/expired/revoked `mna_*`, or not an `mna_*` token. | Mint a fresh one in Dev Hub. |
-| 412 `app_id_must_be_uuid` | `os.kv.*` or `os.events.emit` was called with the slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID` for those two families only. |
-| 422 `manifest_validation_failed` (from the POST) | Manifest fails the v2 schema, names a reserved slug, or declares a write-named agent tool `is_write: false`. | Read `errors[]`; fix and retry. |
-| 409 `version_already_published` (from the POST) | That `version` was already deployed, including a deploy that failed after its push. | Bump `version`. |
-| job `failed`: `migration validation failed (…)` | Migration SQL contains destructive DDL and `migration.breaking` is not set, or a forbidden statement. | Destructive: set `migration.breaking: true` (deliberate) or rewrite as additive. Forbidden (`DO`, `COPY`, `SET`, …): rewrite; no flag unlocks it. |
-| 412 `egress_not_declared` / `host_not_in_allow_list` | `os.http.fetch` with no egress hosts declared at all / to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
 | 404 `route_not_declared` | An `/api/*` path is missing from `runtime.api_routes`. Default-deny — the container never saw the request. | Declare the path. Remember `/api/x/*` does not cover `/api/x`. |
+| 412 `app_id_must_be_uuid` | `os.kv.*` or `os.events.emit` was called with the slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID` for those two families only. |
+| 412 `egress_not_declared` / `host_not_in_allow_list` | `os.http.fetch` with no egress hosts declared at all / to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
 | 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
 | 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
-| job `failed` at `readiness_failed` | Nothing answered on `runtime.port` (or `health_path` returned 5xx); the service was rolled back. | Read `result.log_tail`. Bind `0.0.0.0` on port 80, or set `runtime.port` to the port you actually listen on. |
-| job `failed`: `docker build failed` | Image build failed. | Read `result.log_tail`. Common: `COPY` source doesn't exist, dependency install failed. |

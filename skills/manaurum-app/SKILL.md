@@ -41,9 +41,9 @@ step sends you there, or when you need the why:
 |---|---|
 | Every manifest field, runtime modes, the gateway, what the deploy packs, migrations, Postgres, the Assistant's tools | `references/v2-platform.md` |
 | One capability's input, output and errors | `references/capabilities-reference.md` |
-| The window protocol, the handshake line by line, `manaurum-v2.mjs` | `references/sdk-api.md` |
+| The window protocol, the handshake line by line, `manaurum-v2.mjs`, sessions in a standalone tab | `references/sdk-api.md` |
 | Layout, tokens, appearance, window rules, the rules a reviewer rejects on sight | `references/design.md` |
-| Steps 3.5 and 3.6 in full, and the common rejection codes | `references/checks.md` |
+| Steps 3.5 and 3.6 in full, the documentation rule, the gateway and capability error codes | `references/checks.md` |
 | What to ask a person who cannot describe an app in technical terms | `references/discovery.md` |
 | Production apps to copy from | `references/reference-apps.md` |
 | Publishing to the App Store | `references/publishing.md` |
@@ -226,8 +226,9 @@ Key rules (every field: `references/v2-platform.md` §1 and §2):
 - `data`: **no Postgres of your own — including an app that persists only through `os.kv` / `os.files` — means `"data": {"none": true}`.** Omitting the block selects managed mode, a per-(app, tenant) schema.
 - `frontend.entry_point`: what the desktop loads in your window, normally `/index.html`. Without it there is no window; with it, Step 2.5 applies to you.
 - `frontend.icon`: an emoji, a full URL, or an absolute `/api/catalog/media/...` path. A **relative** path is painted into the tile as literal text.
+- `requires_capabilities`: every capability you call (Step 3).
 - `visibility.mode`: `private` (this tenant), `public` (any tenant, via App Store v2), or `allow_list` with `tenants`.
-- `permissions`: browser features the shell delegates to your iframe, `["microphone", "camera"]` today (MAN-1316, MAN-1920) — **required for a LIVE mic or camera stream in the shell**, not for a still photo through `<input type="file" capture>`. Separate from capabilities: a voice app declares both `"permissions": ["microphone"]` and `os.ai.transcribe`.
+- `permissions`: browser features the shell delegates to your iframe, `["microphone", "camera"]` today (MAN-1316, MAN-1920) — **required for a LIVE mic or camera stream in the shell** (the standalone URL is unaffected), not for a still photo through `<input type="file" capture>`. Separate from capabilities: a voice app declares both `"permissions": ["microphone"]` and `os.ai.transcribe`.
 
 ### `runtime.api_routes` — read this before you write a single route
 
@@ -382,21 +383,22 @@ and every capability's input, output and errors: `references/capabilities-refere
 
 `os.files.*` is your app's PRIVATE storage — the user never sees it. To put a document
 into the user's Files, read a file they pick, or work in a folder they granted, use
-`os.drive.*` plus the browser-side `app.pickFromDrive()`.
+`os.drive.*` plus the browser-side `app.pickFromDrive()` (`references/sdk-api.md`).
 
 | Capability | What to know |
 |---|---|
 | `os.kv.set` / `os.kv.get` | Per-app KV. No list, no delete. |
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
 | `os.files.upload` / `.download` / `.delete` / `.list` | `upload` **requires `size_hint`**, the exact byte length. |
-| `os.ai.complete`, `.embed`, `.transcribe`, `.image_submit`, `.image_poll`, `.providers`; `os.ocr.extract` | `complete` runs on the workspace's AI by default and answers `content` + `tokens_used`; the others need the tenant's own key. |
+| `os.ai.complete`, `.embed`, `.transcribe`, `.image_submit`, `.image_poll`, `.providers`; `os.ocr.extract` | `complete` runs on the workspace's AI by default and answers `content` + `tokens_used`; `providers` says what this app can use here; `embed`, `transcribe`, `image_*` and `ocr` need the tenant's own key (`image_*` also needs `platform.ai_image`). |
 | `os.notifications.send_to_user` | In-app or email. SMS does not work. |
 | `os.events.emit` | **No hosted app can receive events today.** |
 | `os.http.fetch` | External HTTP, to `egress_allowed_hosts` only. |
 | `os.drive.*`, `os.calendar.*` | The user's Files and calendar. **Forward `X-Manaurum-User-Context`.** |
 | `os.compliance.audit_query` | **Every app's** log in the tenant unless you pass `app_filter`. |
 | `os.apps.call` | Four methods of two built-in apps — **not** RPC between v2 apps; there is none. |
-| `os.tenant_config.get`, `os.locations.list` / `.get`, `os.apps.bulk_export` | ⚠️ `tenant_config` reads only `prompt_extension`; `bulk_export` answers `404` to everything. |
+| `os.locations.list` / `os.locations.get` | The tenant's sales points and warehouses, by id. |
+| `os.tenant_config.get`, `os.apps.bulk_export` | ⚠️ `tenant_config` reads only `prompt_extension`; `bulk_export` answers `404` to everything. |
 
 ### Document it in the same edit that writes it
 
@@ -429,7 +431,12 @@ cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
 python preview.py --app my-app/src/static
 ```
 
-**3. Photograph it** — light and dark, the wide window and the narrow one:
+A fixture value can also be `{"status": 500}` or `{"delay_ms": …, "body": …}`, for the
+could-not-load and still-loading states.
+
+**3. Photograph it** — light and dark, the wide window and the narrow one. Chrome or
+Edge, same flags (on Windows, the full path to `chrome.exe` and a fresh profile
+directory):
 
 ```bash
 chrome --headless=new --disable-gpu --hide-scrollbars \
@@ -437,7 +444,8 @@ chrome --headless=new --disable-gpu --hide-scrollbars \
   --window-size=1240,1000 --screenshot=light.png \
   "http://127.0.0.1:8765/__shell?appearance=light"
 # again with ?appearance=dark → dark.png
-# --window-size=1920,1000 → wide.png          (the layout badge must say "centred")
+# …&accent=lavender (or any of the nine)     → check nothing hardcodes blue
+# --window-size=1920,1000 → wide.png          (the layout badge must not say OFF-CENTRE)
 # ...&width=900 in the URL → narrow.png       (your smallest supported window)
 # ...?entry=/index.html%23item/42             (every other screen, by its fragment)
 ```
@@ -509,7 +517,7 @@ the common codes".
 - **Don't bake your developer `mna_*` token into the image, and don't pass one at deploy.** The platform injects `MANAURUM_RUNTIME_TOKEN`. Don't deploy with an `mnu_*` either — it is a tenant token for MCP and Drive, not a deploy credential.
 - **Don't write to host paths.** No volumes are mounted; persistent files go through `os.files.upload`.
 - **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql` (`references/v2-platform.md` §7).
-- **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failure raise, so the next request retries — never catch it into a "no database" mode that serves empty 200s behind a green `/healthz`. Same for a secret fetched at startup: `references/v2-platform.md` → "Your database can come up after your container".
+- **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failure raise — never catch it into a "no database" mode that serves empty 200s behind a green `/healthz`. Same for a startup secret: `references/v2-platform.md` → "Your database can come up after your container".
 - **Don't `SET search_path` in a pool's `init=`.** It lasts one request; pass it in `server_settings` (`templates/recipes/postgres/db.py`).
 - **Route outbound HTTP through `os.http.fetch`.** `egress_allowed_hosts` is enforced there and only there; declare every third-party host.
 - **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway — you'd get a 403.
@@ -521,9 +529,9 @@ All of it works when you open `https://<slug>.apps.manaurum.com` in a tab, and b
 inside the desktop — or breaks silently behind a green deploy. Testing the standalone
 URL is not evidence.
 
-- **Your app owns its scroller.** The window cannot scroll an iframe app. A fixed shell needs a flex-column root, `flex: 1` **and** `overflow: auto` on the content, and `min-height: 0` in between. Before you deploy, open the smallest window you support with enough data to overflow it and watch the console: the SDK names a clipped element. `references/design.md` → "Window rules".
+- **Your app owns its scroller.** The window cannot scroll an iframe app. Before you deploy, open the smallest window you support with enough data to overflow it and watch the console: the SDK names a clipped element. The fix: `references/design.md` → "Window rules".
 - **No native dialogs** — `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` are dead in the sandbox. Use an in-app modal, input or toast.
 - **No downloads, no new tabs, no clipboard writes.** Put a file into the person's Files with `os.drive.publish` and say where it went; show a link as selectable text; show a value in a read-only field that selects itself on focus. Details: `references/design.md` → "Window rules".
-- **Don't set your own framing headers.** Core sets `frame-ancestors` and rewrites `script-src` and `frame-src`; the rest of your CSP is kept, so a `connect-src` that forgets your API origin still breaks the app. `references/v2-platform.md` → "What else the gateway answers".
+- **Don't set your own framing headers.** Core sets them; the rest of your CSP is kept, so a `connect-src` that forgets your API origin still breaks the app. `references/v2-platform.md` → "What else the gateway answers".
 - **A relative `frontend.icon`** renders as literal text in the tile (Step 1), and **a `.env*` inside the app directory** is deployed ("Required project structure").
 - **A capability in your manifest is not a capability you may call.** Grants are enforced per install; an empty grant list denies everything, and a redeploy still 403s until the tenant's install grants are extended.

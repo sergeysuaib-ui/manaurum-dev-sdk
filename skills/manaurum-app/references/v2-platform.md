@@ -222,10 +222,7 @@ Leave `runtime.sandbox` alone. Its enum is the default triple (`allow-scripts al
 
 The port your container listens on. **Default 80.** The Core gateway resolves the upstream as `<swarm-service>:<port>` where `port` is `runtime.port` if present and 80 otherwise, and the post-deploy probe dials the same port. Nothing in Core parses your Dockerfile's `EXPOSE` line — it is documentation only. An integer from 1 to 65535; `libi/manifest.json` ships `"port": 8000`.
 
-Two ways to get it wrong, and both produce the same symptom — a deploy that fails its readiness probe and is rolled back (`readiness_failed`), because the platform probes exactly that port:
-
-- **Wrong or missing `runtime.port`.** If your framework listens on 8000 and your manifest says nothing, the gateway dials port 80 and finds nobody. Either bind 80, or declare the port you actually use.
-- **Bound to `127.0.0.1`.** Many frameworks default to loopback, which is unreachable from outside the container. Bind `0.0.0.0` explicitly — `CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]`, with `"port": 8000` in the manifest to match. `app.listen(80)` in Node binds all interfaces by default, but `app.listen(80, 'localhost')` does not.
+Getting it wrong — no `runtime.port` while the framework listens elsewhere, or a server bound to `127.0.0.1` — fails the readiness probe and rolls the deploy back (`readiness_failed`); the rule and the fix are `manaurum-app/SKILL.md` → Step 2, "The port rule". One case it does not spell out: Node's `app.listen(80)` binds all interfaces by default, but `app.listen(80, 'localhost')` does not.
 
 Traffic path: `https://<slug>.apps.manaurum.com` → Traefik → **Core backend** (which adds the `/apps/<slug>` prefix) → Core gateway → your container. Traefik never talks to your container directly, so publishing ports in the Dockerfile changes nothing.
 
@@ -464,11 +461,6 @@ In order, a deploy:
 4. Creates a Swarm service (or updates it, for a redeploy).
 5. Exposes `https://<slug>.apps.manaurum.com` through a Traefik route with a Let's Encrypt
    cert.
-
-Build the archive in a per-run `mktemp -d`, never under a fixed name in a shared `/tmp`: on
-2026-09-08 two sessions collided on one, and one shipped the other's archive and reported
-`activated` for an app it never touched (MAN-2456). Echo the slug before you trust a green
-deploy.
 
 End-to-end deploy time for a small app: **~8 seconds**. There is **no Core PR** for any of
 this, and the platform team does not need to be in the loop: you are not modifying ManAurum

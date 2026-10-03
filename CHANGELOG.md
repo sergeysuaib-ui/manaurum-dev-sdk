@@ -14,7 +14,7 @@ had to read past 9,000 words to be sure it had them all.
 
 ### What changed
 
-* **`SKILL.md`: 9,727 → 4,952 words** (827 → 529 lines). It keeps the path in order —
+* **`SKILL.md`: 9,727 → 5,020 words** (827 → 537 lines). It keeps the path in order —
   Step 0, the reference apps, the seven rules (stories trimmed), the project layout and
   token rule, the minimal manifest and the `api_routes` default-deny rule, the port rule,
   the handshake script itself with its three non-negotiables (the sender check against
@@ -23,19 +23,20 @@ had to read past 9,000 words to be sure it had them all.
   Step 4's three carry-overs. Every heading other files cite is unchanged, and the "How to
   use this skill" map now lists `references/checks.md`. Each place that lost detail
   points at where it went.
-* **`references/checks.md` (new, 2,791 words)** - Steps 3.5 and 3.6 in full: all five
+* **`references/checks.md` (new, 2,638 words)** - Steps 3.5 and 3.6 in full: all five
   parts of the UI check with the `--virtual-time-budget`, ~500px viewport-floor, wide-
   and narrow-window and fragment details; what `check_ui.py` covers rule by rule; the
   `check_app.py` findings table and what it cannot see; the documentation rule behind
-  `tests/test_documented.py`; and the common rejection codes table.
-* **`references/v2-platform.md` (8,965 → 9,873)** - `api_routes` precedence and "one
-  rule covers every verb"; both ways to get the port wrong and the traffic path; Core's
+  `tests/test_documented.py`; and the gateway and capability error codes those checks
+  prevent (deploy codes stay in `manaurum-deploy/SKILL.md`, which owns them).
+* **`references/v2-platform.md` (8,965 → 9,770)** - `api_routes` precedence and "one
+  rule covers every verb"; the `app.listen(80, 'localhost')` case and the traffic path; Core's
   framing and CSP header rewrites; no host volumes; what the deploy packs (the exact
   exclude list, why `.env*` must live one level up, why `.dockerignore` does not help);
-  the static nginx Dockerfile; the five deploy stages, ~8 s, no Core PR, and the
-  per-run `mktemp -d` (MAN-2456); the developer-token and `mnu_*` rules; `permissions`
+  the static nginx Dockerfile; the five deploy stages, ~8 s, no Core PR; the
+  developer-token and `mnu_*` rules; `permissions`
   details (standalone URL unaffected, what a still photo needs); other tenants are a 403.
-* **`references/sdk-api.md` (3,298 → 3,565)** - why the handshake lets `manaurum:session-*`
+* **`references/sdk-api.md` (3,298 → 3,563)** - why the handshake lets `manaurum:session-*`
   through, what the loopback line is for, why the appearance is applied in the same
   listener, what the starter's `index.html` adds, and the app that pinned only the apex.
 * **`references/design.md` (4,968 → 5,220)** - `window.print()` / `beforeunload` and the
@@ -45,8 +46,11 @@ had to read past 9,000 words to be sure it had them all.
 * **`references/discovery.md` (2,194 → 2,276)** - why every screen gets a URL fragment
   in Step 0. **`references/capabilities-reference.md` (7,769 → 7,892)** - the Node call
   example, the private-files vs the user's Drive paragraph, `os.kv` is FORCE-RLS.
-* A moved-facts ledger (every removed paragraph and where it now lives) was checked
-  against the old text before this release; nothing was dropped.
+* Every fact taken out of `SKILL.md` was checked against the old text and lives in one
+  of these files, or already lived in `manaurum-deploy/SKILL.md`; nothing was dropped.
+  `scripts/check_repo.py` now requires the two measured Step 3.5 facts (drop
+  `--virtual-time-budget` for a loading state; the ~500px headless viewport floor) in
+  `references/checks.md` as well.
 
 # 3.14.0 - screens people read, filters that stay quiet, and an accent budget (from PR #27)
 
