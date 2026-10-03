@@ -89,7 +89,7 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 | Field | Type | Notes |
 |---|---|---|
 | `data` | object | Storage mode. **Omit it and you get managed mode**, which provisions a Postgres schema + login role per (app, tenant) and needs `MANAURUM_DDL_DSN` on Core — a deploy that fails at `swarm_applying` if it isn't set. A stateless app (persists only via `os.kv` / `os.files`) must declare `{"none": true}`. Other modes: `{"byo": true}` (your own DSN, no isolation guarantees). `{"shared": true}` and `connection_cap` are accepted and do nothing today: `shared` provisions exactly what managed mode does (one schema per app and tenant), and nothing reads `connection_cap`: your container connects with its own DSN, so its pool is whatever your driver opens. `extensions` requests Postgres extensions (`vector`, `pg_trgm` only); each needs a platform operator's approval, and until it has one the deploy goes on without it and a migration that uses the type fails. `additionalProperties: false` on this sub-object. |
-| `frontend` | object | `entry_point` (the URL the desktop shell loads in the app's window — normally `/index.html`; without it your app has no desktop window), `icon`, `bundle_path`, `window: {default_width, default_height}`. `frontend.icon` is an unconstrained string: an emoji works, so does an absolute URL or `/api/catalog/media/...` path. A **relative** path (`icons/app.svg`) is painted as literal text in the tile. Omit it entirely and the launcher serves a generic placeholder. |
+| `frontend` | object | `entry_point` (the URL the desktop shell loads in the app's window — normally `/index.html`; without it your app has a live URL but no desktop window, and declaring it is what makes the `manaurum:ready` handshake apply to you), `icon`, `bundle_path`, `window: {default_width, default_height}`. `frontend.icon` is an unconstrained string: an emoji works (Libi ships `"🍼"`), so does an absolute URL or `/api/catalog/media/...` path. A **relative** path (`icons/app.svg`) is painted as literal text in the tile. Omit it entirely and the launcher serves a generic placeholder. |
 | `visibility` | object | `mode: "private" \| "public" \| "allow_list"`, optional `tenants: [uuid…]`. Default `private`. |
 | `platforms` | object | `desktop: {supported}` and `mobile: {supported, optimized, entrypoint, supportLevel, navigationPattern}`. Declare both explicitly. On a phone, `mobile.supportLevel: "none"` blocks the app and a missing level shows it with a "best on desktop" banner. `platforms.mobile.entrypoint` is read only for v1 manifests: a hosted v2 app always loads its own `https://<app_id>.apps.manaurum.com/` on mobile too (a `byo` app loads `runtime.entrypoint`). |
 | `requires_capabilities` | array | `[{name, version, quota_per_tenant_per_day?}]` — the capabilities your app cannot work without. |
@@ -101,7 +101,7 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 | `schedules` | array | `[{name, cron, handler_path, timezone?}]`. **Validated for shape; Core does not invoke the handler in v2.x** — platform cron is deferred. Run an in-container scheduler and keep the declaration as documentation of intent. |
 | `tenant_config` | object | `{schema, required_at_install}` — per-tenant config collected at install time. Note: install-time values land in `v2_app_installs.config`, which the `os.tenant_config.get` capability does **not** currently read. Don't build on the round-trip yet. |
 | `offline` | object | Manaurum Edge declaration: `features`, `reference_data`, `streams`. **It does nothing for a v2 hosted app today:** the on-site box's configuration is built from v1 apps only. (The shell still copies the block into `manaurum:init`.) |
-| `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `microphone` (MAN-1316) and `camera` (MAN-1920); `uniqueItems`. Required for a LIVE `getUserMedia` stream inside the shell iframe; a still photo through `<input type="file" capture>` is not gated and needs no declaration. The user still sees the browser's own prompt. Refused when `runtime.mode` is `byo` (MAN-1922), and the shell delegates nothing to a frame whose address the manifest chose. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
+| `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `microphone` (MAN-1316) and `camera` (MAN-1920); `uniqueItems`. Required for a LIVE `getUserMedia` stream inside the shell iframe — without it `getUserMedia` is blocked in the iframe, while your standalone `<app_id>.apps.manaurum.com` URL is unaffected. A still photo through `<input type="file" accept="image/*" capture="environment">` hands off to the device's camera app, is not gated and needs no declaration, so declare `camera` only for a stream you decode or render yourself (a barcode scanner, video capture). The user still sees the browser's own prompt. Refused when `runtime.mode` is `byo` (MAN-1922), and the shell delegates nothing to a frame whose address the manifest chose. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
 | `migrate_command` | string[] | In the schema, but **Core never executes it** — there is no call site (`production.py:49-52`, "reserved"). An app whose schema depends on it deploys green with no tables. Use `migrations/*.sql` instead — see § 7. |
 | `migration` | object | `{breaking, reason, rollback_strategy}`. `breaking: true` lets the DDL validator through *destructive* statements (and only those — see § 7). Default `false`. |
 | `metadata` | object | App Store rendering: `category`, `tags`, `description`, `homepage`, `support_email`, `source_url`. **This is where a root-level `description` belongs.** |
@@ -222,6 +222,13 @@ Leave `runtime.sandbox` alone. Its enum is the default triple (`allow-scripts al
 
 The port your container listens on. **Default 80.** The Core gateway resolves the upstream as `<swarm-service>:<port>` where `port` is `runtime.port` if present and 80 otherwise, and the post-deploy probe dials the same port. Nothing in Core parses your Dockerfile's `EXPOSE` line — it is documentation only. An integer from 1 to 65535; `libi/manifest.json` ships `"port": 8000`.
 
+Two ways to get it wrong, and both produce the same symptom — a deploy that fails its readiness probe and is rolled back (`readiness_failed`), because the platform probes exactly that port:
+
+- **Wrong or missing `runtime.port`.** If your framework listens on 8000 and your manifest says nothing, the gateway dials port 80 and finds nobody. Either bind 80, or declare the port you actually use.
+- **Bound to `127.0.0.1`.** Many frameworks default to loopback, which is unreachable from outside the container. Bind `0.0.0.0` explicitly — `CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]`, with `"port": 8000` in the manifest to match. `app.listen(80)` in Node binds all interfaces by default, but `app.listen(80, 'localhost')` does not.
+
+Traffic path: `https://<slug>.apps.manaurum.com` → Traefik → **Core backend** (which adds the `/apps/<slug>` prefix) → Core gateway → your container. Traefik never talks to your container directly, so publishing ports in the Dockerfile changes nothing.
+
 ### `runtime.public_paths`
 
 Pages a browser tab may open **without a session**. Without the key every page is private: a top-level navigation by someone not signed in is redirected to the Manaurum login and comes back afterwards. Same glob syntax as `api_routes.path`, with the same trap — `/*` does not match `/`, so a fully public app declares `["/", "/*"]`.
@@ -246,6 +253,10 @@ Besides `404 route_not_declared`, a request can come back from the gateway, not 
 
 Core answers `POST /__manaurum/runtime-errors` on your hostname; do not serve that path.
 
+**Don't set your own framing headers.** Core force-assigns the CSP `frame-ancestors` and deletes `X-Frame-Options` on every `/apps/*` response, so setting either is pointless. On a page it serves (a `GET` answered `200 text/html`) it also rewrites `script-src` / `script-src-elem` (adding a nonce for the session-renewal script it injects) and `frame-src`, in headers and `<meta>` tags alike, and serves it with `Cache-Control: no-store`. Everything else in your CSP is kept, so a `connect-src 'self'` that forgets your API origin will still break your app inside the shell.
+
+**Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
+
 **Your container may be made read-only.** Off by default, a platform operator can switch an app to a hardened runtime, applied from its next deploy: a read-only root filesystem, uid 10001 whatever your image's `USER` says, no Linux capabilities, and only `/tmp` writable (a 128 MiB tmpfs counted against your memory; `HOME` points inside it). Write temporary files under `/tmp`, and anything that must last through `os.files` or your database, and the switch will not break you.
 
 ### `runtime.resources`
@@ -262,7 +273,7 @@ The declaration table for every `/api/*` path your container serves. **A path th
 | `auth` | Required: `"user"`, `"anonymous"` or `"optional"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). `optional` (Core MAN-3200): a signed-in member of your tenant as on `user`, plus `X-Manaurum-Person`; anyone else as on `anonymous`, never a `401` — see "Pages that guests and members both open". |
 | `streaming` | Optional bool, default false. Proxy in SSE / chunked passthrough mode instead of buffering the upstream response. Orthogonal to `auth`. Emit SSE heartbeats, honour `Last-Event-ID`, and do not hold a DB connection for the stream's lifetime. Limits below. |
 
-There is no `method` field — one rule covers every verb. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they always reach your container anonymously, and a page navigation without a session is sent to log in unless `runtime.public_paths` lists it.
+There is no `method` field — one rule covers every verb, so you cannot declare `/api/items` anonymous for reads and `user` for writes: enforce that inside your app. Precedence: the longer literal prefix wins, ties break by declaration order. That lets you carve one path out of a wildcard — `{"path": "/api/orders/*", "auth": "user"}` plus `{"path": "/api/orders/public", "auth": "anonymous"}` does what it looks like. Adding a route to your code is not enough: a new endpoint needs a new manifest entry and a redeploy, and until then it 404s while your logs stay silent, because nothing reached you. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they always reach your container anonymously, and a page navigation without a session is sent to log in unless `runtime.public_paths` lists it.
 
 The gateway strips `Cookie` and `Authorization` from every request it proxies, `/api/*` or not. Since MAN-3214 it also drops every header through which Core asserts who is calling: `X-Manaurum-User-Context`, `X-Manaurum-Person`, and the system-call headers (`X-Manaurum-Caller-System`, `-Tenant-Id`, `-Workspace-Id`, `-App-Id`, `-Event-Id`, `-Source-App-Id`, `-Subscriber-App-Id`), whatever the route's `auth`, on pages and streams alike. Through the gateway, the only `X-Manaurum-User-Context` your container sees is one the gateway minted for a signed-in caller. Whatever identity you need arrives as that header, or in a header of your own, which carries whatever the client put in it.
 
@@ -320,6 +331,26 @@ Required files in your project:
 - `manifest.json`
 - Whatever else your `Dockerfile` `COPY`s in
 
+The `Dockerfile` is anything that produces a runnable image. The smallest possible one, a static page on nginx:
+
+```dockerfile
+FROM nginx:1.27-alpine
+COPY index.html /usr/share/nginx/html/index.html
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -qO- http://localhost/ >/dev/null || exit 1
+```
+
+A dynamic one (Node, uvicorn) and the port it must bind: `manaurum-app/SKILL.md` → Step 2, and "`runtime.port`" above.
+
+**What the deploy packs — and why the token file lives one level up.** The packager tars the directory containing your `manifest.json`, excluding only these exact names:
+
+```
+__pycache__  .venv  venv  .git  .pytest_cache  .ruff_cache  .mypy_cache  node_modules  dist  build
+```
+
+That is an exact-name match list with **no glob support and no `.env*` entry** — a `.env.manaurum` sitting next to your `Dockerfile` is packed verbatim into the build context, baked into an image layer by any `COPY . .`, retained per-version in object storage, downloadable later via `manaurum app fetch-source`, and committed to a per-app append-only git history. There is no practical way to un-leak it. Keep every `.env*` outside the deployed directory. A `.dockerignore` does not help here: the platform builds with Docker's classic builder (`POST /build`, `version=1`), which does not apply it to the uploaded context, and the file is in the stored tar either way — a `.dockerignore` only affects a local `docker build`. What keeps a file out of the *image* is a Dockerfile that `COPY`s only what it needs, as the starter's does.
+
 Env vars the platform sets on every task:
 
 | Env var | Use |
@@ -338,7 +369,7 @@ That is every `MANAURUM_*` variable the platform sets. Two names that are **not*
 - **`MANAURUM_V2_TOKEN`** — the name these skills use for *your own* deploy credential in `.env.manaurum` on your machine. The platform never injects it; code that reads it at runtime finds nothing. The runtime credential is `MANAURUM_RUNTIME_TOKEN`.
 - **`MANAURUM_BROKER_URL`** — never injected: MAN-163 removed it because the shared broker DSN had grants on every app schema. Do not build anything on it.
 
-`MANAURUM_TENANT_ID` is for display ("welcome to <tenant>", per-tenant branding), never a security filter: capability calls are scoped to the calling tenant (the gateway binds every handler's session to it), and your schema is already per tenant. Within a tenant, not everything is private to your app — see `os.compliance.audit_query` and `os.tenant_config.*` in `capabilities-reference.md`.
+`MANAURUM_TENANT_ID` is for display ("welcome to <tenant>", per-tenant branding), never a security filter: capability calls are scoped to the calling tenant (the gateway binds every handler's session to it), and your schema is already per tenant. Don't try to talk to other tenants: capabilities are tenant-scoped at the gateway level, and you would get a `403` anyway. Within a tenant, not everything is private to your app — see `os.compliance.audit_query` and `os.tenant_config.*` in `capabilities-reference.md`.
 
 ### `byo` (bring your own — advanced)
 
@@ -402,6 +433,14 @@ it later (MAN-3199). The capability gateway refuses an `owner` token
 (`403 owner_scoped_credential_not_accepted`); containers use their injected runtime token.
 Everything about using a token for a deploy is in `manaurum-deploy/SKILL.md` → Prereqs.
 
+Your own `mna_*` is a deploy-time credential for `POST /api/dev/v2/deploy` from your laptop
+and nothing else. Don't bake it into the image, and don't pass one at deploy: you don't need
+to, because the platform injects `MANAURUM_RUNTIME_TOKEN`, and an image containing your token
+hands every future reader your deploy rights. (`os.secrets.get` is not an alternative here —
+it is itself a capability call that needs the runtime token first.) And don't try to deploy
+with an `mnu_*` token: an `mnu_*` is a tenant token for MCP clients and Drive upload, not a
+deploy credential. Deploys use `mna_*` exclusively.
+
 ---
 
 ## 5. Deploy lifecycle
@@ -416,6 +455,24 @@ probe), version immutability, and the failure table — lives in one place:
 Two facts this page's other sections depend on: migrations run **after the image push and
 before the new container replaces the old one**, and a migration that fails in **any** tenant
 stops the version from going live (MAN-2510).
+
+In order, a deploy:
+
+1. Takes your build context, tarred and uploaded as base64 in the request body.
+2. Builds your image from the `Dockerfile` inside the backend container.
+3. Pushes the image to a tenant-private Docker registry.
+4. Creates a Swarm service (or updates it, for a redeploy).
+5. Exposes `https://<slug>.apps.manaurum.com` through a Traefik route with a Let's Encrypt
+   cert.
+
+Build the archive in a per-run `mktemp -d`, never under a fixed name in a shared `/tmp`: on
+2026-09-08 two sessions collided on one, and one shipped the other's archive and reported
+`activated` for an app it never touched (MAN-2456). Echo the slug before you trust a green
+deploy.
+
+End-to-end deploy time for a small app: **~8 seconds**. There is **no Core PR** for any of
+this, and the platform team does not need to be in the loop: you are not modifying ManAurum
+OS, you are deploying an independent containerized app onto it.
 
 ---
 

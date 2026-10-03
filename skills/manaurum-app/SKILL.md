@@ -5,15 +5,13 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.14.0.** A plugin install caches one directory per
-> version, and an update that lands mid-session does not reach a skill that is
-> already loaded — that gap has already cost one app its interface: 2.8.0
-> appeared in the cache 51 minutes after a session had loaded 2.7.2, and that
-> session went on reading the old paths for another day. So when you resolve
-> `<plugin>` (see "Before you write anything"), look at its **parent**: if a
-> higher version directory sits next to the one you are reading, you are on a
-> stale copy. Read that one instead, and re-check anything you have already
-> built against it. The orphaned directory carries a `STALE.md` saying the same.
+> **This page is SDK 3.15.0.** The plugin cache keeps one directory per version,
+> and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
+> 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
+> you resolve `<plugin>` (see "Before you write anything"), look at its
+> **parent**: a higher version directory beside this one means you are on a stale
+> copy, which also carries a `STALE.md`. Read the newer one, and re-check what you
+> built against it.
 
 > ## ⚡ Every app is a Platform v2 app
 >
@@ -36,14 +34,16 @@ Read it in order; every step ends in something you can run.
    mandatory.
 7. **Step 4** — deploy, through the `manaurum-deploy` skill.
 
-Open a reference only when a step sends you there, or when you need the detail:
+This page is the path and the rules. The detail is in the references — open one when a
+step sends you there, or when you need the why:
 
 | You need | Open |
 |---|---|
-| Every manifest field, runtime modes, the gateway, migrations, the Assistant's tools | `references/v2-platform.md` |
+| Every manifest field, runtime modes, the gateway, what the deploy packs, migrations, Postgres, the Assistant's tools | `references/v2-platform.md` |
 | One capability's input, output and errors | `references/capabilities-reference.md` |
-| The window protocol, `manaurum-v2.mjs`, sessions in a standalone tab | `references/sdk-api.md` |
-| Layout, tokens, appearance, the rules a reviewer rejects on sight | `references/design.md` |
+| The window protocol, the handshake line by line, `manaurum-v2.mjs` | `references/sdk-api.md` |
+| Layout, tokens, appearance, window rules, the rules a reviewer rejects on sight | `references/design.md` |
+| Steps 3.5 and 3.6 in full, and the common rejection codes | `references/checks.md` |
 | What to ask a person who cannot describe an app in technical terms | `references/discovery.md` |
 | Production apps to copy from | `references/reference-apps.md` |
 | Publishing to the App Store | `references/publishing.md` |
@@ -55,159 +55,116 @@ errors and rollback. This page does not repeat either.
 
 ## Step 0 — Find out what you are building
 
-**Do this before you create a single file.** Not because process is good, but
-because "build me an app for my shop" is not an underspecified brief — it is
-the whole of what the person knows how to say. They do not have a spec and do
-not know what you need from them. Start writing files and you will invent the
-data model, the screens and the Assistant capabilities yourself, and they will
-not find out you guessed wrong until the app exists and is wrong.
+**Do this before you create a single file.** "Build me an app for my shop" is the whole
+of what the person knows how to say. Start writing files and you invent the data model,
+the screens and the Assistant capabilities yourself — and they find out you guessed
+wrong only when the app exists.
 
 1. **Ask, one question at a time.** Who uses it → what they do on a normal day
    → what it must still remember tomorrow → what they'd want to just *ask* for
    → what it must never do. Plain language only: never "what's your schema".
 2. **After two or three answers, propose instead of asking.** Say what you think
-   the app is and invite correction. People correct a wrong guess far better
-   than they specify from nothing. This one move is most of the value.
+   the app is and invite correction. This one move is most of the value.
 3. **Write `BRIEF.md`** — copy `<plugin>/templates/v2-starter/BRIEF.md` — and let
    them read it. It is the spec, and it is theirs.
 4. **Derive the build from it**: §3 → the data model, §2 → the screens and
    `api_routes`, §4 → `agent_capabilities`. Keep the derivation visible.
 5. **Give every screen a URL fragment while they are still a list on paper** —
-   `#customers`, `#customer/42`. It costs eight lines in `index.html` (the
-   starter ships them) and it is what makes the app deep-linkable, gives the
-   back button something to do, and lets the Step 3.5 screenshot reach past the
-   first screen. Decide it now: bolting it on after the app exists is expensive,
-   which is why it gets skipped, and then every check only ever photographs the
-   home view.
-6. **Say what kind each screen is, next to its fragment: sorting, reading or
-   entering.** Going through records, taking in text, or putting something in.
-   The three look different at the level of type scale, not palette, and the
-   choice decides the layout before any rule does — a knowledge base built on
-   the skeleton of a list-triage app passed every check on this page and was
-   rejected on sight, because it read like a ledger. Write it in `BRIEF.md` §2;
-   what each kind is built from is in `references/design.md` → "What kind of
-   screen is it".
+   `#customers`, `#customer/42` (the starter ships the router). It lets the Step 3.5
+   screenshot reach past the first screen; bolted on later, it gets skipped.
+6. **Say what kind each screen is: sorting, reading or entering.** The kind decides
+   the layout before any rule does — a knowledge base built on a list-triage skeleton
+   passed every check and was rejected on sight. Write it in `BRIEF.md` §2;
+   `references/design.md` → "What kind of screen is it".
 
-Two things this is not. It is **not a gate**: if they say "just build me a todo
-list", draft the brief yourself, show it, ask one confirming question, and go.
-And it is **not an interrogation**: "I don't know" is a complete answer — decide
-the default, record it in §6 as `(assumed)`, say what you decided, move on.
+**Not a gate**: for "just build me a todo list", draft the brief, show it, ask one
+confirming question, go. **Not an interrogation**: "I don't know" is a complete
+answer — decide, record it in §6 as `(assumed)`, say so, move on.
 
-Question bank, defaults for the "I don't know" case, two worked transcripts, and
-the brief→manifest derivation table: **`references/discovery.md`**.
+Question bank, defaults, worked transcripts, and the brief→manifest table:
+**`references/discovery.md`**.
 
 ---
 
 ## What a v2 app is
 
-A v2 app is a Docker image that:
+A Docker image that:
 
-- Listens on **port 80, bound to `0.0.0.0`** — or on whatever port it declares in `runtime.port`. Nothing else is routable (see Step 2).
-- Serves only the `/api/*` paths it declared in `runtime.api_routes`. Undeclared API paths never reach the container (see Step 1).
-- Receives `MANAURUM_TENANT_ID`, `MANAURUM_APP_ID`, `MANAURUM_VERSION`, `MANAURUM_TARGET_SCHEMA`, and the runtime credential pair `MANAURUM_RUNTIME_TOKEN` + `MANAURUM_CORE_URL` as env vars at startup (plus `DATABASE_URL` when it uses the default managed DB mode).
-- Calls back to the OS via the **capability gateway** at `POST ${MANAURUM_CORE_URL}/api/capability/<name>` for everything: KV storage, files (R2), AI, notifications, events, audit, etc.
-- Answers the shell's `manaurum:ready` handshake, or it has no usable desktop window (see Step 2.5).
+- Listens on **port 80, bound to `0.0.0.0`** — or on whatever port it declares in `runtime.port` (Step 2).
+- Serves only the `/api/*` paths it declared in `runtime.api_routes`; undeclared ones never reach it (Step 1).
+- Receives `MANAURUM_TENANT_ID`, `MANAURUM_APP_ID`, `MANAURUM_VERSION`, `MANAURUM_TARGET_SCHEMA`, `MANAURUM_RUNTIME_TOKEN`, `MANAURUM_CORE_URL`, `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` and, in managed data mode only, `DATABASE_URL` — each explained in `references/v2-platform.md` → "`hosted` (default — what 99% of apps want)". Use `MANAURUM_TENANT_ID` for display, never as a security filter.
+- Calls back to the OS via the **capability gateway** at `POST ${MANAURUM_CORE_URL}/api/capability/<name>` for everything: KV, files, AI, notifications, events, audit (Step 3).
+- Answers the shell's `manaurum:ready` handshake, or it has no usable desktop window (Step 2.5).
 
-When you deploy:
-1. Your build context is tarred + uploaded as base64 in the request body.
-2. The platform builds your image from the `Dockerfile` inside the backend container.
-3. The image is pushed to a tenant-private Docker registry.
-4. A swarm service is created (or updated for redeploys).
-5. A Traefik route exposes `https://<slug>.apps.manaurum.com` with a Let's Encrypt cert.
-
-End-to-end deploy time for a small app: **~8 seconds**.
-
-There is **no Core PR** for any of this. The platform team does not need to be in the loop. You are not modifying ManAurum OS — you are deploying an independent containerized app onto it.
+A deploy builds the image on the platform, runs it as a Swarm service and routes
+`https://<slug>.apps.manaurum.com` to it — about eight seconds for a small app, and no
+Core PR. The pipeline: `references/v2-platform.md` → "5. Deploy lifecycle".
 
 ## Before you write anything — read a real one
 
-`references/reference-apps.md` walks three production v2 apps and what each is
-worth reading for: **`shift-checklist`** (22 files — a complete app you can read
-whole, `src/api/` split by surface, both auth levels), **`family-space-v2`** (the
-ceiling, and the manifest + `agent_capabilities` reference), and **`libi`** (the
-only tested one — copy its `conftest.py`). Copying the shape of a working app
-beats reconstructing it from this page — **for the backend.** Routes, auth,
-the database and the agent handlers do not care what a screen is for. The
-layout does: copy it only from an app whose screens are the same kind as yours
-(Step 0, item 6). None of the reference apps is a reader.
+`references/reference-apps.md` walks three production v2 apps: **`shift-checklist`**
+(22 files, a complete app you can read whole), **`family-space-v2`** (the ceiling, and
+the manifest + `agent_capabilities` reference), and **`libi`** (the only tested one —
+copy its `conftest.py`). Copy a working app's shape **for the backend**; copy a layout
+only from an app whose screens are the same kind as yours (Step 0, item 6). None of the
+reference apps is a reader.
 
-If the app keeps its data in Postgres, start from
-`<plugin>/templates/recipes/postgres/` rather than writing `db.py` yourself: a
-pool whose schema survives asyncpg's session reset, full-text search that does
-not answer a question with zero results, and the migrations for both — with
-tests that run against a real Postgres. Why each part is the way it is:
-`references/v2-platform.md` → "Connecting from the container" and
-"Full-text search".
+If the app keeps its data in Postgres, start from `<plugin>/templates/recipes/postgres/`
+rather than writing `db.py` yourself: a pool whose schema survives asyncpg's session
+reset, full-text search that does not answer a question with zero results, and the
+migrations and real-Postgres tests for both. Why: `references/v2-platform.md` →
+"Connecting from the container" and "Full-text search".
 
-**And copy the look, don't invent it.**
-`<plugin>/templates/v2-starter/src/static/app.css` is a complete stylesheet for a
-Manaurum app — tokens, layout, lists, filters, forms, reading, empty states,
-skeletons, mobile. The starter's `index.html` shows a form and a short record
-list; `<plugin>/templates/patterns/index.html` shows the other two kinds of
-screen — a list of texts with filters, one text on its own page, and a list of
-records to sort through. `references/design.md` explains when to reach for each
-and which mistakes are expensive. An app that works and looks
-unfinished is one a user abandons.
+**And copy the look, don't invent it.** `<plugin>/templates/v2-starter/src/static/app.css`
+is a complete stylesheet for a Manaurum app — tokens, layout, lists, filters, forms,
+reading, empty states, skeletons, mobile. The starter's `index.html` shows a form and a
+short record list; `<plugin>/templates/patterns/index.html` shows a list of texts with
+filters, one text on its own page, and a list of records to sort through.
+`references/design.md` says when to reach for each.
 
-`<plugin>` is the **plugin root** — the directory holding `skills/` and
-`templates/` side by side, not the skill's own folder. If a read of
-`templates/…` fails, resolve the root (`ls` one level up from `skills/`) and
-retry; do **not** fall back to writing the file yourself. Re-deriving the
-stylesheet loses the guards baked into it, and the loss is silent.
+`<plugin>` is the **plugin root** — the directory holding `skills/` and `templates/`
+side by side, not the skill's own folder. If a read of `templates/…` fails, resolve the
+root (`ls` one level up from `skills/`) and retry; do **not** fall back to writing the
+file yourself. Re-deriving the stylesheet loses the guards baked into it, silently.
 
 ### The seven rules an app gets sent back for
 
-Not taste, and not optional reading. Each of these has shipped at least once —
-four of them in a single app, whose interface was rejected on sight while every
-technical check passed, and then most of them again in a second app a week
-later. Copying `app.css` enforces none of them, because they are decisions you
-make in the markup. Check them before the first file, and again in Step 3.5,
-where `check_ui.py` checks them for you — every rule here except rule 3, which
-is a judgement rather than a pattern, and the first half of rule 5: it fails a
-click target with no hover, but not a hover on something inert. Those two are
-yours to look for.
+Not taste: each has shipped, and got an app that passed every technical check rejected
+on sight. Copying `app.css` enforces none of them — they are decisions in the markup.
+Check them before the first file and again in Step 3.5, where `check_ui.py` checks all
+but rule 3 and the first half of rule 5.
 
 1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
    and sits in a desktop that already has navigation. Sections are cards; two
    views are two `.btn-ghost`s that swap the content. (One narrow exception, in
    `design.md`: a list that genuinely drives a detail pane.)
-2. **Appearance and accent come from `manaurum:init` — they arrive in
-   `e.data.payload`, not on the message root** — written onto `<html>` as
-   `data-appearance` / `data-accent` (Step 2.5). Reading them off `e.data`
-   answers the handshake, applies nothing, and leaves a light app in a dark
-   desktop for as long as nobody looks; the standalone URL hides it, because
-   the `prefers-color-scheme` fallback runs there. `prefers-color-scheme` is
-   only that fallback — it tracks the *browser*, never Manaurum.
+2. **Appearance and accent come from `manaurum:init` — in `e.data.payload`, not
+   on the message root** — written onto `<html>` as `data-appearance` /
+   `data-accent` (Step 2.5). Reading them off `e.data` applies nothing and
+   leaves a light app in a dark desktop. `prefers-color-scheme` is only the
+   standalone fallback: it tracks the *browser*, never Manaurum.
 3. **A badge is a word, not a sentence — and it marks the few.** `overdue` —
-   never "hasn't paid in over 90 days". A badge that holds a phrase turns a
-   scannable list into a wall; a badge that sits on half the rows has stopped
+   never "hasn't paid in over 90 days". A badge on half the rows has stopped
    marking anything. Badge the exception, or make it a filter.
 4. **One primary button per view, and at most four accent-coloured things on
-   the first screen.** A column of blue buttons says nothing is the answer, and
-   so do thirteen accent filters beside one primary. Filters are `.chip`s,
-   quiet until chosen; repeated actions are `.btn-secondary`; `.btn-ghost` is
-   accent, so it is for one or two actions, never a set.
-5. **Hover if and only if the click does something.** No hover on an inert row —
-   it is a promise the app does not keep; and no silent click target either, so
-   a row with a handler gets `.row.is-interactive` (cursor, hover, focus ring)
-   and stays an `<li>`. `<button class="row">` is not the shortcut it looks
-   like: it drops to ButtonFace, Arial and its own width, and the list stops
-   reaching the edge of the card.
-6. **No hex in the markup and no inline `style=`** — and that includes a hex
-   inside a `var()` fallback. `var(--text-muted, #666)` with a token that does
-   not exist is a hardcoded colour wearing a token's clothes, and it is the one
-   the eye slides over. The token list is in `design.md`; if a name is not in
-   it, the token is not there.
+   the first screen.** Filters are `.chip`s, quiet until chosen; repeated
+   actions are `.btn-secondary`; `.btn-ghost` is accent, so it is for one or
+   two actions, never a set.
+5. **Hover if and only if the click does something.** No hover on an inert row;
+   and no silent click target either: a row with a handler gets
+   `.row.is-interactive` (cursor, hover, focus ring) and stays an `<li>` —
+   `<button class="row">` drops to ButtonFace, Arial and its own width.
+6. **No hex in the markup and no inline `style=`** — including a hex inside a
+   `var()` fallback: `var(--text-muted, #666)` with a token that does not exist
+   is a hardcoded colour. The token list is in `design.md`; a name not in it
+   does not exist.
 7. **No `alert()` / `confirm()` / `prompt()`.** The shell's iframe has no
    `allow-modals`, so they return silently — a `confirm()`-gated delete button
-   is a button that does nothing. Use an in-app modal, input or toast.
+   does nothing. Use an in-app modal, input or toast.
 
-These seven are the ones a screenshot catches. Two more prohibitions need a
-window rather than a picture — never clip your root (`overflow: hidden` plus a
-fixed height: the shell cannot scroll an iframe app, so the bottom of every long
-view becomes unreachable), and never build a palette on gold, yellow or
-`hue-rotate`. Those, plus patterns, empty states, spacing, mobile and icons, are
-in `references/design.md` — which opens with the full table of prohibitions.
+Also never clip your root (`overflow: hidden` plus a fixed height — the shell cannot
+scroll an iframe app), and never build a palette on gold, yellow or `hue-rotate`. The
+full table of prohibitions opens `references/design.md`.
 
 ## Required project structure
 
@@ -223,13 +180,12 @@ workspace/
     └── ... your source files (any language, any framework) ...
 ```
 
-**The token file lives one level up, and that placement is the point.** The packager tars the directory containing your `manifest.json`, excluding only these exact names:
-
-```
-__pycache__  .venv  venv  .git  .pytest_cache  .ruff_cache  .mypy_cache  node_modules  dist  build
-```
-
-That is an exact-name match list with **no glob support and no `.env*` entry** — a `.env.manaurum` sitting next to your `Dockerfile` is packed verbatim into the build context, baked into an image layer by any `COPY . .`, retained per-version in object storage, downloadable later via `manaurum app fetch-source`, and committed to a per-app append-only git history. There is no practical way to un-leak it. Keep every `.env*` outside the deployed directory. A `.dockerignore` does not help here: the platform builds with Docker's classic builder (`POST /build`, `version=1`), which does not apply it to the uploaded context, and the file is in the stored tar either way. What keeps a file out of the *image* is a Dockerfile that `COPY`s only what it needs, as the starter's does.
+**The token file lives one level up, and that placement is the point.** The packager
+tars the directory holding `manifest.json`, excluding a few exact names (`.git`,
+`node_modules`, …) — **no globs, no `.env*`**. A `.env.manaurum` there is baked into an
+image layer and retained per version; there is no way to un-leak it, and a
+`.dockerignore` does not help. The list and why: `references/v2-platform.md` →
+"`hosted` (default — what 99% of apps want)".
 
 ## Step 1 — Manifest v2 (minimal)
 
@@ -261,76 +217,54 @@ That is an exact-name match list with **no glob support and no `.env*` entry** �
 }
 ```
 
-Validation rules (key ones):
+Key rules (every field: `references/v2-platform.md` §1 and §2):
 
 - `app_id`: slug `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`. Becomes the URL: `<app_id>.apps.manaurum.com`.
-- `version`: semver MAJOR.MINOR.PATCH (no pre-release, no build metadata). Each redeploy must be a NEW version.
-- `runtime.mode`: `hosted` (the platform runs the container — what this skill teaches), `byo` (you host your own and the platform proxies — advanced), or `dev` (platform-internal prototyping runtime — it had an in-browser Monaco editor called App Builder until 2026-08-07, when that surface was removed from the product; the mode and its routes remain, but nothing in the OS ships an editor for it).
-- `runtime.port`: the port your container listens on. Default **80**. This is the *only* thing that decides where the gateway sends traffic — see Step 2.
-- **`runtime.api_routes`: the default-deny declaration of every `/api/*` path your container serves.** Get this wrong and your app is broken in a way that looks like a backend bug. Details below.
-- `runtime.egress_allowed_hosts`: list of external hosts your app may reach via `os.http.fetch`, which refuses every other host. (The container's own connections are not filtered.)
-- `data`: your storage mode. If your app has **no Postgres of its own** — which includes every app that persists only through `os.kv` / `os.files` — declare `"data": {"none": true}`. Omitting the block selects managed mode, which tries to provision a per-(app, tenant) schema + login role and needs a DDL-capable DSN on Core. Other modes: `{"byo": true}` (your own connection string, no isolation guarantees), `{"shared": true}` is accepted but behaves exactly like managed mode today. Postgres extensions: `data.extensions` (`vector`, `pg_trgm`), each approved by a platform operator.
-- `frontend.entry_point`: the URL the **desktop shell** loads in your app's window, normally `/index.html`. Without it your app has a live URL but no window on the desktop. Declaring it is also what makes the `manaurum:ready` handshake (Step 2.5) apply to you.
-- `frontend.icon`: an emoji (`"📋"`, and Libi ships `"🍼"`), a full URL, or an absolute `/api/catalog/media/...` path. Omit it and the launcher serves a generic placeholder. A **relative** path such as `"icons/app.svg"` is not resolved — it is painted into the tile as literal text.
-- `visibility.mode`: `private` (this tenant only), `public` (any tenant can install via App Store v2), or `allow_list` with a `tenants` array.
-- `permissions`: optional top-level array of BROWSER features the OS shell
-  delegates to your iframe via the `allow` attribute (Permissions-Policy).
-  Enum today: `["microphone", "camera"]` (MAN-1316, MAN-1920). **Required for
-  any app that opens a LIVE mic or camera stream inside the shell** — without
-  it `getUserMedia` is blocked in the iframe (your standalone
-  `<app_id>.apps.manaurum.com` URL is unaffected). The user still sees the
-  normal browser prompt. **A still photo needs no declaration:**
-  `<input type="file" accept="image/*" capture="environment">` hands off to
-  the device's camera app and is not gated, so declare `camera` only for a
-  stream you decode or render yourself (a barcode scanner, video capture).
-  This is separate from capabilities: a voice app declares BOTH
-  `"permissions": ["microphone"]` and `os.ai.transcribe` in
-  `requires_capabilities`. A non-empty `permissions` is refused at deploy
-  for `runtime.mode: "byo"` (MAN-1922).
+- `version`: semver MAJOR.MINOR.PATCH, no pre-release or build metadata. **Every deploy needs a new one.**
+- `runtime.mode`: `hosted` — the platform runs the container (`byo` and `dev` exist; this skill does not teach them). `runtime.port`: default **80**, and the *only* thing that decides where traffic goes (Step 2). `runtime.egress_allowed_hosts`: the hosts `os.http.fetch` may reach.
+- **`runtime.api_routes`**: the default-deny list of every `/api/*` path you serve — below.
+- `data`: **no Postgres of your own — including an app that persists only through `os.kv` / `os.files` — means `"data": {"none": true}`.** Omitting the block selects managed mode, a per-(app, tenant) schema.
+- `frontend.entry_point`: what the desktop loads in your window, normally `/index.html`. Without it there is no window; with it, Step 2.5 applies to you.
+- `frontend.icon`: an emoji, a full URL, or an absolute `/api/catalog/media/...` path. A **relative** path is painted into the tile as literal text.
+- `visibility.mode`: `private` (this tenant), `public` (any tenant, via App Store v2), or `allow_list` with `tenants`.
+- `permissions`: browser features the shell delegates to your iframe, `["microphone", "camera"]` today (MAN-1316, MAN-1920) — **required for a LIVE mic or camera stream in the shell**, not for a still photo through `<input type="file" capture>`. Separate from capabilities: a voice app declares both `"permissions": ["microphone"]` and `os.ai.transcribe`.
 
 ### `runtime.api_routes` — read this before you write a single route
 
-Every request to `https://<slug>.apps.manaurum.com` goes through the Core gateway. For any path starting with `/api/`, the gateway looks the path up in `runtime.api_routes` **before** touching your container. No match → **`404 route_not_declared`**, and your container never sees the request. There is no implicit fallback, not even to anonymous.
+Every request to `https://<slug>.apps.manaurum.com` goes through the Core gateway. For
+any path starting with `/api/`, the gateway looks it up in `runtime.api_routes`
+**before** touching your container. No match → **`404 route_not_declared`**, and your
+container never sees the request. There is no implicit fallback, not even to anonymous.
 
 Each entry is `{ "path": …, "auth": … }`:
 
-- `path` must start with `/`. A trailing `/*` matches anything **below** that prefix.
-- `auth` is `"user"`, `"anonymous"` or `"optional"` — required and explicit.
-  - `"user"`: the gateway mints a 60-second RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`. The end user's own bearer token is **never** forwarded to you.
-    **A good signature is not enough.** Every app's tokens are signed with one key for one audience (`manaurum-app`), so a token minted for another app, which that app's developer sees, verifies in yours too. Accept it only if `app_id` is your manifest's slug and `tenant_id` equals `MANAURUM_TENANT_ID`. Refuse a request that carries the header twice. Core since MAN-3214 drops any copy the client sent, so a second header means an older Core or something wrong in front of you; the check costs nothing. Never read the header on an `anonymous` route, where nothing is minted. `templates/v2-starter/src/auth.py` does all of this; copy it.
-  - `"anonymous"`: proxied with no user context. This is how you expose a kiosk/public endpoint, and it must be declared — a route you forget is unreachable, not open.
-  - `"optional"` (Core MAN-3200): the user if signed in, nobody otherwise. A signed-in member of your tenant arrives as on `user` **plus** `X-Manaurum-Person` — who they are, bound to your app by `aud` = `MANAURUM_APP_ID`. A guest, or a member of another tenant (indistinguishable on purpose), arrives with neither, and never gets a `401`. For share links, voting rooms, invite pages: `references/v2-platform.md` → "Pages that guests and members both open". `templates/v2-starter/src/auth.py` → `optional_person`.
-- Optional `"streaming": true` for `text/event-stream` routes, so the gateway passes chunks through instead of buffering the response. A stream is closed after 15 minutes, and after 60 seconds in which your container sent nothing; a 51st concurrent stream for one (app, tenant) is `429`. Limits and the reconnect contract: `references/v2-platform.md` → "Streaming routes — the limits".
-- **There is no `method` field.** One rule covers GET, POST, PATCH, DELETE alike. You cannot declare `/api/items` anonymous for reads and `user` for writes — enforce that inside your app.
+- `path` starts with `/`. A trailing `/*` matches anything **below** that prefix.
+- `auth` is required: `"user"`, `"anonymous"` or `"optional"`.
+  - `"user"`: the gateway injects a 60-second `X-Manaurum-User-Context` JWT; the user's own token never reaches you. **A good signature is not enough** — accept it only if `app_id` is your slug and `tenant_id` equals `MANAURUM_TENANT_ID`, and refuse a request that carries the header twice. Never read it on an `anonymous` route. `templates/v2-starter/src/auth.py` does all of this; copy it.
+  - `"anonymous"`: proxied with no user context — a kiosk or public endpoint. A route you forget is unreachable, not open.
+  - `"optional"` (Core MAN-3200): the user if signed in, a guest otherwise, never a `401` — share links, voting rooms. `auth.py` → `optional_person`.
+- `"streaming": true` for `text/event-stream` routes.
+- **There is no `method` field.** One rule covers every verb.
+
+Verification step by step, `optional`, streaming limits and precedence:
+`references/v2-platform.md` → "`runtime.api_routes` — default-deny".
 
 The two failure modes that will actually catch you:
 
-1. **`/api/tasks/*` does NOT match the bare `/api/tasks`.** The wildcard means "everything below `/api/tasks/`" and requires at least one more character. A collection endpoint plus its item endpoints needs **both** rules:
+1. **`/api/tasks/*` does NOT match the bare `/api/tasks`.** The wildcard needs at least one more character. A collection plus its items needs **both** rules:
    ```json
    { "path": "/api/tasks",   "auth": "user" },
    { "path": "/api/tasks/*", "auth": "user" }
    ```
-2. **Adding a route to your code is not enough.** New endpoint → new manifest entry → redeploy. Otherwise it 404s while your logs stay silent, because nothing reached you.
+2. **Adding a route to your code is not enough.** New endpoint → new manifest entry → redeploy. Otherwise it 404s while your logs stay silent.
 
-Precedence: the longer literal prefix wins, ties break by declaration order. That lets you carve one path out of a wildcard — `{"path": "/api/orders/*", "auth": "user"}` plus `{"path": "/api/orders/public", "auth": "anonymous"}` does what it looks like.
-
-Static assets (HTML/JS/CSS, `/healthz`, anything not under `/api/`) are **not** declared here and always reach your container anonymously. A person opening a page in a browser tab with no session is redirected to log in first, unless the page's path is listed in `runtime.public_paths`.
-
-For declaring custom capabilities, secrets, migrations, see `references/v2-platform.md`, section 1 (the manifest) and section 7 (migrations).
+Static assets (HTML/JS/CSS, `/healthz`, anything not under `/api/`) are not declared and
+always reach your container; a page opened with no session is sent to log in unless
+`runtime.public_paths` lists it.
 
 ## Step 2 — Dockerfile
 
-Anything that produces a runnable image. Smallest possible (static page on nginx):
-
-```dockerfile
-FROM nginx:1.27-alpine
-COPY index.html /usr/share/nginx/html/index.html
-EXPOSE 80
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD wget -qO- http://localhost/ >/dev/null || exit 1
-```
-
-Smallest dynamic (Node):
+Anything that produces a runnable image. Smallest dynamic one (Node):
 
 ```dockerfile
 FROM node:22-alpine
@@ -344,32 +278,33 @@ CMD ["node", "server.js"]   # server.js must listen on 0.0.0.0:80
 
 ### The port rule
 
-**`EXPOSE` is never parsed.** Nothing in Core reads it; it is documentation for humans. The gateway resolves your upstream as `<swarm-service>:<port>` where `port` is `manifest.runtime.port` if present and **80** otherwise. That is the only input.
+**`EXPOSE` is never parsed.** The gateway dials `<swarm-service>:<port>`, where `port`
+is `manifest.runtime.port` if present and **80** otherwise — the only input. Get it
+wrong either way and the deploy fails its readiness probe and is rolled back
+(`readiness_failed`):
 
-Two consequences, both of which produce the same symptom — a deploy that fails its readiness probe and is rolled back (`readiness_failed`), because the platform probes exactly that port:
-
-- **Wrong or missing `runtime.port`.** If your framework listens on 8000 and your manifest says nothing, the gateway dials port 80 and finds nobody. Either bind 80, or declare the port you actually use. Reference apps declare it: `libi/manifest.json` ships `"runtime": {"mode": "hosted", "port": 8000, …}`.
-- **Bound to `127.0.0.1`.** Many frameworks default to loopback, which is unreachable from outside the container. Bind `0.0.0.0` explicitly:
+- **Wrong or missing `runtime.port`.** Your framework listens on 8000 and the manifest says nothing: the gateway dials 80 and finds nobody. Bind 80, or declare the port you use.
+- **Bound to `127.0.0.1`.** Unreachable from outside the container. Bind `0.0.0.0`:
   ```dockerfile
   CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
   ```
-  and set `"port": 8000` in the manifest to match. `app.listen(80)` in Node binds all interfaces by default, but `app.listen(80, 'localhost')` does not.
+  with `"port": 8000` in the manifest.
 
-`runtime` is strict: a typo'd `"prot": 8000` is a `422` at deploy, and `templates/check_app.py` names it before you pack anything.
-
-Traffic path: `https://<slug>.apps.manaurum.com` → Traefik → **Core backend** (which adds the `/apps/<slug>` prefix) → Core gateway → your container. Traefik never talks to your container directly, so publishing ports in the Dockerfile changes nothing.
+`runtime` is strict: a typo'd `"prot": 8000` is a `422` at deploy, and
+`templates/check_app.py` names it first. The traffic path: `references/v2-platform.md`
+→ "`runtime.port`"; a static nginx Dockerfile: → "`hosted` (default — what 99% of apps
+want)".
 
 ## Step 2.5 — The `manaurum:ready` handshake (MANDATORY)
 
-If your app declares `frontend.entry_point` — i.e. it has a window on the desktop — this is not optional.
+If your app declares `frontend.entry_point`, this is not optional. The desktop loads
+your URL in an iframe and posts `manaurum:init` into it. **Your page must post
+`manaurum:ready` back within 10 seconds**, or the shell covers your UI with "App is not
+responding". The standalone URL works without it — no parent frame, nothing times out
+— so the app looks fine in every tab you test and is unusable where users open it
+(Libi shipped that way, MAN-1321).
 
-When the desktop opens your app it loads your URL in an iframe and posts `manaurum:init` into it. **Your page must post `manaurum:ready` back within 10 seconds.** If it doesn't, the shell covers your UI with "App is not responding — no `manaurum:ready` received within 10s". There is no exemption on this path.
-
-**The trap:** opening `https://<slug>.apps.manaurum.com` directly works perfectly without the handshake. There is no parent frame, so nothing times out. Your app looks fine in every browser tab you test it in and is unusable in the only place your users open it. This is not hypothetical — the first-party app *Libi* shipped exactly this way and needed a follow-up release (MAN-1321: "Libi's SPA never replied, making the app unusable as a desktop window or from the mobile home screen").
-
-Minimal correct answer, inline in `<head>` of your entry point. It does three
-things: it checks who is talking, answers the handshake, and applies the
-appearance the user is in, because `manaurum:init` carries both:
+Paste this inline, at the top of `<head>` of your entry point:
 
 ```html
 <script>
@@ -404,158 +339,89 @@ appearance the user is in, because `manaurum:init` carries both:
 </script>
 ```
 
-**The sender check is not optional, and the SDK does not do it for you.**
-`manaurum-v2.mjs` 2.3.0, the version `https://manaurum.com/sdk/` serves today,
-adopts whichever window posts `manaurum:init` as its shell, again on every
-`init`, so the latest sender wins, and it sends that window your
-`app.pickFromDrive()` requests, so it can answer them. This listener stops
-everything it refuses, which protects the SDK as well, but only because it is
-registered first: keep it inline at the top of `<head>`, before any script or
-module that listens for `message`. It lets `manaurum:session-*` through
-because Core injects a session-renewal script into every v2 page that
-exchanges those with a Core frame of its own and checks them itself. Use exactly these two origins: not `www.`, never a
-`*.manaurum.com` pattern (that admits every app), and not just one of them (an
-app that pinned the apex stopped hearing the shell when it moved to `app.` and
-never became ready). The loopback line admits one more origin, the page's own,
-only when it is served from `127.0.0.1` or `localhost`, so `templates/preview.py`
-(Step 3.5) can frame it; without it the preview reports "NO manaurum:ready".
+The starter's `index.html` is this script plus a few extras — copy its whole block
+rather than retyping this one. Three things are non-negotiable:
 
-**Answering the handshake and ignoring the payload is a shipped bug, not a
-shortcut.** The app comes up, the window works, and it renders in its own
-palette inside a dark desktop — which is what a user sees first. The two belong
-in one listener because they arrive in one message. The starter's `index.html`
-is this same script plus a `prefers-color-scheme` default for the standalone
-URL, `manaurum:device-change`, and the `window.__manaurum` context object the
-rest of that file reads — copy the whole block rather than retyping this one.
+1. **The sender check.** Exactly `https://manaurum.com` and `https://app.manaurum.com`,
+   plus the page's own origin on loopback only (so `templates/preview.py` can frame it).
+   Not `www.`, never a `*.manaurum.com` pattern (that admits every app), not just one of
+   the two. `manaurum-v2.mjs` 2.3.0 does **not** check the sender, so keep this listener
+   registered first, before any script or module that listens for `message`.
+2. **Answer within 10 seconds.** For an SPA with a deferred bundle, `manaurum:init` can
+   arrive before the bundle parses — so the listener is inline in the HTML, **and** you
+   post one proactive `manaurum:ready` after mount:
+   ```js
+   // after render: one post per shell origin rather than '*'. The browser drops
+   // the one whose origin is not the parent's and logs a console error: expected.
+   for (const origin of ['https://manaurum.com', 'https://app.manaurum.com']) {
+     try { window.parent.postMessage({ type: 'manaurum:ready' }, origin); } catch { /* not embedded */ }
+   }
+   ```
+3. **Apply the appearance from `e.data.payload`.** Answering the handshake and ignoring
+   the payload is a shipped bug: the window works and renders in its own palette inside
+   a dark desktop.
 
-Inline in `<head>` matters: for an SPA with a deferred module bundle, `manaurum:init` can arrive before your bundle has parsed. Put the listener in the HTML **and** fire one proactive `manaurum:ready` after mount — that belt-and-braces pair is what MAN-1321 landed:
-
-```js
-// src/main.tsx, after render. One post per shell origin rather than '*', so
-// a page that frames the app does not hear from it. The browser drops the one
-// whose origin is not the parent's and logs a console error for it: expected.
-for (const origin of ['https://manaurum.com', 'https://app.manaurum.com']) {
-  try { window.parent.postMessage({ type: 'manaurum:ready' }, origin); } catch { /* not embedded */ }
-}
-```
-
-The `manaurum:init` payload carries the app's `granted_capabilities`. **For a v2 app, postMessage is for this handshake and window framing only.** Never send the v1 data verbs (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app — v2 data flows from your own `/api` routes to the capability gateway, server-side.
-
-Full message contract: `references/sdk-api.md` § "`manaurum:ready` — the shell handshake".
+postMessage is for this handshake and window framing only: never send the v1 data verbs
+(`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app. Every
+line of the listener explained, and the full message contract: `references/sdk-api.md`
+→ "`manaurum:ready` — the shell handshake".
 
 ## Step 3 — Use capabilities (from inside your container)
 
-Your container calls the gateway at `${MANAURUM_CORE_URL}/api/capability/<name>` (singular `capability`). **The platform injects the credential for you.** You never mint one, never bake one into the image, and never use your own `mna_*` developer token at runtime — that token is for `POST /api/dev/v2/deploy` from your laptop and nothing else.
+Your container calls `${MANAURUM_CORE_URL}/api/capability/<name>` (singular). **The
+platform injects the credential**; never use your own `mna_*` developer token at
+runtime. Headers:
 
-Headers:
-
-- `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` — an app-scoped `mna_*` runtime credential the platform mints fresh on every deploy and injects as an env var. It is scoped to this one app; it is not your developer token.
+- `Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}` — an app-scoped runtime credential minted fresh on every deploy.
 - `X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}`.
-- `X-Manaurum-App-Id` — the **UUID** (`MANAURUM_APP_ID`) for `os.kv.*` and `os.events.emit`; the slug is rejected there with `412 app_id_must_be_uuid`. The **slug** (your manifest's `app_id`) for everything else, and above all for `os.secrets.*` and `os.files.*`: those store under the value exactly as sent, `manaurum app set-secret` writes under the slug, and a UUID there is a successful call against an empty namespace. The env carries only the UUID, so the slug is a constant in your code — the starter's `src/capability.py` picks the form per capability.
-- `X-Manaurum-User-Context` — forward it **unchanged** for user-scoped capabilities (`os.drive.*`, `os.calendar.*`), exactly as your `auth: "user"` route received it. Omitting it is `403 user_context_required`. It is optional on app-scoped capabilities, where it only enriches the audit log.
+- `X-Manaurum-App-Id` — the **UUID** (`MANAURUM_APP_ID`) for `os.kv.*` and `os.events.emit` only (the slug there is `412 app_id_must_be_uuid`); the **slug** for everything else, above all `os.secrets.*` and `os.files.*`, where a UUID succeeds against an empty namespace. The env carries only the UUID, so the slug is a constant in your code — the starter's `src/capability.py` picks the form per capability.
+- `X-Manaurum-User-Context` — forward it **unchanged** for user-scoped capabilities (`os.drive.*`, `os.calendar.*`), as your `auth: "user"` route received it; omitting it is `403 user_context_required`.
 
-Body shape: a JSON object matching the capability's input schema (no wrapper). Read `references/capabilities-reference.md` for the canonical input/output for every capability.
+The body is the capability's input object, no wrapper. The contract, a worked example
+and every capability's input, output and errors: `references/capabilities-reference.md`.
 
-**Working with the user's Drive (Files app):** `os.files.*` is your app's PRIVATE scratch — the user never sees it. To put a document into the USER's file system, read a user-picked file, or work in a folder the user granted you, use the `os.drive.*` capabilities plus the browser-side `app.pickFromDrive()` picker — all consent-gated and requiring the forwarded `X-Manaurum-User-Context` header. Gateway contract in `references/capabilities-reference.md` § os.drive; the browser-side picker is in `references/sdk-api.md` § "Platform v2 — frontend SDK (`manaurum-v2.mjs`)".
+`os.files.*` is your app's PRIVATE storage — the user never sees it. To put a document
+into the user's Files, read a file they pick, or work in a folder they granted, use
+`os.drive.*` plus the browser-side `app.pickFromDrive()`.
 
-```javascript
-// inside your container — Node example
-const CORE = process.env.MANAURUM_CORE_URL;
-
-async function setKV(key, value) {
-  const resp = await fetch(`${CORE}/api/capability/os.kv.set`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.MANAURUM_RUNTIME_TOKEN}`,
-      'X-Manaurum-Tenant-Id': process.env.MANAURUM_TENANT_ID,
-      'X-Manaurum-App-Id':    process.env.MANAURUM_APP_ID,
-      'Content-Type':         'application/json',
-    },
-    body: JSON.stringify({ key, value }),
-  });
-  if (!resp.ok) throw new Error(`os.kv.set failed: ${resp.status}`);
-  return resp.json();  // { output: { ok: true }, correlation_id: "…" }
-}
-```
-
-Capabilities available today:
-
-| Capability | Purpose |
+| Capability | What to know |
 |---|---|
-| `os.kv.set` / `os.kv.get` | Per-app KV in Postgres (FORCE-RLS by tenant). No list, no delete. |
-| `os.tenant_config.get` | ⚠️ Reads one field (`prompt_extension`); everything else is `null`. Not tenant feature flags, not install config. Keep your own settings instead. |
+| `os.kv.set` / `os.kv.get` | Per-app KV. No list, no delete. |
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
-| `os.files.upload` / `.download` / `.delete` / `.list` | Your app's PRIVATE object storage (presigned URLs). `upload` **requires `size_hint`**, the exact byte length. |
-| `os.ai.complete` | Text completion. Leave out `provider` and `model` and it runs on the AI backend the workspace chose for your app (the company-funded model by default); name a `provider` to use the tenant's own key. The answer is `content` plus `tokens_used` — there is no `usage`. |
-| `os.ai.embed` | Embeddings (BYOK, `openai` / `gemini`; `provider` and `model` required). |
-| `os.ai.transcribe` | Speech-to-text (BYOK — needs the tenant's **OpenAI** key). ≤ 25 MB decoded audio. Pair with manifest `"permissions": ["microphone"]` to record in the shell iframe. |
-| `os.ai.image_submit` / `os.ai.image_poll` | Generate an image: submit, then poll. Needs the tenant's OpenAI key and the `platform.ai_image` flag. |
-| `os.ai.providers` | What AI this app can use here, before you spend a call. |
-| `os.ocr.extract` | Read a file you stored with `os.files.upload` (BYOK vision). Input is `file_key`. |
-| `os.notifications.send_to_user` | In-app, or email through the tenant's Resend. SMS does not work (`501 sms_unavailable`). |
-| `os.events.emit` | Publish an event. **No hosted app can receive events today.** |
-| `os.http.fetch` | External HTTP. Hosts must be in `manifest.runtime.egress_allowed_hosts`. Binary payloads via `body_base64` / `response_format: "base64"` (~5 MB each way). |
-| `os.compliance.audit_query` | The capability audit log — **every app's in the tenant** unless you pass `app_filter`. |
-| `os.apps.call` | Call one of four methods of two built-in apps. **Not** RPC between v2 apps; there is none. |
-| `os.drive.stage` / `.publish` / `.list` / `.read` / `.write` / `.delete` | The USER's file system (Files app). Write creates or overwrites (versioned); delete goes to Trash. **User-scoped — forward `X-Manaurum-User-Context`.** |
-| `os.calendar.list_events` / `os.calendar.create_event` | The user's calendar. **User-scoped — forward `X-Manaurum-User-Context`.** |
-| `os.locations.list` / `os.locations.get` | The tenant's sales points and warehouses, by id. |
-
-`os.apps.bulk_export` is registered but has no dataset, so it answers `404` to everything.
-See `references/capabilities-reference.md` for input/output schemas, error codes, and limits.
+| `os.files.upload` / `.download` / `.delete` / `.list` | `upload` **requires `size_hint`**, the exact byte length. |
+| `os.ai.complete`, `.embed`, `.transcribe`, `.image_submit`, `.image_poll`, `.providers`; `os.ocr.extract` | `complete` runs on the workspace's AI by default and answers `content` + `tokens_used`; the others need the tenant's own key. |
+| `os.notifications.send_to_user` | In-app or email. SMS does not work. |
+| `os.events.emit` | **No hosted app can receive events today.** |
+| `os.http.fetch` | External HTTP, to `egress_allowed_hosts` only. |
+| `os.drive.*`, `os.calendar.*` | The user's Files and calendar. **Forward `X-Manaurum-User-Context`.** |
+| `os.compliance.audit_query` | **Every app's** log in the tenant unless you pass `app_filter`. |
+| `os.apps.call` | Four methods of two built-in apps — **not** RPC between v2 apps; there is none. |
+| `os.tenant_config.get`, `os.locations.list` / `.get`, `os.apps.bulk_export` | ⚠️ `tenant_config` reads only `prompt_extension`; `bulk_export` answers `404` to everything. |
 
 ### Document it in the same edit that writes it
 
-Not a pass at the end: by then nobody remembers which `None` meant "absent" and which
-meant "we don't know", and the docstring records the signature instead of the contract.
-Python takes a Google-style docstring (summary line, the *why*, then only the `Args:` /
-`Returns:` / `Raises:` that carry information); browser JS takes JSDoc. Spend the words
-on what a reader cannot see — units, what an empty return means, which failure is normal,
-what a caller must not do. `item_id: The item id` is noise; a function with nothing
-non-obvious to say gets one summary line. The starter's `tests/test_documented.py` fails
-on any undocumented module, function or class under `src/`: keep it. And never anchor a
-test on comment or docstring text — slice on a declaration instead, or improving a
-sentence breaks the suite.
+Not a pass at the end. Python takes a Google-style docstring, browser JS takes JSDoc;
+spend the words on what a reader cannot see — units, what an empty return means, which
+failure is normal. The starter's `tests/test_documented.py` fails on any undocumented
+module, function or class under `src/`: keep it. Never anchor a test on comment or
+docstring text. The rest: `references/checks.md` → "Documenting code in the same edit
+that writes it".
 
 ## Step 3.5 — Check the UI before you deploy it (MANDATORY)
 
-**The last step of building an interface, and it is as mandatory as the
-handshake in Step 2.5 or `healthz` after a deploy.** Up to here you have read
-code, and nobody has *seen* the app. Design rules do not survive a build that is
-never looked at: the four failures that got a real app rejected — tab-bar
-navigation, sentences in badges, a blue button in every row, a light app in a
-dark desktop — were all obvious in the first screenshot and invisible in the
-diff. Most of them then shipped again in a second app a week later, by an agent
-that had read the rules.
+**As mandatory as the handshake.** What gets an app rejected is obvious in the first
+screenshot and invisible in the diff. Every part is explained in `references/checks.md`
+→ "Step 3.5 — Check the UI before you deploy it".
 
-**1. Run the linter. It is 200 lines and it takes a second.**
+**1. Run the linter.** Exit 0 or fix what it names, before any screenshot:
 
 ```bash
 python <plugin>/templates/check_ui.py my-app/src/static
 ```
 
-`check_ui.py` covers every rule above except rule 3 — a sentence in a badge is
-the one only a person can see — and a hover on something inert (rule 5's first
-half), including the three a screenshot cannot show
-either: a hex hidden inside a `var()` fallback whose token does not exist, a
-click target with no `is-interactive`, and appearance read off `e.data`
-instead of `e.data.payload`. It also fails a page root that caps its width and
-never centres it, which no screenshot at or under the cap can show, and the
-two halves of rule 4's accent budget it can read from source: an accent class
-(`btn-primary`, `btn-ghost`, `badge-accent`) handed out inside a loop, and
-more than four of them in one view. Exit 0 or fix what it names. Do this
-*before* the screenshots: it is cheaper, and half of what it finds would
-otherwise reach the owner rather than you.
-
-**2. Serve it with stubs.** `<plugin>/templates/preview.py` is a stdlib-only
-script (no install, no dependencies): it serves your static files, answers every
-`/api/*` call from a fixtures file, and adds a `/__shell` page that frames your
-app the way the desktop does — the shell's exact sandbox, a real `manaurum:init`
-with the appearance and accent you ask for, and three badges: one for
-`manaurum:ready`, one that says whether the appearance was actually *applied*,
-and one that measures whether your page is *centred* in the frame.
-Keep it **beside** the app directory, never inside it: everything inside is
-packed into the deploy.
+**2. Serve it with stubs**, from **beside** the app directory, never inside it
+(everything inside is deployed). `/__shell` frames your app the way the desktop does,
+with three badges: ready, appearance applied, layout centred.
 
 ```bash
 cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
@@ -563,265 +429,101 @@ cp <plugin>/templates/preview.py <plugin>/templates/preview-fixtures.json .
 python preview.py --app my-app/src/static
 ```
 
-Fixture paths match the way `runtime.api_routes` does — exact first, then the
-longest `/prefix/*` — so `/api/items/42` is reachable and the detail screen
-photographs with real content. A fixture value can also be an envelope,
-`{"status": 500}` or `{"delay_ms": 1500, "body": {…}}`, which is how you
-photograph the three states `design.md` asks you to distinguish: nothing yet,
-could not load, still loading.
-
-**3. Photograph both appearances.** Chrome or Edge, same flags (on Windows, the
-full path to `chrome.exe` and any fresh directory for the profile).
+**3. Photograph it** — light and dark, the wide window and the narrow one:
 
 ```bash
 chrome --headless=new --disable-gpu --hide-scrollbars \
   --user-data-dir="$(mktemp -d)" --virtual-time-budget=4000 \
   --window-size=1240,1000 --screenshot=light.png \
   "http://127.0.0.1:8765/__shell?appearance=light"
-
-# and again with ?appearance=dark → dark.png
+# again with ?appearance=dark → dark.png
+# --window-size=1920,1000 → wide.png          (the layout badge must say "centred")
+# ...&width=900 in the URL → narrow.png       (your smallest supported window)
+# ...?entry=/index.html%23item/42             (every other screen, by its fragment)
 ```
 
-A fresh `--user-data-dir` keeps the run independent of whatever browser profile
-is open; a locked profile is one of the ways this command exits without writing
-a file and without printing an error, which reads as "the page failed to
-render".
+To photograph a loading state, drop the flag `--virtual-time-budget` entirely — a
+shorter budget still waits for the fetches. For a narrow window use `&width=`, never a
+smaller `--window-size`: headless browsers floor the layout viewport at ~500px.
 
-**`--virtual-time-budget` waits for the fetches, and it cannot be shortened to
-catch a skeleton.** Chrome pauses virtual time while a request is in flight, so
-against a `{"delay_ms": 6000}` fixture a budget of 400ms and one of 1200ms both
-wait the full six seconds and photograph the *loaded* page (measured, Chrome
-141 `--headless=new`). To photograph a loading state, **drop the flag
-entirely** — then the shot happens at the load event, with the skeletons still
-up. The trade is that preview's own appearance check has not run yet at that
-moment, so take the theme evidence from one of the other screenshots.
+**4. Read the bar across the top of each picture** — a red pill is a failure however
+good the picture looks — then criticise the pictures honestly, out loud, against the
+seven rules and the `Never` table in `references/design.md`. Read the terminal too:
+`preview.py` logs every `/api/*` your UI called.
 
-Add `&accent=lavender` (or any of the nine) to check you are not hardcoding
-blue.
-
-**Photograph the wide window too — the first thing an owner does is drag the
-window wider.** Up to your `max-width` a centred and a left-glued page are
-pixel-identical, so no narrow shot can tell them apart; past it, a cap with no
-`margin-inline: auto` leaves the app on the left edge and dead space on the
-right. That shipped in four apps (MAN-2849) — and it was *in* the 1240 shot
-above, 216px of empty right margin that nobody read as a defect. So do not read
-it; the third badge measures it:
-
-```bash
-… --window-size=1920,1000 --screenshot=wide.png \
-  "http://127.0.0.1:8765/__shell?appearance=light"
-```
-
-`layout centred` is the pass. `layout OFF-CENTRE - 0px left, 216px right` is
-the fail, with both gaps in pixels. `layout fills …px` means the shot is not
-wider than your cap and proves nothing about centring — which is what the
-narrow shot below will always say.
-
-**And photograph the narrow window, because that is the one the contract is
-written for.** Add `&width=900` (or 760, or whatever your smallest supported
-window is): it sizes *your app's frame* inside a large browser window, so the
-headless viewport floor never applies.
-
-```bash
-… --window-size=1240,1000 --screenshot=narrow.png \
-  "http://127.0.0.1:8765/__shell?width=900&appearance=light"
-```
-
-Do not try to do this by shrinking the browser instead: both browsers floor
-their own layout viewport at ~500px, so `--window-size=390,800` still lays out
-at 500 and merely crops the PNG — a perfectly good phone layout photographs as
-broken (measured on Chrome and Edge, `--headless=new`). `&device=mobile` posts
-the mobile device flag, which is a different thing from geometry and worth
-combining with `&width=390`.
-
-**Headless cannot click, so the second screen is only reachable by URL.** A view
-behind a button is a view no screenshot ever sees. Each view gets its own
-fragment — `#customers`, `#item/42`, read on load and on `hashchange` — and you
-shoot it with `…/__shell?entry=/index.html%23item/42`. The starter's
-`index.html` ships this router; decide the fragments in Step 0, because
-retrofitting them after the app exists is exactly why this check gets skipped.
-
-**4. Read the bar across the top of each picture, then criticise the
-pictures honestly**, against the seven rules above and the `Never` table that
-opens `references/design.md` — out loud, in your reply. Besides the three
-badges, `preview.py` measures the first screen of the rendered app: how many
-elements are painted in the accent (red above four), whether one badge sits
-on more than half the rows of a list (red), and how far down the first list
-row starts. A red pill is a failure however good the picture looks. The linter
-has already taken the mechanical half; what is left is the half only a person
-(or you, looking) can see: is the hierarchy right, is the empty state saying
-something useful, would you show this to the person who asked for it. Also read
-the terminal: `preview.py` logs every `/api/*` your UI called, which is the
-cheapest way to find a route missing from `runtime.api_routes` before it 404s
-in production.
-
-**5. Answer the design review in writing, and put the answers in your
-reply.** Copy `<plugin>/templates/design-review.md` beside the app directory,
-not inside it. Looking at a screenshot does not work on its own: an agent
-that photographed its app, looked, and criticised it out loud against the
-list of prohibitions saw nothing wrong — every mistake the owner then named was
-in that picture, and none of them was a prohibition. The questions are not a
-list of prohibitions:
-
-1. What is the most important thing on this screen — and does it *look* the
-   most important?
-2. How many accent-coloured things are on it? (The bar says. Over four, redo.)
-3. Cover the metadata with your hand. Does each list row still make sense?
-4. How much of the first screen do the filters and controls take before the
-   first row of data?
-5. Is this a screen for reading, for entering, or for sorting through a list —
-   and is it laid out as that kind (Step 0, item 6)?
-
-The fifth is the one that catches the expensive mistake: a reader built as a
-list-triage screen passes every rule. Answer per screen, fix what the answers
-name, re-shoot, and only then deploy — name what is wrong and fix it before
-the deploy, not after the rejection.
+**5. Answer the design review in writing, and put the answers in your reply.** Copy
+`<plugin>/templates/design-review.md` beside the app directory. Answer per screen, fix
+what the answers name, re-shoot, and only then deploy.
 
 ## Step 3.6 — Check the app against its manifest (MANDATORY)
 
-**The last step before the deploy, and the cheapest one on this page.** Step
-3.5 looked at the interface; this looks at the contract. Everything it checks
-is described somewhere above in prose, and every one of them otherwise fails
-*after* the deploy, in a way that does not look like its cause.
+**The last step before the deploy, and the cheapest.** Pass the directory that holds
+`manifest.json` — the same directory the deploy packs:
 
 ```bash
 python <plugin>/templates/check_app.py my-app
 ```
 
-Pass the directory that holds `manifest.json` — the same directory the deploy
-packs. Exit 0 or fix what it names.
-
-| It finds | What you would have seen instead |
-|---|---|
-| an `/api/*` route no `runtime.api_routes` rule covers — including the `/api/x/*`-does-not-cover-`/api/x` case | `404 route_not_declared` at the gateway. Your handler never runs, and your logs are silent, so it reads as a backend bug. |
-| a declared route nothing serves | the manifest describing an app you did not build |
-| an `/agent/*` handler with no user-context verification | nothing. An endpoint any other app's container can call, indefinitely. |
-| `runtime.port` disagreeing with what the container binds (and with `EXPOSE`) | a deploy that fails its readiness probe, a build and push later |
-| `frontend.entry_point` naming a file that is not there | the window opens on a 404 |
-| any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
-| a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
-| `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
-| `migrations/`: a generated column on one of the common built-ins Postgres does not accept there (`array_to_string`, `concat`, one-argument `to_tsvector`, `now()`, `random()`) — not every refusal: a cast that depends on a setting, such as `::date` on a `timestamptz`, still gets through | a file the deploy's validator passes and Postgres then refuses, for every tenant |
-| a session `SET` (`SET search_path`) inside an asyncpg `create_pool(init=...)` | an app that works on the platform and fails on the second request on your own machine |
-| code that reads `DATABASE_URL` while the manifest says `"data": {"none": true}` | a green deploy and a crash on the first query — that mode injects no database |
-| an invented key in `runtime` (`"prot": 8000`) | a `422` at deploy, after the pack and the upload — the linter names it offline, with the keys you could have meant |
-| an `/agent/*` path listed in `api_routes` | nothing. It configures nothing while looking exactly like it did. |
-| a relative `frontend.icon` (`icons/app.svg`) | that literal string painted into the launcher tile |
-| an `mna_*`/`mnu_*` token literal anywhere in the directory | your deploy (or MCP and Drive) rights handed to every future reader of the image |
-| `metadata.description` still starting with `TODO` | what the tenant admin reads on the install screen |
-
-It also prints a **note** — not a failure — when the app has no tests at all.
-
-**What it cannot see.** Routes and `/agent/*` handlers are read out of
-**Python** decorators with `ast` — that is the starter's stack, and importing
-your app to ask its router would need its dependencies installed. In any other
-language it says so and skips those two rules; the manifest, port, capability,
-`.env` and migration rules still run, because those read files rather than
-code. A capability name assembled at run time (`f"os.kv.{verb}"`) is invisible
-to it for the same reason.
-
-And **write your own tests** — the starter ships a suite that covers the
-wiring rather than the pieces (remove an auth dependency from a route and a
-test goes red), and it is there to be copied, not just to be run. The one test
-worth writing first is the one this step automates: your routes against your
-manifest.
+Exit 0 or fix what it names. It finds what deploys green and then fails as something
+that does not look like its cause — an undeclared `/api/*` route, a port the container
+does not bind, an `/agent/*` handler with no user-context check, a `.env*` inside the
+directory, a capability called but not declared, a migration Postgres will refuse, a
+token literal. The full table, and what it cannot see (non-Python routes):
+`references/checks.md` → "Step 3.6 — Check the app against its manifest". And write
+your own tests — the first one worth writing is your routes against your manifest.
 
 ## Step 4 — Deploy
 
-You need a `mna_*` token. Get it via the desktop UI: **Dev Hub → Credentials → Create token**. Shown once, save it to `.env.manaurum` **one level above the app directory** (see "Required project structure"):
+You need a `mna_*` token: **Dev Hub → Credentials → Create token**. Shown once; save it
+as `MANAURUM_V2_TOKEN=mna_<keyid>_<secret>` in `.env.manaurum` **one level above the app
+directory** ("Required project structure"). A **deploy-time** credential only: your
+container never sees it and must never contain it — at runtime it uses the injected
+`MANAURUM_RUNTIME_TOKEN` (Step 3).
 
-```
-MANAURUM_V2_TOKEN=mna_<keyid>_<secret>
-```
-
-This is a **deploy-time** credential only. Your container never sees it and must never contain it — at runtime it uses the injected `MANAURUM_RUNTIME_TOKEN` (Step 3).
-
-Then follow the `manaurum-deploy` skill: it has the script (`manaurum app deploy`, or one
-`POST /api/dev/v2/deploy` with the build context, then a poll), every synchronous and
-asynchronous refusal, and rollback. Three things to carry from here:
+Then follow the `manaurum-deploy` skill: the script, every refusal, and rollback. Three
+things to carry from here:
 
 - **Echo the slug before you trust a green deploy.** Build the archive in a per-run
-  `mktemp -d`, never a fixed `/tmp` name: on 2026-09-08 two sessions collided on one, and
-  one shipped the other's archive and reported `activated` for an app it never touched
-  (MAN-2456).
+  `mktemp -d`, never a fixed `/tmp` name: two sessions once collided on one, and one
+  reported `activated` for an app it never touched (MAN-2456).
 - **The POST is asynchronous.** `202` with `status: "pending"` means the credential,
-  manifest, slug, ownership and archive passed; build, push, migrations and the probe run on
-  a job you poll until `succeeded` or `failed`.
+  manifest, slug, ownership and archive passed; build, push, migrations and the probe run
+  on a job you poll until `succeeded` or `failed`.
 - **`succeeded` means the new container answered the readiness probe** on `runtime.port`
-  and `runtime.health_path` (default `/healthz`). A failed migration in any tenant keeps the
-  version from going live, and a failed probe rolls the service back; both say why in
+  and `runtime.health_path` (default `/healthz`). A failed migration in any tenant keeps
+  the version from going live, and a failed probe rolls the service back; both say why in
   `error`. Finish by opening the public URL anyway, which also exercises the gateway and TLS.
 
 ## Step 5 — Update + rollback
 
-- **New version**: bump `manifest.json.version` (semver) on **every** deploy — a label is used up by the first deploy that pushes it, even one that then fails (`409 version_already_published`). The platform updates the swarm service in place.
-- **Rollback**: `POST /api/dev/v2/apps/<slug>/rollback` with `{"version_label": "1.0.0"}` (required). It re-points the app at that version's image; it does not revert the schema, probe the container, or re-sync the Assistant's tools.
-- **List versions**: `GET /api/dev/v2/apps/<slug>/versions`.
-- **Inspect**: `GET /api/dev/v2/apps/<slug>`.
-- **Logs**: `GET /api/dev/v2/apps/<slug>/logs?tail=200` — the container's last lines (max 1000), not redacted.
+- **New version**: bump `manifest.json.version` on **every** deploy — a label is used up by the first deploy that pushes it, even one that then fails (`409 version_already_published`).
+- **Rollback**: `POST /api/dev/v2/apps/<slug>/rollback` with `{"version_label": "1.0.0"}` (required). It does not revert the schema, probe the container, or re-sync the Assistant's tools.
+- **Versions / inspect / logs**: `GET /api/dev/v2/apps/<slug>/versions`, `GET /api/dev/v2/apps/<slug>`, `GET /api/dev/v2/apps/<slug>/logs?tail=200` (max 1000, not redacted).
 
-Details, errors and the delete-and-redeploy trap: `manaurum-deploy/SKILL.md`.
-
-## Common rejection codes (v2 deploy)
-
-| HTTP | Meaning | Fix |
-|---|---|---|
-| 401 `invalid_credential` | Bad/expired/revoked `mna_*`, or not an `mna_*` token. | Mint a fresh one in Dev Hub. |
-| 412 `app_id_must_be_uuid` | `os.kv.*` or `os.events.emit` was called with the slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID` for those two families only. |
-| 422 `manifest_validation_failed` (from the POST) | Manifest fails the v2 schema, names a reserved slug, or declares a write-named agent tool `is_write: false`. | Read `errors[]`; fix and retry. |
-| 409 `version_already_published` (from the POST) | That `version` was already deployed, including a deploy that failed after its push. | Bump `version`. |
-| job `failed`: `migration validation failed (…)` | Migration SQL contains destructive DDL and `migration.breaking` is not set, or a forbidden statement. | Destructive: set `migration.breaking: true` (deliberate) or rewrite as additive. Forbidden (`DO`, `COPY`, `SET`, …): rewrite; no flag unlocks it. |
-| 412 `egress_not_declared` / `host_not_in_allow_list` | `os.http.fetch` with no egress hosts declared at all / to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
-| 404 `route_not_declared` | An `/api/*` path is missing from `runtime.api_routes`. Default-deny — the container never saw the request. | Declare the path. Remember `/api/x/*` does not cover `/api/x`. |
-| 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
-| 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
-| job `failed` at `readiness_failed` | Nothing answered on `runtime.port` (or `health_path` returned 5xx); the service was rolled back. | Read `result.log_tail`. Bind `0.0.0.0` on port 80, or set `runtime.port` to the port you actually listen on. |
-| job `failed`: `docker build failed` | Image build failed. | Read `result.log_tail`. Common: `COPY` source doesn't exist, dependency install failed. |
-
-## Tenant context inside the container
-
-The platform injects `MANAURUM_TENANT_ID`, `MANAURUM_APP_ID`, `MANAURUM_VERSION`,
-`MANAURUM_TARGET_SCHEMA`, `MANAURUM_RUNTIME_TOKEN`, `MANAURUM_CORE_URL`,
-`CORE_USER_CONTEXT_PUBLIC_KEY_PEM` and, in managed data mode only, `DATABASE_URL` — what each
-is for, and the two names it never injects (`MANAURUM_V2_TOKEN`, `MANAURUM_BROKER_URL`), are
-in `references/v2-platform.md`, section 2 (Runtime modes), under `hosted`. The ones people get wrong: call
-capabilities with `MANAURUM_RUNTIME_TOKEN`, never your own deploy token; send
-`MANAURUM_APP_ID` as `X-Manaurum-App-Id` only to `os.kv.*` and `os.events.emit` (Step 3); and
-use `MANAURUM_TENANT_ID` for display, never as a security filter.
+Details, errors and the delete-and-redeploy trap: `manaurum-deploy/SKILL.md`. The codes
+you meet when a check was skipped: `references/checks.md` → "When a check was skipped:
+the common codes".
 
 ## What NOT to do
 
-- **Don't bake your developer `mna_*` token into the image, and don't pass one at deploy.** You don't need to: the platform injects `MANAURUM_RUNTIME_TOKEN`. Your own token is a laptop credential for `POST /api/dev/v2/deploy`; an image containing it hands every future reader your deploy rights. (`os.secrets.get` is not an alternative here — it is itself a capability call that needs the runtime token first.)
-- **Don't write to host paths.** Volumes aren't mounted into v2 apps. Use `os.files.upload` (R2) for any persistent files.
-- **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql`, which the pipeline runs once per (app, tenant).
-- **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failed attempt raise, so the next request tries again. Never catch the failure into a "no database" mode: that app serves empty 200s behind a green `/healthz` until someone restarts it. The same goes for a secret or anything else you fetch from Core at startup. The pattern is ten lines, in `references/v2-platform.md` → "Your database can come up after your container".
-- **Don't `SET search_path` in a pool's `init=`.** asyncpg resets the session every time a connection goes back to the pool, so the setting lasts one request. Pass it in `server_settings` — `templates/recipes/postgres/db.py`, and `references/v2-platform.md` → "Connecting from the container" for why.
-- **Route outbound HTTP through `os.http.fetch`.** `egress_allowed_hosts` is enforced there and only there; the container's own connections are not filtered, which is not a licence to use them. Declare every third-party host.
-- **Don't try to deploy with an `mnu_*` token.** An `mnu_*` is a tenant token for MCP clients and Drive upload, not a deploy credential. Deploys use `mna_*` exclusively.
-- **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway level — you'd get 403 anyway.
-- **Don't ship a tab bar, a sidebar, a sentence in a badge, a primary button per row, a hex in the markup (a `var()` fallback counts), a hover on something inert, or `alert()`/`confirm()`/`prompt()`.** Those are the seven rules above, and they are the reason two apps that passed every technical check on this page were rejected on sight. `templates/check_ui.py` in Step 3.5 fails on all of them but the sentence in a badge and the hover on something inert, so for five of the seven this is not a matter of remembering.
-- **Don't deploy without running `templates/check_app.py` (Step 3.6).** An `/api/*` route the manifest does not declare, a port that disagrees with the `CMD`, an `/agent/*` handler with no user-context check, a `.env` inside the app directory, a capability you call but never declared — all of them deploy green, and each one first shows up as something that does not look like its cause. It takes a second and it is the cheapest step on this page.
+- **Don't bake your developer `mna_*` token into the image, and don't pass one at deploy.** The platform injects `MANAURUM_RUNTIME_TOKEN`. Don't deploy with an `mnu_*` either — it is a tenant token for MCP and Drive, not a deploy credential.
+- **Don't write to host paths.** No volumes are mounted; persistent files go through `os.files.upload`.
+- **Don't run DDL at runtime.** Your `DATABASE_URL` role has no CREATE. Schema changes go in `migrations/*.sql` (`references/v2-platform.md` §7).
+- **Don't open the database once at boot.** Postgres can come up after your container. Open the pool on first use and let a failure raise, so the next request retries — never catch it into a "no database" mode that serves empty 200s behind a green `/healthz`. Same for a secret fetched at startup: `references/v2-platform.md` → "Your database can come up after your container".
+- **Don't `SET search_path` in a pool's `init=`.** It lasts one request; pass it in `server_settings` (`templates/recipes/postgres/db.py`).
+- **Route outbound HTTP through `os.http.fetch`.** `egress_allowed_hosts` is enforced there and only there; declare every third-party host.
+- **Don't try to talk to other tenants.** Capabilities are tenant-scoped at the gateway — you'd get a 403.
+- **Don't break the seven rules, or skip Steps 3.5 and 3.6.** Everything they catch deploys green.
 
 ## What will bite you
 
-Everything here shares one property: it works when you open `https://<slug>.apps.manaurum.com` in a tab, and breaks inside the desktop — or breaks silently with a green deploy. Testing the standalone URL is not evidence.
+All of it works when you open `https://<slug>.apps.manaurum.com` in a tab, and breaks
+inside the desktop — or breaks silently behind a green deploy. Testing the standalone
+URL is not evidence.
 
-**Your app owns its scroller — the window cannot scroll it for you.** The window's content area is `overflow: auto`, which scrolls a *builtin* app. Yours is an iframe at `height: 100%` of that box, never taller than it, so the shell's scrollbar never appears: if nothing in your document scrolls, the bottom of every long view is unreachable. A fixed shell needs a flex-column root, `flex: 1` **and** `overflow: auto` on the element holding the content, and `min-height: 0` in between — `overflow: auto` alone does nothing, because a block with auto height never overflows. Rule and fix: `references/design.md` → "Window rules". **Before you deploy, open the app at the smallest window you support with enough data to overflow it, and watch the console** — since `manaurum-v2.mjs` 2.3.0 the SDK console-errors `content is clipped and nothing scrolls` and names the element.
-
-**No native dialogs.** The shell's iframe sandbox is `allow-scripts allow-forms allow-same-origin`. `allow-modals` is not granted anywhere on the platform, so `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` prompts are dead — Chrome returns `undefined` / `false` / `null` and logs a warning. A `confirm()`-gated delete button becomes a button that does nothing. Use an in-app modal for confirm, an in-app input for prompt, a toast for alert.
-
-**Don't set your own framing headers.** Core force-assigns the CSP `frame-ancestors` and deletes `X-Frame-Options` on every `/apps/*` response, so setting either is pointless. On a page it serves (a `GET` answered `200 text/html`) it also rewrites `script-src` / `script-src-elem` (adding a nonce for the session-renewal script it injects) and `frame-src`, in headers and `<meta>` tags alike, and serves it with `Cache-Control: no-store`. Everything else in your CSP is kept, so a `connect-src 'self'` that forgets your API origin will still break your app inside the shell.
-
-**`frontend.icon` takes an emoji, a full URL, or an absolute `/api/catalog/media/...` path.** A relative path like `icons/app.svg` is not resolved — it renders as that literal string in the tile. Omit the field entirely and you get a clean generic placeholder, which is better than a broken one.
-
-**Keep `.env*` out of the app directory.** The packager excludes only the names listed in "The token file lives one level up" above — not `.env*`. Anything else you don't want in the image stays out of your Dockerfile's `COPY` list; a `.dockerignore` only affects a local `docker build`.
-
-**No downloads, no new tabs, no clipboard writes.** The sandbox has no `allow-downloads` and no `allow-popups`, and the frame's `allow` delegates only `microphone` and `camera`, and those only when `permissions[]` asks. Inside the desktop, then:
-
-- a download — `<a download>`, a blob URL, a `Content-Disposition: attachment` response — does nothing. Put the file into the person's Files with `os.drive.publish` (`references/capabilities-reference.md` → "`os.drive.publish` — publish the staged artefact into the user's Drive") and tell them where it went.
-- `target="_blank"` and `window.open()` do nothing, and there is no shell message that opens a URL. Show the link as text the person can select.
-- `navigator.clipboard.writeText()` rejects. Show the value in a read-only field that selects itself on focus, so Ctrl+C works.
-
-All three work on the standalone URL, which is how they ship.
-
-**A capability in your manifest is not a capability you may call.** Grants are enforced per-install ahead of dispatch; an empty grant list is a deny, not a pass. Adding a capability and redeploying still 403s until the tenant's install grants are extended.
+- **Your app owns its scroller.** The window cannot scroll an iframe app. A fixed shell needs a flex-column root, `flex: 1` **and** `overflow: auto` on the content, and `min-height: 0` in between. Before you deploy, open the smallest window you support with enough data to overflow it and watch the console: the SDK names a clipped element. `references/design.md` → "Window rules".
+- **No native dialogs** — `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` are dead in the sandbox. Use an in-app modal, input or toast.
+- **No downloads, no new tabs, no clipboard writes.** Put a file into the person's Files with `os.drive.publish` and say where it went; show a link as selectable text; show a value in a read-only field that selects itself on focus. Details: `references/design.md` → "Window rules".
+- **Don't set your own framing headers.** Core sets `frame-ancestors` and rewrites `script-src` and `frame-src`; the rest of your CSP is kept, so a `connect-src` that forgets your API origin still breaks the app. `references/v2-platform.md` → "What else the gateway answers".
+- **A relative `frontend.icon`** renders as literal text in the tile (Step 1), and **a `.env*` inside the app directory** is deployed ("Required project structure").
+- **A capability in your manifest is not a capability you may call.** Grants are enforced per install; an empty grant list denies everything, and a redeploy still 403s until the tenant's install grants are extended.

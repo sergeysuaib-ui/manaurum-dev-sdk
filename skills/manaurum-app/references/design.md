@@ -4,7 +4,9 @@
 
 Each row is a rule an app has shipped without at least once — four of them in a
 single app, whose interface was rejected on sight while every technical check
-passed. If you read nothing else on this page, read the table.
+passed, and then most of them again in a second app a week later. Copying
+`app.css` enforces none of them, because they are decisions you make in the
+markup. If you read nothing else on this page, read the table.
 
 | Never | Why |
 |---|---|
@@ -52,7 +54,8 @@ invents its own layout has done the job backwards.
 The starter's `index.html` shows a form and a short record list in use against
 real data; `<plugin>/templates/patterns/index.html` shows the screens it does
 not — a list of texts with filters, one text to read, a list of records to
-sort through. Read them with `app.css`.
+sort through. Read them with `app.css`. An app that works and looks
+unfinished is one a user abandons.
 
 ## Appearance and accent — the one thing to get right
 
@@ -167,12 +170,35 @@ touch, and the fallback is what you will see. `check_ui.py` fails on it.
   frame — it ports perfectly, and the scroller it was paired with does not.
   That is how this ships. The SDK measures it at run time and console-errors
   with the offending element; `init({ layoutCheck: false })` if you clip on
-  purpose.
+  purpose. **Before you deploy, open the app at the smallest window you
+  support with enough data to overflow it, and watch the console** — since
+  `manaurum-v2.mjs` 2.3.0 the SDK console-errors `content is clipped and
+  nothing scrolls` and names the element.
 
-- **No native dialogs.** The shell's iframe sandbox has no `allow-modals`, so
-  `alert()` / `confirm()` / `prompt()` are dead inside the desktop — and they
-  work on the standalone URL, so "it worked in my browser" proves nothing. A
-  `confirm()`-gated delete button becomes a button that does nothing.
+- **No native dialogs.** The shell's iframe sandbox is `allow-scripts
+  allow-forms allow-same-origin`, and `allow-modals` is not granted anywhere on
+  the platform, so `alert()`, `confirm()`, `prompt()`, `window.print()` and
+  `beforeunload` prompts are dead inside the desktop — Chrome returns
+  `undefined` / `false` / `null` and logs a warning — and they work on the
+  standalone URL, so "it worked in my browser" proves nothing. A
+  `confirm()`-gated delete button becomes a button that does nothing. Use an
+  in-app modal for confirm, an in-app input for prompt, a toast for alert.
+
+- **No downloads, no new tabs, no clipboard writes.** The sandbox has no
+  `allow-downloads` and no `allow-popups`, and the frame's `allow` delegates
+  only `microphone` and `camera`, and those only when `permissions[]` asks.
+  Inside the desktop, then:
+  - a download — `<a download>`, a blob URL, a `Content-Disposition:
+    attachment` response — does nothing. Put the file into the person's Files
+    with `os.drive.publish` (`capabilities-reference.md` → "`os.drive.publish`
+    — publish the staged artefact into the user's Drive") and tell them where
+    it went.
+  - `target="_blank"` and `window.open()` do nothing, and there is no shell
+    message that opens a URL. Show the link as text the person can select.
+  - `navigator.clipboard.writeText()` rejects. Show the value in a read-only
+    field that selects itself on focus, so Ctrl+C works.
+
+  All three work on the standalone URL, which is how they ship.
 
 ## What kind of screen is it
 
