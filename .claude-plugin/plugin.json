@@ -1,7 +1,7 @@
 {
   "name": "manaurum-dev-sdk",
   "description": "Build, test, and deploy apps for ManAurum OS on Platform v2 (containerized hosted apps with a capability gateway). Covers manifest authoring, Dockerfile patterns, capability use, the deploy API, and rollback.",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "author": {
     "name": "ManAurum OS"
   }

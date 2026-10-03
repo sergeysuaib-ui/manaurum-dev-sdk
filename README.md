@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.13.0.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.14.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -190,16 +190,25 @@ parts inlined. Reading one real app beats reading four pages about apps.
   `tests/`. Apps grow by adding surfaces, not by growing one file. It is **not** identical
   to `manaurum app init` output, and it stays here until a CLI release ships the same
   scaffold (MAN-1385).
+* `templates/patterns/index.html` — the two kinds of screen the starter does not show:
+  a list of texts with filter chips, one text on its own page (`.reader`, `.prose`), and
+  a list of records to sort through. The starter is a form and a short record list; an
+  app people *read* copied from it looks like a ledger, and that is how one was rejected.
+  Open it framed with `python templates/preview.py --app templates`.
+* `templates/design-review.md` — five questions to answer in writing about each screen
+  before a deploy. A screenshot looked at against a list of prohibitions found nothing on
+  an app its owner rejected on sight; the questions ask what the owner asks.
 * `templates/check_ui.py` — the UI contract, mechanically. It reads your static files and
   fails on what a green deploy hides: a hex hidden in a `var()` fallback whose token does
   not exist, `style=`, a `tab`/`sidebar` class, `<button class="row">`, a click target
   with no `is-interactive`, `alert`/`confirm`/`prompt`, more than one primary button in a
   view, a missing `manaurum:ready`, appearance read off `e.data` instead of
-  `e.data.payload`. Comments are stripped first, so a comment explaining a rule is not a
+  `e.data.payload`, an accent class handed out inside a render loop, more than four
+  accent classes in one view. Comments are stripped first, so a comment explaining a rule is not a
   violation of it. `python check_ui.py src/static`, exit 1 on findings. Two apps have now
   been rejected on sight for things on this list; a rule a program checks is the only kind
-  that survives a hurry. CI runs it against the starter, so the reference app is held to
-  the reference linter.
+  that survives a hurry. CI runs it against the starter and the patterns page, so the
+  reference screens are held to the reference linter.
 * `templates/check_app.py` — the same idea for the backend, run on the directory the
   deploy packs: an `/api/*` route no `runtime.api_routes` rule covers, matched the way
   the gateway matches (a trailing `/*` covers what is below, everything else is literal),
@@ -247,13 +256,16 @@ parts inlined. Reading one real app beats reading four pages about apps.
   a `Summary:` line — one plain sentence the team's release announcement quotes;
   `linter_mutations.py` breaks the starter once per
   rule and demands that each linter goes red; `smoke_tools.py` starts `preview.py` and
-  the version hook and checks they still behave. All stdlib, all runnable locally.
+  the version hook and checks they still behave, including preview's first-screen meter
+  in a real headless Chrome. All stdlib, all runnable locally.
 * `templates/preview.py` + `preview-fixtures.json` — look at the app before you deploy
   it. A stdlib-only server that serves your static files, stubs every `/api/*` from the
   fixtures file, and frames the page the way the desktop shell does: the shell's exact
-  sandbox, a real `manaurum:init` with the appearance and accent you ask for, and two
+  sandbox, a real `manaurum:init` with the appearance and accent you ask for, and three
   badges — one for `manaurum:ready`, one saying whether the appearance was actually
-  applied. Fixtures match like `runtime.api_routes` does (`/api/items/*`), a fixture can
+  applied, one saying whether the page is centred — plus three measurements of the first
+  screen: how many elements are painted in the accent (red above four), whether one badge
+  sits on most rows of a list (red), and how far down the first list row starts. Fixtures match like `runtime.api_routes` does (`/api/items/*`), a fixture can
   describe a failure or a delay (`{"status": 500}`, `{"delay_ms": 1500}`), and `?width=`
   sizes the app's frame so the narrow window the design contract is written for can be
   photographed honestly. Keep it *beside* the app directory — everything inside is

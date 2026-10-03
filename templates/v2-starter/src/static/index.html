@@ -202,10 +202,14 @@
       <p class="status status-error" id="me-error" hidden></p>
     </section>
 
-    <!-- LIST + ROWS + BADGES, with a real EMPTY STATE. `granted_capabilities`
+    <!-- LIST + ROWS, with a real EMPTY STATE. `granted_capabilities`
          is on the init payload but is NOT exposed by the v2 SDK, so this reads
          it from the raw message. It is the fastest way to see why a capability
-         call is coming back 403 capability_not_granted. -->
+         call is coming back 403 capability_not_granted.
+
+         No badge on these rows, on purpose: every row here is granted, and a
+         badge on every row marks nothing (design.md -> "A badge is a word, and
+         it is rare"). The card hint already says it. -->
     <section class="card card-flush">
       <div class="card-head">
         <h2 class="card-title">Granted capabilities</h2>
@@ -390,10 +394,7 @@
       sub.className = 'row-sub';
       sub.textContent = 'granted on this install';
       main.append(title, sub);
-      const badge = document.createElement('span');
-      badge.className = 'badge badge-success';
-      badge.textContent = 'granted';
-      li.append(main, badge);
+      li.append(main);
       list.append(li);
     }
   }
