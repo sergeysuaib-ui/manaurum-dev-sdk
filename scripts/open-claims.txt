@@ -26,4 +26,3 @@ MAN-2199  In Progress  2026-10-02  An app id with no install row in the calling 
 MAN-1439  In Progress  2026-10-03  A Codex / ChatGPT install in a fresh chat is not yet verified end to end; README says so.
 MAN-3235  Backlog      2026-10-02  The published CLI (cli-v0.3.0) refuses auth "optional"; v2-platform.md says deploy with --skip-preflight or the API until a release knows it.
 MAN-3199  Backlog      2026-10-02  No endpoint reports which tenant an mna_* token is bound to; manaurum-deploy and v2-platform.md say so.
-MAN-3244  Backlog      2026-10-03  Core does not carry the person's language (user_profiles.preferred_language) into user_context, the person pass or Assistant /agent calls; sdk-api.md says an app's server, the Assistant and a standalone tab cannot learn it.

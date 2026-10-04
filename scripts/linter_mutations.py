@@ -1617,6 +1617,11 @@ def no_workspace_id_in_the_token(repo: Path) -> None:
     append(repo, README, "The user_context token does not carry a workspace_id.")
 
 
+def the_server_cannot_learn_the_language(repo: Path) -> None:
+    append(repo, README, "Your server and the Assistant's calls cannot learn the language "
+                         "the person chose.")
+
+
 def an_error_code_core_does_not_write(repo: Path) -> None:
     append(repo, README, "A second deploy of the slug answers `409 slug_gone_forever`.")
 
@@ -1774,6 +1779,8 @@ REPO_MUTATIONS = [
      "no `RUNTIME_KEYS = {...}` to hold"),
     ("repo: no workspace_id in the token", no_workspace_id_in_the_token,
      "mints user_context with workspace_id"),
+    ("repo: the server said to have no language", the_server_cannot_learn_the_language,
+     "carry the person's language as locale / dir"),
     ("repo: an error code Core does not write", an_error_code_core_does_not_write,
      "`slug_gone_forever` is not an error code Core writes"),
     ("repo-green: a code built from a prefix", a_code_built_from_a_prefix, None),

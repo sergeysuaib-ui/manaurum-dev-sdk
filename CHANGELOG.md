@@ -1,3 +1,48 @@
+# 3.17.0 - an app's server knows the person's language too
+
+Summary: An app's server and the Assistant's requests now know which language the person picked in ManAurum, so emails, replies and exports can be written in it; the starter shows how.
+
+### Why
+
+3.16.0 taught the page to follow the person's language and said, correctly at the time,
+that nothing outside the window could learn it (MAN-3244). Core shipped MAN-3244 in PR
+#2341 (merged 2026-10-03): every `user_context` it mints - the gateway's on `user` and
+`optional` routes, and the Assistant's call to `/agent/<name>` - now carries optional
+`locale` (`en` | `ru` | `he`) and `dir` (`ltr` | `rtl`) claims from
+`user_profiles.preferred_language`, and the person pass carries the same pair. Both are
+absent when the person made no explicit choice or Core could not read it; Core reads
+only a supported language with its own direction, and never refuses a token over the
+pair. Core caches the value for 60 s, so a switch reaches a server within a minute. The
+SDK still said the server could not learn it, and the starter's verifier dropped the
+claims.
+
+### What changed
+
+* **Starter `src/auth.py`.** `UserContextClaims` and `PersonClaims` gain `locale` and
+  `dir` (`None` when absent), read by `locale_pair()` exactly as Core's
+  `read_locale_claims` reads them (`user_context_jwt.py:84`, `:102-113`): a supported
+  language with its own direction, else both `None`, never an error. One difference,
+  on purpose: Core's copy raises `KeyError` for a signed token whose unknown locale has
+  no `dir` (Core never mints one); this one returns absent. New `server_language(request,
+  claims)` picks the language for text the server writes: the claim, then the first
+  en / ru / he in `Accept-Language`, then English.
+* **Starter `GET /api/me`** returns `locale`, `dir` and `language`, so a standalone tab
+  can learn the ManAurum choice; the page inside the window keeps following
+  `manaurum:locale-change`, which is live.
+* **Starter tests.** Each language read from the token; nine bad pairs (wrong
+  direction, unknown or upper-case language, no `dir`, a number, nulls) accepted with
+  no language; a token without the claims still verifies; the person pass carries the
+  pair; `server_language` falls back in order; `/api/me` returns all three.
+* **Docs.** `sdk-api.md` "The person's language" now says where the server gets it,
+  when it is absent, that it can trail a switch by up to a minute, that the Assistant's
+  calls carry no `Accept-Language`, and that an `anonymous` route still has only
+  `Accept-Language`. `v2-platform.md` lists the optional claims in the verification
+  steps, on the person pass and in "Names and roles". `SKILL.md` Step 2.5 points to the
+  token instead of to what the server could not learn.
+* **`check_repo.py`** treats "cannot learn the language" and "language ... not in the
+  user_context" as a stale fact, with a red mutation in `linter_mutations.py`; the
+  MAN-3244 line leaves `scripts/open-claims.txt`.
+
 # 3.16.0 - apps speak the language the person chose, and switch when it changes
 
 Summary: Apps built with the SDK now use the language the person picked in ManAurum (English, Russian or Hebrew) and switch the moment it changes; Hebrew screens read right to left.

@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.16.0.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.17.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -370,8 +370,8 @@ rather than retyping this one. Four things are non-negotiable:
    init and on every `manaurum:locale-change`, and use logical CSS (`margin-inline-start`,
    never `margin-left`) so Hebrew mirrors — `check_ui.py` fails on all three. Write UI
    strings for en, ru and he, re-render on a switch, and format numbers and dates with
-   `Intl`, as the starter does. What your server cannot learn:
-   `references/sdk-api.md` → "The person's language".
+   `Intl`, as the starter does. Your server reads the same choice from the token
+   (`claims.locale`): `references/sdk-api.md` → "The person's language".
 
 postMessage is for this handshake and window framing only: never send the v1 data verbs
 (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app. Every

@@ -48,6 +48,12 @@ class UserContextClaims:
     Assistant's dispatch omits ``workspace_id`` when it has none, so it can
     be empty.
 
+    ``locale`` (``"en"`` | ``"ru"`` | ``"he"``) and ``dir`` (``"ltr"`` |
+    ``"rtl"``) are the language the person picked in ManAurum, on routes
+    and on the Assistant's calls alike (Core MAN-3244). Both are ``None``
+    when they made no explicit choice: pick the language with
+    :func:`server_language` rather than reading them raw.
+
     ``token`` is the raw JWT, kept so a handler can forward it to the
     capability gateway (``call_capability(..., user_context=claims.token)``).
     It expires 60 seconds after the gateway minted it: use it inside the
@@ -60,6 +66,64 @@ class UserContextClaims:
     app_version: str
     workspace_id: str = ""
     token: str = ""
+    locale: str | None = None
+    dir: str | None = None
+
+
+# ── The person's language (Core MAN-3244) ──────────────────────────────────
+#
+# Core reads `user_profiles.preferred_language` and adds `locale` + `dir` to
+# the user_context (and to the person pass) when it is one of these. The
+# table is Core's `LOCALE_DIRECTION` and the reading is Core's
+# `read_locale_claims` (backend/app/services/v2_apps/user_context_jwt.py:84
+# and :102-113 at origin/main 1256064): a supported language with its OWN
+# direction counts, anything else reads as absent. The language is a hint,
+# not identity, so a bad pair never refuses the caller and never raises.
+
+LOCALE_DIRECTION = {"en": "ltr", "ru": "ltr", "he": "rtl"}
+
+
+def locale_pair(claims: dict) -> tuple[str | None, str | None]:
+    """``(locale, dir)`` from verified claims, or ``(None, None)``.
+
+    Exact match, as Core reads it: ``"HE"``, ``"fr"``, or ``"he"`` with
+    ``"ltr"`` are all absent, so the app falls back instead of meeting a
+    language it has no strings for. (Core's own copy looks the direction up
+    after comparing, so an unknown locale with no ``dir`` at all raises
+    KeyError there; Core never mints one, and this copy returns absent.)
+    """
+    locale = claims.get("locale")
+    expected = LOCALE_DIRECTION.get(locale) if isinstance(locale, str) else None
+    if expected is not None and claims.get("dir") == expected:
+        return locale, expected
+    return None, None
+
+
+def server_language(
+    request: Request, claims: UserContextClaims | PersonClaims | None = None,
+) -> str:
+    """The language this server should write text in: ``en``, ``ru`` or ``he``.
+
+    1. ``claims.locale`` — the person's choice in ManAurum, from the
+       user_context or the person pass. It can trail a switch by up to 60 s
+       (Core caches it); inside the window the page hears the switch at once
+       (``manaurum:locale-change``), so text the page renders should follow
+       the page, not this.
+    2. The request's ``Accept-Language`` (the gateway forwards it): the first
+       of en / ru / he, in the order the browser sent them. The Assistant's
+       calls to ``/agent/*`` carry none.
+    3. English.
+
+    Use the direction with it: ``LOCALE_DIRECTION[server_language(...)]``.
+    """
+    locale = getattr(claims, "locale", None)
+    if locale in LOCALE_DIRECTION:
+        return locale
+    for part in request.headers.get("accept-language", "").split(","):
+        base = part.split(";")[0].strip().lower().split("-")[0]
+        if base in LOCALE_DIRECTION:
+            return base
+    return "en"
 
 
 def verify_user_context(token: str) -> UserContextClaims:
@@ -112,6 +176,7 @@ def verify_user_context(token: str) -> UserContextClaims:
     if str(claims["tenant_id"]) != tenant_id:
         raise HTTPException(status_code=401, detail="user_context_wrong_tenant")
 
+    locale, direction = locale_pair(claims)
     return UserContextClaims(
         user_id=str(claims["sub"]),
         tenant_id=str(claims["tenant_id"]),
@@ -119,6 +184,8 @@ def verify_user_context(token: str) -> UserContextClaims:
         app_version=str(claims["app_version"]),
         workspace_id=str(claims.get("workspace_id") or ""),
         token=token,
+        locale=locale,
+        dir=direction,
     )
 
 
@@ -169,7 +236,9 @@ class PersonClaims:
     """Who is asking. ``kind`` is ``"member"`` today; ``"external"`` arrives
     with App people (invited outsiders). ``name`` is the profile name or
     empty — never the email. ``is_tenant_admin`` / ``workspace_role`` are
-    facts, not roles: turn them into a permission yourself."""
+    facts, not roles: turn them into a permission yourself. ``locale`` /
+    ``dir`` are the person's language, read as on :class:`UserContextClaims`
+    (Core ``person_pass.py:169``)."""
 
     kind: str
     sub: str
@@ -179,6 +248,8 @@ class PersonClaims:
     role: str = ""
     is_tenant_admin: bool = False
     workspace_role: str = ""
+    locale: str | None = None
+    dir: str | None = None
 
 
 def verify_person_pass(token: str) -> PersonClaims:
@@ -220,6 +291,7 @@ def verify_person_pass(token: str) -> PersonClaims:
         raise HTTPException(status_code=401, detail="person_pass_wrong_tenant")
 
     facts = claims.get("facts") if isinstance(claims.get("facts"), dict) else {}
+    locale, direction = locale_pair(claims)
     return PersonClaims(
         kind=str(claims["kind"]),
         sub=str(claims["sub"]),
@@ -229,6 +301,8 @@ def verify_person_pass(token: str) -> PersonClaims:
         role=str(claims.get("role") or ""),
         is_tenant_admin=bool(facts.get("is_tenant_admin")),
         workspace_role=str(facts.get("workspace_role") or ""),
+        locale=locale,
+        dir=direction,
     )
 
 

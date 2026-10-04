@@ -16,7 +16,7 @@ Section map:
 | Section | What it is |
 |---|---|
 | `manaurum:ready` — the shell handshake | mandatory for every app with a window |
-| The person's language | `locale` / `dir`, `manaurum:locale-change`, and what cannot learn the language |
+| The person's language | `locale` / `dir` in the window (`manaurum:locale-change`) and in the token your server verifies |
 | Platform v2 — frontend SDK (`manaurum-v2.mjs`) | the optional client helper |
 
 `https://manaurum.com/sdk/manaurum.js` (global `ManaurumSDK`) is the retired v1 SDK. Do not load it.
@@ -187,7 +187,7 @@ The person picks the interface language in ManAurum's settings: English, Russian
 
 **Where it lives.** On the person's account, in every workspace: `user_profiles.preferred_language` (`backend/app/models/user_profile.py:31`), the `language` preference, where `""` means follow the browser (`backend/app/services/preferences.py:284-296`). The shell shows the language in its own `manaurum_locale` cookie, then the one in localStorage; a device with neither takes the account's value, and uses the browser's languages only until the profile loads or when the account has no choice (`frontend/src/i18n/locale.ts:76-84`, `frontend/src/i18n/index.tsx:129-147`). A switch writes the cookie, localStorage and, best effort, the account (`index.tsx:92-100`, `:167-172`). The cookie is host-only on the shell's origin: an app at `<app_id>.apps.manaurum.com` cannot read it.
 
-**How an app gets it: from the window, and only there.**
+**How the page gets it: from the window.** (Your server reads it from the token: "Your server" below.)
 
 | When | Message | Carries |
 |---|---|---|
@@ -205,9 +205,14 @@ The person picks the interface language in ManAurum's settings: English, Russian
 
 **An app in one language on purpose** says so on its root element: `<html lang="he" dir="rtl" data-languages="he">`. `check_ui.py` then holds it to that — `lang` is the one language, `dir` its direction — instead of failing it for ignoring the shell, and `preview.py`'s badge reads `fixed language`. It is an explicit choice for an app whose every reader shares a language, not a way to skip the work: the person who reads another one gets your language, not theirs.
 
-**A standalone tab** hears no shell. Guess from `navigator.languages` (the first of en / ru / he, else English), as the starter does. Your server also sees the browser's `Accept-Language`: the gateway forwards request headers other than hop-by-hop, auth and Core's own (`_filter_request_headers`, `backend/app/routes/v2_app_gateway.py:639-650`). Both are the *browser's* language — inside the window as well — which need not be the one chosen in ManAurum.
+**A standalone tab** hears no shell. Guess from `navigator.languages` (the first of en / ru / he, else English), as the starter does. Its calls to your `user` routes carry the person's choice in the token (below), so a page that wants the ManAurum choice asks the server: the starter's `GET /api/me` returns it as `locale` / `dir`. Your server also sees the browser's `Accept-Language`: the gateway forwards request headers other than hop-by-hop, auth and Core's own (`_filter_request_headers`, `backend/app/routes/v2_app_gateway.py:720-731`). That and `navigator.languages` are the *browser's* language — inside the window as well — which need not be the one chosen in ManAurum.
 
-**What cannot learn it.** Core hands the person's language to nothing outside the window. It is not in the `user_context` JWT (`backend/app/services/v2_apps/user_context_jwt.py:119-131`), not in the person pass (`person_pass.py:85-103`), and no capability returns it. So **your server, the Assistant's calls to your `/agent` routes, and a standalone tab cannot learn the language chosen in ManAurum**; carrying it there is not yet built (MAN-3244). When your server must write text for a person in their language (a reply it renders, an export), have the page send `locale` with the request. Text the server writes with no page behind it — what it answers the Assistant, a scheduled message — is in a language you pick, and the README says which.
+**Your server: from the token (Core MAN-3244, PR #2341, 2026-10-03).** Every `user_context` Core mints carries two optional claims, `locale` (`en` | `ru` | `he`) and `dir` (`ltr` | `rtl`): the gateway's on `user` and `optional` routes (`v2_app_gateway.py:850-858`, called from `:1358-1368` and `:1398-1409`) and the Assistant's call to your `/agent/<name>` (`backend/app/agent/v2_capability_dispatch.py:134-143`). The person pass on `optional` routes carries the same pair (`v2_app_gateway.py:1426-1440`). The value is the account's `user_profiles.preferred_language` (`backend/app/services/v2_apps/user_language.py:40-80`).
+
+- **Absent means no explicit choice.** Both claims are missing when the account's value is empty (follow the browser) or not one of the three, and when Core's read failed: the token is then minted without them, and the request goes on (`user_language.py:53-76`, `v2_app_gateway.py:818-830`). Core sends no default. Use the request's `Accept-Language`, then English. The Assistant's call sends only the token header (`v2_capability_dispatch.py:147-151`), so an `/agent` handler with no claims writes English.
+- **Read them as Core does.** Only a supported language with its own direction counts. Anything else (`fr`, `HE`, `he` with `ltr`) is absent, never a reason to refuse the request (`read_locale_claims`, `backend/app/services/v2_apps/user_context_jwt.py:102-113`). The starter's `src/auth.py` reads them this way into `claims.locale` / `claims.dir` on `UserContextClaims` and `PersonClaims`, and `server_language(request, claims)` picks the claim, then `Accept-Language`, then `en`. A verifier that predates the claims ignores them, and an older token without them still verifies.
+- **Up to a minute behind.** Core caches each person's language for 60 s in each server process (`user_language.py:28`, `:47-51`), so a switch reaches your server within a minute; the token itself is minted fresh for every request. Inside the window `manaurum:locale-change` is the live signal, and the page's value wins: text the page renders follows the page, not the last response.
+- **Where it does not reach.** An `anonymous` route gets no token, so it has only `Accept-Language`. No capability returns the language. Text written with no request behind it (a scheduled message) has no token either: keep the language with the job when the person sets it up.
 
 ---
 

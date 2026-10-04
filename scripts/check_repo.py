@@ -225,6 +225,10 @@ STALE_FACTS = [
                 r"(?:token|user_context) (?:does not|doesn't|never) carr(?:y|ies) (?:a |one |the )?"
                 r"`?workspace_id"),
      "the gateway mints user_context with workspace_id (v2_app_gateway.py, mint_user_context)"),
+    (re.compile(r"(?i)cannot learn (?:it|the language)\b|"
+                r"(?:language|locale)\b[^.\n]{0,60}\bnot in the `?(?:user_context|person pass)"),
+     "the user_context and the person pass carry the person's language as locale / dir "
+     "(Core MAN-3244); an app's server and the Assistant's calls read it from the token"),
     (re.compile(r"(?i)(?:first slice )?returns a stub"),
      "the logs endpoint returns a real tail"),
 ]

@@ -77,6 +77,25 @@ def test_api_route_accepts_one_minted_user_context(user_context):
     assert response.json()["user_id"] == "u-1"
 
 
+def test_api_me_returns_the_persons_language(user_context):
+    """The token's language reaches the response; without one, `locale` and
+    `dir` are null and `language` falls back to the browser, then English."""
+    chose = client.get("/api/me", headers={
+        "X-Manaurum-User-Context": user_context("u-1", locale="he", dir="rtl"),
+        "Accept-Language": "ru-RU,ru;q=0.9",
+    }).json()
+    assert (chose["locale"], chose["dir"], chose["language"]) == ("he", "rtl", "he")
+
+    no_choice = client.get("/api/me", headers={
+        "X-Manaurum-User-Context": user_context("u-1"),
+        "Accept-Language": "ru-RU,ru;q=0.9",
+    }).json()
+    assert (no_choice["locale"], no_choice["dir"], no_choice["language"]) == (None, None, "ru")
+
+    nothing = client.get("/api/me", headers={"X-Manaurum-User-Context": user_context("u-1")})
+    assert nothing.json()["language"] == "en"
+
+
 def test_storage_keys_are_namespaced_per_user():
     """`os.kv` is scoped per (app, tenant), NOT per user — namespacing is
     this app's job, and the `fake_kv` fixture cannot prove it does it,
