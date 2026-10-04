@@ -145,11 +145,18 @@ appear in `runtime.api_routes`.
 Validation rules:
 
 - `app_id`: no regex in the schema, but it becomes your DNS label and your Postgres
-  schema/role name, and the deploy refuses anything but 3–40 chars of `a-z`, `0-9` and
-  `-`, starting with a letter and not ending with `-` (`422 app_id_invalid`), a UUID, or
-  a reserved name. Becomes `<app_id>.apps.manaurum.com`.
+  schema/role name, so the deploy holds it to one: 3–40 characters of lowercase letters,
+  digits and hyphens, starting with a letter and ending with a letter or digit; not
+  shaped like a UUID (`422 app_id_invalid`); not a reserved platform name (`api`, `app`,
+  `www`, …); not under the `draft-` prefix, which is Aurum Studio's private drafts
+  (`422 slug_reserved`; that refusal merged in Core on 2026-10-04,
+  sergeysuaib-ui/manaurum#2368, and production had not deployed it that day — until it
+  does, the deploy itself accepts a `draft-` name). From CLI 0.3.1, `manaurum app init`
+  refuses such a name before writing anything, and `manaurum app validate` and the deploy
+  preflight refuse it before the build; `check_app.py` does too. Becomes
+  `<app_id>.apps.manaurum.com`.
 - `version`: semver `MAJOR.MINOR.PATCH`. Bump on every redeploy.
-- `runtime.mode`: `hosted`. `byo` (you host elsewhere, platform proxies) is advanced. `dev` belonged to the retired in-browser builder; do not use it.
+- `runtime.mode`: `hosted`. `byo` (you host elsewhere, platform proxies) is advanced. `dev` belonged to the retired in-browser builder; it is not a separate runtime any more, so do not use it.
 - `runtime.port`: the port your process actually listens on. The gateway resolves your
   container as `<swarm-service>:<port>`, using `runtime.port` if present and **80**
   otherwise. Nothing in the platform parses your Dockerfile's `EXPOSE` line. Set this
@@ -181,9 +188,11 @@ Validation rules:
   stream, scaffold this in from the start** — without it `getUserMedia` is
   blocked inside the shell iframe and the app ships broken. A still photo
   via `<input type="file" capture="environment">` is not gated and needs no
-  declaration. Voice apps also declare `os.ai.transcribe` in
-  `requires_capabilities` (that part is the platform STT; `permissions`
-  is only the browser side).
+  declaration. Voice apps also declare `os.ai.transcribe` (and `os.ai.speak`
+  to answer aloud) in `requires_capabilities` (that part is the platform's
+  speech; `permissions` is only the browser side). `os.ai.speak` merged in Core
+  on 2026-10-04 (sergeysuaib-ui/manaurum#2382); production had not deployed it
+  that day — until it does, it answers `404 capability_not_found`.
 
 To use AI / declare a dedicated DB schema / migrations, see `manaurum-app/SKILL.md` and `references/v2-platform.md`.
 

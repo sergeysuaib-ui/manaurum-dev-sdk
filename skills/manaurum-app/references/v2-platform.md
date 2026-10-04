@@ -3,7 +3,7 @@
 Long-form companion to `manaurum-app/SKILL.md`. Covers:
 
 1. Manifest v2 — every field, with examples
-2. Runtime modes (`hosted`, `byo`, `dev`)
+2. Runtime modes (`hosted`, `byo`)
 3. Capabilities — gateway contract, error codes, headers
 4. Tokens (`mna_*`) — issuance, scope, revocation
 5. Deploy lifecycle (build → push → swarm → traefik)
@@ -77,7 +77,7 @@ Validate before every deploy — `manaurum app validate` uses a byte-identical c
 |---|---|---|
 | `manifest_version` | string `"2"` | Pinned. |
 | `manaurum_sdk_version` | string `"2"` | Pinned. |
-| `app_id` | string | Your slug: the DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name. The deploy refuses anything but 3–40 chars of `a-z`, `0-9` and `-`, starting with a letter and not ending with `-` (`422 app_id_invalid`), anything shaped like a UUID, and the reserved names `app`, `apps`, `www`, `landing`, `staging`, `mcp`, `api`, `registry`, `library`, `turn`, `burgerlab`, `wildcard-anchor`, `dokploy`, `traefik` (`422 manifest_validation_failed`). |
+| `app_id` | string | Your slug: the DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name. It must be 3–40 characters of lowercase letters, digits and hyphens, starting with a letter and ending with a letter or digit, and must not be shaped like a UUID (`422 app_id_invalid`), be a reserved platform name — `app`, `apps`, `www`, `landing`, `staging`, `mcp`, `api`, `registry`, `library`, `turn`, `burgerlab`, `wildcard-anchor`, `dokploy`, `traefik` (`422 manifest_validation_failed`) — or start with `draft-`, the prefix of Aurum Studio's private drafts (`422 slug_reserved`). The deploy refuses all of these before it builds (`owner_deploy_slug`, `backend/app/services/v2_apps/owner_deploy.py`); the `draft-` refusal merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2368), and production had not deployed it that day — until it does, the deploy itself accepts a `draft-` name. From CLI 0.3.1, `manaurum app init` refuses such a name before it writes anything, and `manaurum app validate` and the deploy preflight refuse it before the build (`app_id_error`, `manaurum_cli/manifest.py`). |
 | `name` | string | Human-readable. Used in App Store + windowing. |
 | `version` | string | Semver `MAJOR.MINOR.PATCH`. Bump on every redeploy. No pre-release / build metadata. |
 | `runtime` | object | See § 2. |
@@ -106,7 +106,7 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 | `migration` | object | `{breaking, reason, rollback_strategy}`. `breaking: true` lets the DDL validator through *destructive* statements (and only those — see § 7). Default `false`. |
 | `metadata` | object | App Store rendering: `category`, `tags`, `description`, `homepage`, `support_email`, `source_url`. **This is where a root-level `description` belongs.** |
 
-Grant enforcement applies to every capability call from an app with an install row in the calling tenant (every deployed hosted app, in its own tenant): the call is checked against the install's `granted_capabilities` before dispatch and audit. An app id with no install row there skips the check today (MAN-2199). A capability absent from the list — **or an install whose list is empty** — is `403 capability_not_granted`. There is no wildcard grant (MAN-1585). Only dev-mode apps and active BYO hosts short-circuit the check. Operational consequence: adding a capability to your manifest and redeploying is **not** enough — the tenant's install grant set has to be extended too, or every call 403s.
+Grant enforcement applies to every capability call from an app with an install row in the calling tenant (every deployed hosted app, in its own tenant): the call is checked against the install's `granted_capabilities` before dispatch and audit. An app id with no install row there skips the check today (MAN-2199). A capability absent from the list — **or an install whose list is empty** — is `403 capability_not_granted`. There is no wildcard grant (MAN-1585). Only an active BYO host skips the check, and not for `os.ai.complete` or `os.ai.providers`, which are checked for it too (`capability_gateway.py`). Operational consequence: adding a capability to your manifest and redeploying is **not** enough — the tenant's install grant set has to be extended too, or every call 403s.
 
 ### `agent_capabilities[]` — expose your app to the OS Assistant
 
@@ -195,7 +195,7 @@ Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manauru
 
 ```json
 "runtime": {
-  "mode": "hosted" | "byo" | "dev",
+  "mode": "hosted" | "byo",
   "port": 8000,
   "api_routes": [ { "path": "/api/items/*", "auth": "user" } ],
   "public_paths": [ "/g/*" ],
@@ -203,6 +203,8 @@ Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manauru
   "egress_allowed_hosts": [...]
 }
 ```
+
+Two modes, one per app: `hosted`, where the platform builds and runs your container, and `byo`, where you host the app and the platform proxies to it. The schema still lists a third value, `dev`. It belonged to the retired in-browser App Builder and is not a separate runtime any more: the deploy does not look at it, and Core sergeysuaib-ui/manaurum#2296 (merged 2026-10-04) deleted the dev runtime, its `/api/dev/v2/dev-apps` routes and the capability gateway's dev-mode allow-list. Production had not deployed that change that day, so the dev-apps routes still answer there; they are retired too. Do not use either. Aurum Studio, the platform's builder, publishes `hosted` apps.
 
 `runtime` is **strict** (`additionalProperties: false`, since MAN-1899 on 2026-08-23): a key outside the eleven below is a `422` at deploy, and `templates/check_app.py` says so before you upload.
 
@@ -278,7 +280,7 @@ The gateway strips `Cookie` and `Authorization` from every request it proxies, `
 
 1. The signature: RS256 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, issuer `manaurum-core`, audience `manaurum-app`, `exp` and `iat` present and `exp` in the future. A missing key is a `503`, never "trusted".
 2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`. A token without one was not minted by the gateway. Others are optional: `workspace_id` (absent on an Assistant call that has none), and the person's language as `locale` (`en` | `ru` | `he`) with `dir` (`ltr` | `rtl`), present only when the person picked one in ManAurum (Core MAN-3244). Read the language as a hint: a pair that is not a supported language with its own direction is absent, never a `401` — `references/sdk-api.md` → "The person's language".
-3. **That it is yours.** `app_id` must equal your manifest's slug, and `tenant_id` must equal `MANAURUM_TENANT_ID`. Core signs every app's tokens with the same key and the same audience, so step 1 accepts a token minted for any app, and the developer of any app a user opens sees that user's tokens. Without step 3 they have 60 seconds to present one to you. The capability gateway makes this check on its own surface (`401 invalid_user_context`, "app mismatch"); in your container it is yours to make.
+3. **That it is yours.** `app_id` must equal your manifest's slug, and `tenant_id` must equal `MANAURUM_TENANT_ID`. Core signs every app's tokens with the same key and gives every one the audience `manaurum-app`, so step 1 accepts a token minted for any app, and the developer of any app a user opens sees that user's tokens. Without step 3 they have 60 seconds to present one to you. (Core sergeysuaib-ui/manaurum#2380, merged 2026-10-04, adds your `MANAURUM_APP_ID` to `aud` as a second audience; production had not deployed it that day, and until it does a verifier that requires it refuses every token, so keep to step 3.) The capability gateway makes this check on its own surface (`401 invalid_user_context`, "app mismatch"); in your container it is yours to make.
 4. **Exactly one header.** Until Core MAN-3214 (deployed 2026-10-02) the gateway added its own copy under a different letter case and did not remove a copy the client sent, so a request could reach your container with two (Starlette's `headers.get()` returned the client's). It now drops the client's copy. Keep counting the raw headers anyway — one header, or `401` — against an older Core or a proxy in front of you. (Node joins two copies with `", "`, which then fails JWT parsing, so it fails closed.)
 
 Never read the header on an `anonymous` route. Nothing is minted there, so a copy that does arrive did not come through the gateway, which drops the client's. `templates/v2-starter/src/auth.py` implements all four steps (it reads your slug as `APP_SLUG` from `src/capability.py`; copy both, or set it where you keep it) and `tests/test_auth.py` tests each one. `MANAURUM_TENANT_ID` is injected into `hosted` containers; on a `byo` host, set it yourself to the tenant you deploy into.
@@ -291,7 +293,7 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 { "path": "/api/room/*", "auth": "optional" }
 ```
 
-**The published CLI does not know this mode yet.** `cli-v0.3.0` (2026-09-03) was cut before MAN-3200, and its schema allows only `user` and `anonymous`: `manaurum app validate` and the preflight of `manaurum app deploy` refuse an `optional` route the server accepts. Deploy with `manaurum app deploy --skip-preflight` (run `python check_app.py` first, which knows the mode), or through the API as in `manaurum-deploy`. A release that knows it is tracked as MAN-3235.
+**The CLI needs to be 0.3.1 or later.** `manaurum app validate` and the preflight of `manaurum app deploy` accept `optional` (and `people`) routes from `cli-v0.3.1`; 0.3.0 refused both. The wheel to install: `README.md` → "Install the CLI".
 
 * **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`, and `locale` / `dir` when they picked a language (the same pair as on the `user_context`).
 * **Anyone else** arrives with neither header. That includes a member of another tenant: the gateway makes them look exactly like a guest, so the route cannot be used to find out who belongs where. There is no `401`.
@@ -301,7 +303,7 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 
 Guests still need your own mechanism if a guest must be recognised across requests (a seat in a room, a typed name): keep a short-lived pass of your own, HMAC over what it grants with the key in `os.secrets`, in a header of your own (`X-App-Pass`; not `Authorization`, the gateway strips it). Members no longer need it.
 
-**Names and roles.** The `user_context` carries ids and the person's language only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). Inside the desktop window `manaurum:init` carries `user.nickname`.
+**Names and roles.** The `user_context` carries ids and the person's language only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). A name and an address for a user id, and the rest of the team, come from `os.directory.list_users` (`capabilities-reference.md`; in the public tenant only with the user context forwarded). It merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112); production had not deployed it that day — until it does, it answers `404 capability_not_found`. Inside the desktop window `manaurum:init` carries `user.nickname`.
 
 ### Streaming routes — the limits
 
@@ -416,19 +418,13 @@ Manifest looks the same plus **`runtime.entrypoint`** — the absolute HTTPS URL
 
 Your endpoint must implement the BYO health-check contract (`GET /.well-known/manaurum-byo-health` → 200) and verify the platform's HMAC signature on capability dispatch. See R-5 documentation in the manaurum repo if you really need this; most apps shouldn't.
 
-### `dev` (platform-internal prototyping runtime)
-
-> **No editor ships for this mode.** It was driven by an in-browser Monaco editor called *App Builder*, removed from the product on 2026-08-07 — Aurum Studio is the only builder Manaurum ships, and it publishes straight to `hosted`. The mode, its tables and its routes still exist, so the description below stays accurate, but you cannot reach it from the OS and **you should not target it**. Use `hosted`.
-
-Files live in `dev_apps` / `dev_app_files` tables; output served via `/api/dev/v2/dev-apps/<id>/serve/...`. Capability allow-list: `os.kv.*`, `os.files.*`, `os.tenant_config.*`, `os.secrets.*` and `os.compliance.audit_query`; everything else is `403 capability_denied_in_dev_mode`.
-
 ### `egress_allowed_hosts`
 
 List of external hostnames your app may reach via the `os.http.fetch` capability. **Empty (or absent) list = default deny** → `412 egress_not_declared`; a host outside the list → `412 host_not_in_allow_list`. The deploy pipeline copies the list onto the version row and the `os.http.fetch` handler reads it there, so this is the real enforcement point.
 
 The schema declares it, as an array of strings; a host there is not checked for shape until `os.http.fetch` compares it with a URL, and the comparison is an exact hostname match, case aside: write `api.example.com` — no scheme, no path, no wildcard — and list a redirect's host separately.
 
-> **The list is enforced by `os.http.fetch` and nothing else.** Your container's own outbound connections are not filtered today: a raw `fetch()` reaches any host, declared or not (the `0.0.0.0` trick that used to break declared hosts was removed in MAN-2263). Route external HTTP through `os.http.fetch` anyway: it already enforces the list, it is audited, and it never follows a redirect for you. Nothing enforces the list at the container level yet.
+> **The list is enforced by `os.http.fetch` and nothing else.** Your container's own outbound connections are not filtered today: a raw `fetch()` reaches any host, declared or not (the `0.0.0.0` trick that used to break declared hosts was removed in MAN-2263). Route external HTTP through `os.http.fetch` anyway: it already enforces the list, it is audited, and it never follows a redirect for you. Nothing enforces the list at the container level yet. A request your page makes in the browser to another host (`fetch`, or `app.fetch`, with an absolute URL) never passes through Core at all, so the list does not apply to it either: the other host's CORS decides (`references/sdk-api.md` → "`app.fetch(path, init?)`").
 
 ---
 

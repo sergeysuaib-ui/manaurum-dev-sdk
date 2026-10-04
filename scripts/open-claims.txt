@@ -15,7 +15,7 @@
 #
 # format:  MAN-N  <state as verified>  <date>  <what the document claims>
 
-MAN-1385  Backlog      2026-10-02  `pip install manaurum-cli` still 404s on PyPI; README tells people to install the cli-v0.3.0 wheel from releases.
+MAN-1385  Backlog      2026-10-04  `pip install manaurum-cli` still 404s on PyPI; README tells people to install the cli-v0.3.2 wheel from releases.
 MAN-1401  In Progress  2026-10-02  How a v2 hosted app consumes the shared design system is still open; design.md and reference-apps.md both say so.
 MAN-1404  In Progress  2026-10-02  Finance is not yet a v2 hosted app, so reference-apps.md cannot use it as the ceiling reference.
 MAN-1112  Todo         2026-10-02  Tenant admins have no screen to grant a withheld sensitive capability; capabilities-reference.md sends developers to the platform operator.
@@ -24,5 +24,4 @@ MAN-2253  In Progress  2026-10-02  os.compliance.audit_query returns every app's
 MAN-1289  Backlog      2026-10-02  There is no os.workspace.members capability; capabilities-reference.md says so.
 MAN-2199  In Progress  2026-10-02  An app id with no install row in the calling tenant skips the capability grant check; capabilities-reference.md and v2-platform.md say so.
 MAN-1439  In Progress  2026-10-03  A Codex / ChatGPT install in a fresh chat is not yet verified end to end; README says so.
-MAN-3235  Backlog      2026-10-02  The published CLI (cli-v0.3.0) refuses auth "optional"; v2-platform.md says deploy with --skip-preflight or the API until a release knows it.
 MAN-3199  Backlog      2026-10-02  No endpoint reports which tenant an mna_* token is bound to; manaurum-deploy and v2-platform.md say so.

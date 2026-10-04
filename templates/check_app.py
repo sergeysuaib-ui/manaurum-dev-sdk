@@ -101,6 +101,13 @@ RUNTIME_KEYS = {"mode", "port", "api_routes", "public_paths", "health_path",
                 "egress_allowed_hosts", "resources", "sandbox", "entrypoint",
                 "replicas", "image"}
 UUID_SHAPED = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# Addresses under this prefix are Aurum Studio's private drafts: the deploy
+# refuses an app_id that starts with it before anything is built (`422
+# slug_reserved`, `owner_deploy_slug` in Core's
+# backend/app/services/v2_apps/owner_deploy.py), and so does CLI 0.3.1
+# (`app_id_error`, manaurum_cli/manifest.py). Case-sensitive, as both are. Not
+# in the contract copy, because scripts/sync_contract.py does not read it.
+STUDIO_DRAFT_PREFIX = "draft-"
 # Names an Assistant tool reads with. Omitting `is_write` on one of these makes
 # every call ask the user for approval.
 READ_VERB_PREFIXES = ("list_", "get_", "read_", "find_", "search_", "show_",
@@ -321,9 +328,9 @@ def load_contract(notes: list):
         return schema, contract
     except (OSError, ValueError):
         notes.append("manifest_v2.schema.json / platform-contract.json are not "
-                     "beside this script, so the root-key, slug, capability-name "
-                     "and Assistant-tool rules were skipped. Run the copy in the "
-                     "plugin's templates/ directory.")
+                     "beside this script, so the root-key, slug-shape, reserved-name, "
+                     "capability-name and Assistant-tool rules were skipped. Run the "
+                     "copy in the plugin's templates/ directory.")
         return None, None
 
 
@@ -949,7 +956,8 @@ def check_manifest_shape(manifest: dict, problems: list, notes: list,
     `additionalProperties: false` - so a typo in any of them is a 422. Until
     MAN-1899 `runtime` was not, and `"prot": 8000` deployed green and did
     nothing. The slug, the reserved names and the write-verb rule are the
-    deploy's own (MAN-2500, MAN-2358), read from the contract files.
+    deploy's own (MAN-2500, MAN-2358), read from the contract files; the
+    `draft-` prefix is the deploy's too, kept here (STUDIO_DRAFT_PREFIX).
     """
     properties = (schema or {}).get("properties", {})
     runtime_keys = set(properties.get("runtime", {}).get("properties", {})) or RUNTIME_KEYS
@@ -1016,6 +1024,13 @@ def check_manifest_shape(manifest: dict, problems: list, notes: list,
             "placeholder (%r) - it is what a tenant admin reads on the install "
             "screen" % description)
 
+    # Needs no platform list, so it runs even beside no contract copy.
+    slug = manifest.get("app_id")
+    if isinstance(slug, str) and slug.startswith(STUDIO_DRAFT_PREFIX):
+        problems.append("manifest.json: app_id %r starts with %r, which is reserved "
+                        "for Aurum Studio's private drafts - 422 slug_reserved"
+                        % (slug, STUDIO_DRAFT_PREFIX))
+
     if contract:
         check_slug_and_tools(manifest, contract, problems, notes)
 
@@ -1028,10 +1043,13 @@ def check_slug_and_tools(manifest: dict, contract: dict, problems: list,
         if slug.strip().casefold() in contract.get("reserved_slugs", []):
             problems.append("manifest.json: app_id %r is reserved for the platform "
                             "- 422 manifest_validation_failed" % slug)
+        elif slug.startswith(STUDIO_DRAFT_PREFIX):
+            pass            # check_manifest_shape reported it; one finding, as the deploy
         elif UUID_SHAPED.match(slug) or not re.match(contract.get("slug_pattern", ".*"), slug):
             problems.append("manifest.json: app_id %r is not a slug the deploy accepts "
-                            "(3-40 chars of a-z, 0-9 and -, starting with a letter, not "
-                            "a UUID) - 422 app_id_invalid" % slug)
+                            "(3-40 chars of a-z, 0-9 and -, starting with a letter and "
+                            "ending with a letter or digit, not shaped like a UUID) "
+                            "- 422 app_id_invalid" % slug)
 
     tool = contract.get("agent_tool", {})
     verbs = tuple(contract.get("write_verb_prefixes", []))
@@ -1195,7 +1213,7 @@ def real_validator():
     Returns `(validate, error_class, knows_the_transactionality_rule)`, or
     None when there is no usable copy. The capability is PROBED, not read
     off a version: the rule landed in the CLI without a version bump, and
-    the wheel authors can actually install predates it. A copy that cannot
+    the cli-v0.3.0 wheel predates it (cli-v0.3.1 has it). A copy that cannot
     answer the probe at all is not trusted for anything.
 
     The stdlib-only promise is intact - nothing here is required, and the

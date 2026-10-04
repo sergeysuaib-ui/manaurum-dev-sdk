@@ -444,6 +444,17 @@ def a_uuid_for_a_slug(app: Path) -> None:
     patch_manifest(app, lambda data: data.update(app_id="a0b6f6d2-1c1a-4c9e-9a7e-3f0e9d5b2a11"))
 
 
+def a_studio_draft_slug(app: Path) -> None:
+    # Fits the slug pattern and is no reserved name: only the prefix rule sees
+    # it. The deploy answers 422 slug_reserved (owner_deploy_slug).
+    patch_manifest(app, lambda data: data.update(app_id="draft-notes"))
+
+
+def draft_inside_a_slug(app: Path) -> None:
+    # MUST STAY GREEN. The deploy refuses the prefix, not the word.
+    patch_manifest(app, lambda data: data.update(app_id="my-draft-notes"))
+
+
 def a_prefix_on_the_include(app: Path) -> None:
     # Served at /api/extra/items: the prefix is on include_router, not the router.
     (app / "src" / "extra.py").write_text(
@@ -824,6 +835,9 @@ APP_MUTATIONS = [
     ("manifest: a key offline does not have", a_typo_under_offline,
      "offline.featrues is not a key the schema allows"),
     ("manifest: a UUID for a slug", a_uuid_for_a_slug, "not a slug the deploy accepts"),
+    ("manifest: a slug under Studio's draft- prefix", a_studio_draft_slug,
+     "reserved for Aurum Studio's private drafts"),
+    ("manifest: draft inside a slug stays green", draft_inside_a_slug, None),
     ("routes: a prefix on include_router", a_prefix_on_the_include,
      "GET /api/extra/items is served but no runtime.api_routes rule covers it"),
     ("agent: auth on the decorator stays green", auth_on_the_decorator, None),
@@ -1573,9 +1587,13 @@ def a_permissions_enum_without_camera(repo: Path) -> None:
 def a_wrong_capability_count(repo: Path) -> None:
     path = repo / "skills" / "manaurum-app" / "references" / "capabilities-reference.md"
     text = path.read_text(encoding="utf-8")
-    if "All **32**" not in text:
-        raise AssertionError("anchor not found: All **32**")
-    path.write_text(text.replace("All **32**", "All **31**", 1), encoding="utf-8")
+    # Whatever the count is today, one fewer: a re-sync that adds a
+    # capability must not turn this mutation into a missing anchor.
+    match = re.search(r"All \*\*(\d+)\*\*", text)
+    if not match:
+        raise AssertionError("anchor not found: All **<n>**")
+    wrong = "All **%d**" % (int(match.group(1)) - 1)
+    path.write_text(text.replace(match.group(0), wrong, 1), encoding="utf-8")
 
 
 def runtime_keys_drift(repo: Path) -> None:
@@ -1766,7 +1784,7 @@ REPO_MUTATIONS = [
     ("repo: the permissions enum without camera", a_permissions_enum_without_camera,
      "states the permissions enum without camera"),
     ("repo: the reference's capability count", a_wrong_capability_count,
-     "Core registers 32"),
+     "capabilities; Core registers"),
     ("repo: RUNTIME_KEYS drifts from the schema", runtime_keys_drift,
      "RUNTIME_KEYS differs from the schema"),
     ("repo: the gateway said to forward the client's copy",

@@ -1,46 +1,32 @@
 # Publishing ManAurum OS Apps
 
-Every app publishes through Platform v2. This page covers the endpoints that put a version live
-(they fail in different ways), what the manifest validator rejects, icons, and the store listing.
+Every app publishes through Platform v2. This page covers the endpoint that puts a version live,
+what the manifest validator rejects, icons, and the store listing.
 
 ---
 
 ## Publishing on Platform v2
 
-### Publish vs deploy — two endpoints, two failure shapes
+### One endpoint puts a version live
 
 | Endpoint | Auth | Response | Where a bad manifest surfaces |
 |---|---|---|---|
-| `POST /api/dev/v2/dev-apps/<dev_app_id>/publish` | session cookie (dev mode — **no UI client since 2026-08-07**) | `202 {deploy_job_id, status:"pending"}` | **synchronously — `422`**, before any job exists |
 | `POST /api/dev/v2/deploy` | `mna_*` bearer (CLI) | `202 {deploy_job_id, status:"pending"}` | **synchronously — `422`**, before any job exists |
 
-Both return `202` and both hand back a `deploy_job_id` to poll, and both validate the manifest in the
-request:
+It answers a bad manifest with
+`422 {"error": "manifest_validation_failed", "errors": [{"path": "...", "message": "..."}, …]}`
+(MAN-2597) — one entry per failing assertion — and refuses an invalid slug, a slug you do not own,
+a used version or a bad archive before building anything. Migrations and the build are checked in
+the job. The full list: `manaurum-deploy/SKILL.md`. Poll `GET /api/dev/v2/deploy/<job_id>` (and
+`/stream` for progress events).
 
-- **Dev-mode publish** (the App Builder editor drove this until it was removed on 2026-08-07; the route is still mounted but no UI calls it — use the CLI path) runs the v2 schema validation inside the request. A schema failure is
-  `422 {"error": "manifest_validation_failed", "errors": [{"path": "...", "message": "..."}, …]}` —
-  one entry per failing assertion, so the editor renders them all at once. Nothing is built.
-- **CLI deploy** answers a bad manifest with the same
-  `422 {"error": "manifest_validation_failed", "errors": [...]}` (MAN-2597), and refuses an invalid
-  slug, a slug you do not own, a used version or a bad archive before building anything. Migrations
-  and the build are checked in the job. The full list: `manaurum-deploy/SKILL.md`.
+Do not use the in-browser App Builder's browser-session publish route under
+`/api/dev/v2/dev-apps`: it is retired. Core sergeysuaib-ui/manaurum#2296 deleted it and the dev
+runtime behind it (merged 2026-10-04); production had not deployed that change that day, so
+until it does the route still answers there. Aurum Studio publishes
+`hosted` apps under the same owner rule as this endpoint.
 
-Poll surfaces:
-
-- CLI / `mna_*` token → `GET /api/dev/v2/deploy/<job_id>` (and `/stream` for progress events).
-- Dev mode / session cookie → `GET /api/dev/v2/dev-apps/<dev_app_id>/publish-status/<job_id>`.
-  Same job store, stricter ownership — you must own both the dev app and the job. Everyone else
-  gets `404 job_not_found`.
-
-Two more dev-mode-only preconditions:
-
-- The tenant needs `experiment.platform_v2_hosted_runtime`, otherwise the publish is
-  `501 hosted_runtime_not_ready`.
-- The manifest that gets validated is **not byte-for-byte what you typed**. Publish backfills the
-  v2-required defaults and auto-declares the capabilities your code actually calls (so the gateway
-  doesn't default-deny them at runtime). Validation errors can therefore cite paths you never wrote.
-
-A `succeeded` CLI deploy means the new container answered the platform's readiness probe on
+A `succeeded` deploy means the new container answered the platform's readiness probe on
 `runtime.port` and `runtime.health_path`; a failed probe rolls back and fails the job.
 
 ### What the manifest validator rejects

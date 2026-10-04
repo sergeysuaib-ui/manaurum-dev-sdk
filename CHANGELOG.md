@@ -1,3 +1,218 @@
+# 3.18.0 - CLI 0.3.2, and Core's 2026-10-04 merges ahead of their deploy: the SDK's language, speech, the team list, no dev runtime
+
+Summary: The guide installs command-line tool 0.3.2 and describes what ManAurum merged on 4 October before it goes live: speaking aloud, a list of your team, and the person's language in the browser.
+
+### Why
+
+Several things changed on the platform side, and the SDK either still described each one
+as it was before or did not mention it:
+
+* **CLI 0.3.1 is published** ([cli-v0.3.1](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.1)).
+  0.3.0 refused `auth: "optional"` and `auth: "people"` routes in `app validate` and in the
+  deploy preflight, so `v2-platform.md` told people to deploy an `optional` route with
+  `--skip-preflight`. 0.3.1 accepts both. It also refuses an `app_id` the deploy would
+  refuse: `app init` before it writes anything, `app validate` and the preflight before the
+  build, instead of a `422` after the upload (`app_id_error`, `manaurum_cli/manifest.py`).
+  The README still installed the 0.3.0 wheel. **CLI 0.3.2** followed the same day
+  ([cli-v0.3.2](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.2),
+  Core sergeysuaib-ui/manaurum#2393): it adds `os.ai.speak` and `os.directory.list_users`
+  to the capabilities `app validate` and the preflight check, and nothing else.
+* **`manaurum-v2.mjs` 2.5.0** (Core sergeysuaib-ui/manaurum#2379, merged 2026-10-04) hands
+  the app the person's language: `app.locale` / `app.dir` and the same fields on the
+  `onReady` context, from `manaurum:init`, and `app.onLocaleChange(cb)` for
+  `manaurum:locale-change`. Every `on…` registration, `onReady` included, now returns a
+  function that unregisters the callback. The same PR corrected the SDK's own `fetch()`
+  docblock, which said an absolute URL is subject to `egress_allowed_hosts`: it is a plain
+  browser request Core never sees. `sdk-api.md` still said the SDK drops the language.
+* **`manaurum-v2.mjs` 2.4.0** (Core sergeysuaib-ui/manaurum#2318, MAN-2561, merged
+  2026-10-04) checks who sends `manaurum:init`: only `window.parent` on a shell origin, then
+  that pinned window alone, and it exports `trustedShellOrigins`. The pages said the SDK
+  does not check the sender and exports two names, as if 2.3.0 were the SDK.
+* **The dev runtime is deleted** (Core sergeysuaib-ui/manaurum#2296, MAN-1423):
+  `/api/dev/v2/dev-apps`, the Monaco dev mode, the capability gateway's dev-mode allow-list
+  and the `capability_denied_in_dev_mode` error. A v2 app has two runtime modes, `hosted` and
+  `byo`; `dev` stays in the schema enum but is retired and not a separate runtime any more.
+  Four pages still described the mode, one of them as a second publish endpoint.
+* **`os.ai.speak`** (Core sergeysuaib-ui/manaurum#2382, MAN-2727 / MAN-3256, merged
+  2026-10-04): text or Markdown in, the whole MP3 back as base64, five voices, at most
+  4,000 characters spoken per call. The same PR changed who pays for `os.ai.transcribe`:
+  it is no longer the tenant's own key only, but the tenant's OpenAI integration, else
+  Manaurum's metered voice key inside the shared AI spending limits (`429 ai_spend_cap`),
+  and both voice capabilities honour AI Off. The reference called transcription BYOK and
+  said it ignores `X-Manaurum-Workspace-Id`.
+* **`os.directory.list_users`** (Core sergeysuaib-ui/manaurum#2112, MAN-2519): `{}` in, the
+  people on the app's team out, for assignee and recipient pickers. Until now an app knew
+  that someone acted (a user id) and never who.
+
+### What changed
+
+* **CLI.** README installs the `cli-v0.3.2` wheel and says to use 0.3.1 or later, because
+  0.3.0 refuses `optional` and `people` routes; its paragraph on `manaurum app init` no
+  longer reads as if a word were missing. `v2-platform.md` drops the `--skip-preflight`
+  workaround and states 0.3.1 as the minimum. `scripts/open-claims.txt`: the MAN-3235 line
+  goes (no page says the published CLI refuses `optional` any more), and the MAN-1385 line
+  names the cli-v0.3.2 wheel, re-checked 2026-10-04 (PyPI still answers `404` for
+  `manaurum-cli`). `check_app.py`'s docstring says cli-v0.3.1 has the `CONCURRENTLY` rule.
+* **The `app_id` rule, wherever `app_id` is described** (`v2-platform.md`'s field table,
+  `SKILL.md` Step 1, `manaurum-setup`, the `manaurum-deploy` refusal table): 3–40
+  characters of lowercase letters, digits and hyphens, starting with a letter and ending
+  with a letter or digit; not shaped like a UUID; not a reserved platform name; not under
+  the `draft-` prefix, which is Aurum Studio's private drafts. The deploy refuses the prefix
+  first, with `422 slug_reserved` (`owner_deploy_slug`,
+  `backend/app/services/v2_apps/owner_deploy.py`), and the refusal table gains that row.
+* **`check_app.py`** refuses an `app_id` under `draft-`, as the deploy and CLI 0.3.1 do;
+  until now it said `clean` for `draft-notes`. Its `app_id_invalid` message also names the
+  last-character rule. The prefix rule needs no platform list, so it runs even with no
+  contract copy beside the script, as `load_contract`'s docstring promises such rules do.
+  `linter_mutations.py` has one red mutation for it (`draft-notes`) and one that must stay
+  green (`my-draft-notes`: the prefix, not the word).
+* **SDK 2.5.0 in `sdk-api.md`.** The version and the `sdk_version` the SDK sends with
+  `manaurum:ready`; `app.locale` / `app.dir` in the getters table and in the context's field
+  list; an `app.onLocaleChange` row; the unregister function for every `on…`; a "With the
+  SDK" paragraph in "The person's language" (`null` until the handshake, outside the shell
+  or from an older shell, fall back to `navigator.language`; the callback can repeat the
+  current value; the shell's language is not always the token's; test for
+  `onLocaleChange` before calling it, because an older copy has none). The inline listener
+  stays the first place the language is applied: it runs before any module loads, and it
+  is what `check_ui.py` checks. The "No language" bullet goes. Everything 2.5.0 adds is
+  marked as such: the getters and the context's `locale` / `dir` are `undefined` before it,
+  the unregister function is missing before it (2.4.0 returns nothing), the `sdk_version`
+  is the SDK's own (`'2.3.0'` from production that day), and the page's example tests both
+  `onLocaleChange` and what it returned before calling them.
+* **Browser requests are not egress.** `app.fetch` with an absolute URL is a plain browser
+  request to that host: it never passes through Core, nothing filters it, and only
+  `os.http.fetch`, called from the app's server, enforces `egress_allowed_hosts`; pass
+  `credentials: 'omit'` for a third-party host. `sdk-api.md` says so, and
+  `v2-platform.md`'s `egress_allowed_hosts` section adds a browser request to another host
+  to what the list does not cover. The starter's page calls only its own relative `/api/*` paths, so nothing
+  there contradicts it.
+* **No dev runtime.** `v2-platform.md` §2 names two modes and says the schema's `dev` is
+  retired and not a separate runtime any more (the deploy does not look at it); its `dev`
+  subsection is deleted. The grant check is skipped only for an active BYO host, and even
+  then not for `os.ai.complete` / `os.ai.providers` (`v2-platform.md`, from
+  `capability_gateway.py`; `capabilities-reference.md`). The
+  `capability_denied_in_dev_mode` row leaves the gate table and the AI family's "none works
+  for a dev app" bullet goes. `publishing.md` loses the dev-mode publish endpoint, its poll
+  route and its two preconditions, describes one endpoint, and says not to use the retired
+  dev-apps route. `SKILL.md` and `manaurum-setup` say `dev` is retired; do not use it.
+* **SDK 2.4.0's sender check** (Core sergeysuaib-ui/manaurum#2318, MAN-2561, merged
+  2026-10-04). The SDK takes `manaurum:init` only from `window.parent` on a shell origin,
+  pins that window and origin, stops forged `manaurum:*` messages before the app's handlers,
+  and sends Drive picks only to the pinned shell. `sdk-api.md` (handshake, cross-origin
+  rules, `pickFromDrive`) and `SKILL.md` Step 2.5 say which versions check the sender and
+  which do not; "exports two names" becomes three, with `trustedShellOrigins`. The inline
+  listener stays required: it runs before any module, and production still serves 2.3.0.
+* **`os.ai.speak`** has its own section in `capabilities-reference.md`: input (`text`
+  1–20,000 characters of plain text or Markdown, `voice` one of five, `lang`), output
+  (`audio_base64`, `mime_type: "audio/mpeg"`, `voice`, `model`, `truncated`), what is
+  spoken (code as a placeholder, links as their label, at most 4,000 characters cut at a
+  sentence end), how to play and keep the MP3, and `400 nothing_to_speak`. It joins the
+  family table, the AI family ("all eight share"), the `SKILL.md` capability table and
+  `manaurum-setup`'s note on voice apps.
+* **Voice funding.** `os.ai.transcribe` is no longer "BYOK": its section says who pays for
+  both voice capabilities (the tenant's OpenAI integration, else Manaurum's metered voice
+  key, else `412 integration_not_configured`), which workspace a call resolves and that it
+  needs none, the four workspace answers that refuse a call even when the tenant has its
+  own key (`400 workspace_context_required` for a blank header,
+  `403 workspace_context_mismatch`, `412 workspace_context_unavailable` when only the
+  Sandbox qualifies, `403 workspace_context_unavailable` when the forwarded user context
+  names a workspace with no install the person can reach — read from
+  `completion_context.py`, which is more exact than Core's guide), that AI Off is
+  `403 ai_disabled`, that Manaurum's key serves three models only
+  (`400 model_not_available`), and that every upstream failure is `502` on either key,
+  never `504`. The gates table, the call contract's `X-Manaurum-Workspace-Id` line, the
+  quotas table (`429 ai_spend_cap`), `os.ai.providers` (a `transcribe` entry pays for
+  speech too, and its absence does not mean voice is unavailable) and the `SKILL.md`
+  table follow.
+* **`os.directory.list_users`** has a section like the locations one: exactly `{}` in;
+  `{users: [{user_id, display_name, email, avatar_url?}]}` out, ordered by email, active
+  non-anonymous members once each; the whole team tenant, or in the public tenant only the
+  workspace the forwarded user context was minted for (else the person's primary one) and
+  only when one of the app's owners works in it (an app-only call there gets
+  `{users: []}`); where `display_name` comes from; a profile upload's `avatar_url` prefixed
+  with the OS origin; no paging; the tenant only from the verified gateway context;
+  sensitive, with how each kind of install gets it. It joins the family table, the
+  sensitive list, the `SKILL.md` capability table and `v2-platform.md`'s "Names and roles",
+  and the reference's "no `os.workspace.members`" line points to it.
+* **The contract copy is re-synced** at Core `7c1f09566` (2026-10-04: `main` with
+  sergeysuaib-ui/manaurum#2112, #2302 and #2380 merged), with
+  `py -3.12 scripts/sync_contract.py --monorepo ../Manaurum --ref 7c1f095666a8e74d5904d42b8bdbfe7f4c1693bd`.
+  The manifest schema is unchanged. The contract gains `os.ai.speak` and
+  `os.directory.list_users` with their inputs (34 capabilities), and `check_repo.py`
+  failed until both were documented and the reference's count said 34. The strings lose
+  `capability_denied_in_dev_mode`, `dev_apps`, `hosted_runtime_not_ready` and the rest of
+  the dev runtime's words, none of which a page quotes; `platform_v2_dev_mode` stays, as
+  the name of an unrelated App Store flag. README's description of the copy no longer
+  quotes a capability count, and `linter_mutations.py`'s capability-count mutation reads
+  the reference's current number instead of expecting 32, which this sync turned into a
+  missing anchor.
+* **Dated production notes.** Every page that states one of Core's 2026-10-04 merges as
+  current says, once per section, that it merged that day, that production had not
+  deployed it, and what happens until it does: `capabilities-reference.md` (a note under
+  the header — 34 registered on `main`, 32 on production that day — that the speak,
+  directory and transcribe sections point to), `SKILL.md`'s capability rows,
+  `manaurum-setup` (voice apps, the `draft-` rule), `v2-platform.md` (the `app_id` row,
+  `dev`, "Names and roles", and a note that #2380's second, per-app audience waits for the
+  deploy), `publishing.md` (the retired dev-apps route still answers on production)
+  and the `manaurum-deploy` refusal table (`422 slug_reserved`). The reference's header and
+  footer now agree on what was read by hand at which commit and what `check_repo.py`
+  compares, the footer no longer says nothing is compared automatically, and the header
+  note says CLI 0.3.2 refuses an undeclared call to either new capability, as
+  `check_app.py` does, and 0.3.1 does not know them.
+  `sdk-api.md` says exactly which handlers 2.4.0's guard stops a forged message before
+  (every non-capture handler, and capture-phase ones registered after it) and that
+  `manaurum:session-response` is left to Core's session runtime.
+
+### Not in this release
+
+* **`https://manaurum.com/sdk/manaurum-v2.mjs` still served 2.3.0** on 2026-10-04 after
+  #2318 and #2379 merged. The pages describe 2.4.0 and 2.5.0 as such, name 2.3.0 as what
+  production served that day, and say to test for `onLocaleChange` before calling it.
+* **Production had not deployed Core's 2026-10-04 merges** that day: a request to
+  `/api/dev/v2/dev-apps` still answered `401` (the route was mounted), and a route added at
+  07:25 that morning answered `404`. So production predates `os.ai.speak` and the voice
+  funding (#2382), `os.directory.list_users` (#2112), the dev runtime's removal (#2296), the
+  deploy's `draft-` refusal (#2368), the per-app audience (#2380) and SDK 2.4.0 / 2.5.0
+  (#2318, #2379). Until it deploys, `os.ai.speak` and `os.directory.list_users` answer
+  `404 capability_not_found`, `os.ai.transcribe` runs on the tenant's own OpenAI key only,
+  the retired dev-apps routes still answer, and the deploy accepts a `draft-` slug that CLI
+  0.3.1 and `check_app.py` already refuse. The pages say so where each fact is taught.
+* **The starter's behaviour is unchanged.** What moved in it is the `app.css` version stamp
+  and two comments (below). Its inline listener already checks the sender and applies
+  `locale` / `dir`; its comments speak of 2.3.0, which is still what production serves.
+* **What else the re-sync window holds, untaught.** Between `1256064` and `7c1f09566` Core
+  also added personal versions of first-party apps (MAN-3098: `pv-` hosts and, for those
+  only, `MANAURUM_SOURCE_SCHEMA` / `MANAURUM_VERSION_SCHEMA`), Aurum Studio's private
+  drafts (MAN-2915 and its follow-ups), Duties (MAN-3059–3061) and `agent_jobs`
+  (MAN-3062). None changes the manifest schema or adds a capability, and `check_repo.py`
+  asks for none of them; the skills do not teach them.
+* **The starter's `auth.py` keeps its audience check as it is.** Core now also names the
+  app in every user_context `aud` (sergeysuaib-ui/manaurum#2380, MAN-3231), but a starter
+  that requires it 401s against a Core that does not mint it yet, so that change waits for
+  the deploy. Only its comments moved: `auth.py` and `tests/test_auth.py` no longer say
+  Core's locale reader raises `KeyError` for an unknown language with no `dir`; Core reads
+  that as absent since sergeysuaib-ui/manaurum#2381, as the starter always did.
+
+### Checked
+
+* `py -3.12 scripts/check_repo.py`: clean. `py -3.12 scripts/linter_mutations.py`: every
+  mutation caught. `py -3.12 scripts/smoke_tools.py`: passes. The starter's `pytest -q`
+  passes; `check_ui.py` and `check_app.py` say `clean` for the starter, and `check_ui.py`
+  for the patterns page.
+* Against Core: `owner_deploy.py`, `reserved_slugs.py` and the CLI's `manifest.py` on the
+  MAN-3235 branch; `frontend/public/sdk/manaurum-v2.mjs` and
+  `docs/handoff/V2_DEVELOPER_GUIDE.md` §8 at `2587dd77c` (#2379); the capability gateway,
+  `main.py` and the guide's §1 on the MAN-1423 branch (#2296); `capabilities/ai.py`,
+  `services/voice.py`, `capabilities/completion_context.py`, `capabilities/directory.py`,
+  `capabilities/sensitivity.py`, `routes/capability_gateway.py` (the voice workspace map and
+  the BYO grant exception), `frontend/public/sdk/manaurum-v2.mjs`, the CLI's
+  `project_checks.py`, the guide's §3 and "Voice" section and `PLATFORM_V2_CONTRACTS.md` at
+  `7c1f09566`; the manifest schema just before #2382 (any capability name deploys, so a
+  manifest that declares `os.ai.speak` deploys on production and only the call fails).
+* Production on 2026-10-04: `https://manaurum.com/sdk/manaurum-v2.mjs` served `2.3.0`, and
+  an unauthenticated request to `/api/dev/v2/dev-apps` answered `401`, a route that exists;
+  the `404` for the route added at 07:25 is the independent review's check.
+
 # 3.17.0 - an app's server knows the person's language too
 
 Summary: An app's server and the Assistant's requests now know which language the person picked in ManAurum, so emails, replies and exports can be written in it; the starter shows how.

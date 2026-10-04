@@ -280,7 +280,7 @@ _NOT_A_LANGUAGE = [
     {"locale": "he", "dir": "up"},
     {"locale": "ar", "dir": "rtl"},        # a language ManAurum does not offer
     {"locale": "HE", "dir": "rtl"},        # Core compares exactly
-    {"locale": "fr"},                      # Core's own copy raises KeyError here
+    {"locale": "fr"},                      # an unknown language with no dir
     {"locale": 5, "dir": "rtl"},
     {"locale": None, "dir": None},
     {"dir": "rtl"},
