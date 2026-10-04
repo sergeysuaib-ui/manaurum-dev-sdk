@@ -289,8 +289,9 @@ discover it at 2 a.m.:
 * **"Succeeded" means the container answered one path.** The readiness probe calls
   `runtime.health_path` (or `/healthz`); it does not exercise your `/api/*` routes or the
   window.
-* **No scheduled jobs and no inbound webhooks.** `schedules` and `webhooks` exist in the
-  manifest schema but nothing runs them yet.
+* **No inbound webhooks.** `webhooks` exists in the manifest schema but nothing runs it yet.
+  Scheduled jobs do run since Core MAN-1373: `schedules` (see `v2-platform.md`, "Scheduled
+  jobs — `schedules`").
 * **Usage numbers, but no error tracking for an SDK app.** `GET /api/app-usage/<uuid>`
   (MAN-3131) — the platform's app UUID (`app_id` in `GET /api/dev/v2/apps/<slug>`), not
   your slug, called with a signed-in session (the app's author, or a tenant admin in a

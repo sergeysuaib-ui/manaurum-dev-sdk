@@ -240,7 +240,7 @@ container never sees the request. There is no implicit fallback, not even to ano
 Each entry is `{ "path": …, "auth": … }`:
 
 - `path` starts with `/`. A trailing `/*` matches anything **below** that prefix.
-- `auth` is required: `"user"`, `"anonymous"` or `"optional"`.
+- `auth` is required: `"user"`, `"anonymous"` or `"optional"` (`"people"`, App people, exists behind a tenant flag; not covered here yet).
   - `"user"`: the gateway injects a 60-second `X-Manaurum-User-Context` JWT; the user's own token never reaches you. **A good signature is not enough** — accept it only if `app_id` is your slug and `tenant_id` equals `MANAURUM_TENANT_ID`, and refuse a request that carries the header twice. Never read it on an `anonymous` route. `templates/v2-starter/src/auth.py` does all of this; copy it.
   - `"anonymous"`: proxied with no user context — a kiosk or public endpoint. A route you forget is unreachable, not open.
   - `"optional"` (Core MAN-3200): the user if signed in, a guest otherwise, never a `401` — share links, voting rooms. `auth.py` → `optional_person`.
