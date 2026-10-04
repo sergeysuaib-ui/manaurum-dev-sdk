@@ -18,6 +18,10 @@ claims.
 
 ### What changed
 
+* **The copy of Core's contract is re-synced** at Core `1256064` (2026-10-04). The
+  manifest schema now has the `people` route mode and `people` block of App people
+  (MAN-3216), so `check_app.py` no longer refuses a manifest that uses them. The skills
+  do not teach App people yet; that is its own release.
 * **Starter `src/auth.py`.** `UserContextClaims` and `PersonClaims` gain `locale` and
   `dir` (`None` when absent), read by `locale_pair()` exactly as Core's
   `read_locale_claims` reads them (`user_context_jwt.py:84`, `:102-113`): a supported
