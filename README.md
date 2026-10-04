@@ -114,8 +114,8 @@ is, install the wheel from this repo's
 [releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
 ```bash
-pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.1/manaurum_cli-0.3.1-py3-none-any.whl
-manaurum --version        # manaurum, version 0.3.1
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.2/manaurum_cli-0.3.2-py3-none-any.whl
+manaurum --version        # manaurum, version 0.3.2
 ```
 
 Then save your token. Mint it in **DevHub → Credentials** (`mna_…`) and keep the

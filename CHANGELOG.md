@@ -1,6 +1,6 @@
-# 3.18.0 - CLI 0.3.1, and Core's 2026-10-04 merges ahead of their deploy: the SDK's language, speech, the team list, no dev runtime
+# 3.18.0 - CLI 0.3.2, and Core's 2026-10-04 merges ahead of their deploy: the SDK's language, speech, the team list, no dev runtime
 
-Summary: The guide installs command-line tool 0.3.1 and describes what ManAurum merged on 4 October before it goes live: speaking aloud, a list of your team, and the person's language in the browser.
+Summary: The guide installs command-line tool 0.3.2 and describes what ManAurum merged on 4 October before it goes live: speaking aloud, a list of your team, and the person's language in the browser.
 
 ### Why
 
@@ -13,7 +13,10 @@ as it was before or did not mention it:
   `--skip-preflight`. 0.3.1 accepts both. It also refuses an `app_id` the deploy would
   refuse: `app init` before it writes anything, `app validate` and the preflight before the
   build, instead of a `422` after the upload (`app_id_error`, `manaurum_cli/manifest.py`).
-  The README still installed the 0.3.0 wheel.
+  The README still installed the 0.3.0 wheel. **CLI 0.3.2** followed the same day
+  ([cli-v0.3.2](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.2),
+  Core sergeysuaib-ui/manaurum#2393): it adds `os.ai.speak` and `os.directory.list_users`
+  to the capabilities `app validate` and the preflight check, and nothing else.
 * **`manaurum-v2.mjs` 2.5.0** (Core sergeysuaib-ui/manaurum#2379, merged 2026-10-04) hands
   the app the person's language: `app.locale` / `app.dir` and the same fields on the
   `onReady` context, from `manaurum:init`, and `app.onLocaleChange(cb)` for
@@ -43,12 +46,12 @@ as it was before or did not mention it:
 
 ### What changed
 
-* **CLI.** README installs the `cli-v0.3.1` wheel and says to use 0.3.1 or later, because
+* **CLI.** README installs the `cli-v0.3.2` wheel and says to use 0.3.1 or later, because
   0.3.0 refuses `optional` and `people` routes; its paragraph on `manaurum app init` no
   longer reads as if a word were missing. `v2-platform.md` drops the `--skip-preflight`
   workaround and states 0.3.1 as the minimum. `scripts/open-claims.txt`: the MAN-3235 line
   goes (no page says the published CLI refuses `optional` any more), and the MAN-1385 line
-  names the cli-v0.3.1 wheel, re-checked 2026-10-04 (PyPI still answers `404` for
+  names the cli-v0.3.2 wheel, re-checked 2026-10-04 (PyPI still answers `404` for
   `manaurum-cli`). `check_app.py`'s docstring says cli-v0.3.1 has the `CONCURRENTLY` rule.
 * **The `app_id` rule, wherever `app_id` is described** (`v2-platform.md`'s field table,
   `SKILL.md` Step 1, `manaurum-setup`, the `manaurum-deploy` refusal table): 3–40
@@ -154,8 +157,8 @@ as it was before or did not mention it:
   and the `manaurum-deploy` refusal table (`422 slug_reserved`). The reference's header and
   footer now agree on what was read by hand at which commit and what `check_repo.py`
   compares, the footer no longer says nothing is compared automatically, and the header
-  note says CLI 0.3.1 does not know the two new capability names (they arrive in the
-  unpublished 0.3.2), so only `check_app.py` notices an undeclared call to one.
+  note says CLI 0.3.2 refuses an undeclared call to either new capability, as
+  `check_app.py` does, and 0.3.1 does not know them.
   `sdk-api.md` says exactly which handlers 2.4.0's guard stops a forged message before
   (every non-capture handler, and capture-phase ones registered after it) and that
   `manaurum:session-response` is left to Core's session runtime.

@@ -11,9 +11,9 @@ success, and the errors that capability itself raises.
 > registered 32 capabilities. Until it does, `os.ai.speak` and `os.directory.list_users`
 > answer `404 capability_not_found`, and `os.ai.transcribe` runs on the tenant's own OpenAI
 > key only (`412 integration_not_configured` without one). The three sections below
-> describe `main`, and each points back here. CLI 0.3.1 does not know either new name
-> (they arrive in the unpublished 0.3.2), so `manaurum app validate` says nothing about a
-> call to one your manifest does not declare; `check_app.py` does.
+> describe `main`, and each points back here. CLI 0.3.2 knows both new names: `manaurum
+> app validate` refuses a call to one your manifest does not declare, as `check_app.py`
+> does. 0.3.1 does not know them and says nothing.
 
 | Family | Capabilities |
 |---|---|
