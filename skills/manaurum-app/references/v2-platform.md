@@ -98,7 +98,7 @@ These 17 keys plus the 6 required ones are the complete root surface. Anything e
 | `provides` | object | Inter-app contracts you expose: `{rpc: [...], events: [...]}`. Informational today: `os.apps.call` reaches only built-in apps, so no other app can call a method you list here. |
 | `consumes` | object | Inter-app contracts you depend on: `{rpc: [...], events: [...]}`. Nothing reads it today: listing an event here subscribes you to nothing, because no hosted app can receive events (MAN-133). |
 | `webhooks` | array | `[{name, path, signature}]`. **Validated for shape; Core does nothing with it in v2.x** — the platform webhook gateway is deferred. Expose your own handler via `runtime.api_routes` with `auth: "anonymous"` and verify the signature yourself. |
-| `schedules` | array | `[{name, cron, handler_path, timezone?}]`. **Validated for shape; Core does not invoke the handler in v2.x** — platform cron is deferred. Run an in-container scheduler and keep the declaration as documentation of intent. |
+| `schedules` | array | `[{name, cron, handler_path, timezone?, timeout_seconds?}]`, at most 20. Core calls `handler_path` at the scheduled minutes with a system token you must verify (MAN-1373) — see "Scheduled jobs — `schedules`" in section 2. |
 | `tenant_config` | object | `{schema, required_at_install}` — per-tenant config collected at install time. Note: install-time values land in `v2_app_installs.config`, which the `os.tenant_config.get` capability does **not** currently read. Don't build on the round-trip yet. |
 | `offline` | object | Manaurum Edge declaration: `features`, `reference_data`, `streams`. **It does nothing for a v2 hosted app today:** the on-site box's configuration is built from v1 apps only. (The shell still copies the block into `manaurum:init`.) |
 | `permissions` | string[] | BROWSER features the OS shell delegates to the app iframe via the `allow` attribute (Permissions-Policy). Enum today: `microphone` (MAN-1316) and `camera` (MAN-1920); `uniqueItems`. Required for a LIVE `getUserMedia` stream inside the shell iframe — without it `getUserMedia` is blocked in the iframe, while your standalone `<app_id>.apps.manaurum.com` URL is unaffected. A still photo through `<input type="file" accept="image/*" capture="environment">` hands off to the device's camera app, is not gated and needs no declaration, so declare `camera` only for a stream you decode or render yourself (a barcode scanner, video capture). The user still sees the browser's own prompt. Refused when `runtime.mode` is `byo` (MAN-1922), and the shell delegates nothing to a frame whose address the manifest chose. Unrelated to `requires_capabilities` — a voice app needs both this AND `os.ai.transcribe`. |
@@ -267,7 +267,7 @@ The declaration table for every `/api/*` path your container serves. **A path th
 | Key | Notes |
 |---|---|
 | `path` | Required. Must start with `/`. Trailing `*` is a wildcard (`/api/orders/*`); anything else is an exact match. `/api/tasks/*` does **not** match the bare `/api/tasks` — declare both if you serve both. |
-| `auth` | Required: `"user"`, `"anonymous"` or `"optional"`. `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). `optional` (Core MAN-3200): a signed-in member of your tenant as on `user`, plus `X-Manaurum-Person`; anyone else as on `anonymous`, never a `401` — see "Pages that guests and members both open". |
+| `auth` | Required: `"user"`, `"anonymous"` or `"optional"` (the schema also has `"people"`, App people behind a tenant flag — not covered here yet). `user`: the gateway mints a 60s RS256 `user_context` JWT and injects it as `X-Manaurum-User-Context`; the end user's own bearer token is **never** forwarded. `anonymous`: proxied with no user context (kiosk / public endpoints — explicit declaration required, there is no implicit anonymous fallback). `optional` (Core MAN-3200): a signed-in member of your tenant as on `user`, plus `X-Manaurum-Person`; anyone else as on `anonymous`, never a `401` — see "Pages that guests and members both open". |
 | `streaming` | Optional bool, default false. Proxy in SSE / chunked passthrough mode instead of buffering the upstream response. Orthogonal to `auth`. Emit SSE heartbeats, honour `Last-Event-ID`, and do not hold a DB connection for the stream's lifetime. Limits below. |
 
 There is no `method` field — one rule covers every verb, so you cannot declare `/api/items` anonymous for reads and `user` for writes: enforce that inside your app. Precedence: the longer literal prefix wins, ties break by declaration order. That lets you carve one path out of a wildcard — `{"path": "/api/orders/*", "auth": "user"}` plus `{"path": "/api/orders/public", "auth": "anonymous"}` does what it looks like. Adding a route to your code is not enough: a new endpoint needs a new manifest entry and a redeploy, and until then it 404s while your logs stay silent, because nothing reached you. Static assets (HTML/JS/CSS, `/healthz`) are **not** declared here; they always reach your container anonymously, and a page navigation without a session is sent to log in unless `runtime.public_paths` lists it.
@@ -277,7 +277,7 @@ The gateway strips `Cookie` and `Authorization` from every request it proxies, `
 **Verifying `X-Manaurum-User-Context`, all of it.** Check, in this order:
 
 1. The signature: RS256 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, issuer `manaurum-core`, audience `manaurum-app`, `exp` and `iat` present and `exp` in the future. A missing key is a `503`, never "trusted".
-2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`. A token without one was not minted by the gateway.
+2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`. A token without one was not minted by the gateway. Others are optional: `workspace_id` (absent on an Assistant call that has none), and the person's language as `locale` (`en` | `ru` | `he`) with `dir` (`ltr` | `rtl`), present only when the person picked one in ManAurum (Core MAN-3244). Read the language as a hint: a pair that is not a supported language with its own direction is absent, never a `401` — `references/sdk-api.md` → "The person's language".
 3. **That it is yours.** `app_id` must equal your manifest's slug, and `tenant_id` must equal `MANAURUM_TENANT_ID`. Core signs every app's tokens with the same key and the same audience, so step 1 accepts a token minted for any app, and the developer of any app a user opens sees that user's tokens. Without step 3 they have 60 seconds to present one to you. The capability gateway makes this check on its own surface (`401 invalid_user_context`, "app mismatch"); in your container it is yours to make.
 4. **Exactly one header.** Until Core MAN-3214 (deployed 2026-10-02) the gateway added its own copy under a different letter case and did not remove a copy the client sent, so a request could reach your container with two (Starlette's `headers.get()` returned the client's). It now drops the client's copy. Keep counting the raw headers anyway — one header, or `401` — against an older Core or a proxy in front of you. (Node joins two copies with `", "`, which then fails JWT parsing, so it fails closed.)
 
@@ -293,7 +293,7 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 
 **The published CLI does not know this mode yet.** `cli-v0.3.0` (2026-09-03) was cut before MAN-3200, and its schema allows only `user` and `anonymous`: `manaurum app validate` and the preflight of `manaurum app deploy` refuse an `optional` route the server accepts. Deploy with `manaurum app deploy --skip-preflight` (run `python check_app.py` first, which knows the mode), or through the API as in `manaurum-deploy`. A release that knows it is tracked as MAN-3235.
 
-* **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`.
+* **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`, and `locale` / `dir` when they picked a language (the same pair as on the `user_context`).
 * **Anyone else** arrives with neither header. That includes a member of another tenant: the gateway makes them look exactly like a guest, so the route cannot be used to find out who belongs where. There is no `401`.
 * **Verify the pass for your app.** Its `aud` is your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted for another app fails the audience check — unlike the `user_context`, whose audience is shared. `templates/v2-starter/src/auth.py` → `optional_person` returns `None` for a guest, the person for a member, and a `401` for a pass that is present but bad (an attack or a broken deploy — never treat it as a guest).
 * **Decide deliberately what a request without a pass may do.** That is the guest's whole permission set: what the link was for (see the board, vote under a typed name), nothing a member's identity would unlock.
@@ -301,7 +301,7 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 
 Guests still need your own mechanism if a guest must be recognised across requests (a seat in a room, a typed name): keep a short-lived pass of your own, HMAC over what it grants with the key in `os.secrets`, in a header of your own (`X-App-Pass`; not `Authorization`, the gateway strips it). Members no longer need it.
 
-**Names and roles.** The `user_context` carries ids only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). Inside the desktop window `manaurum:init` carries `user.nickname`.
+**Names and roles.** The `user_context` carries ids and the person's language only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). Inside the desktop window `manaurum:init` carries `user.nickname`.
 
 ### Streaming routes — the limits
 
@@ -317,6 +317,44 @@ Defaults in Core's `v2_gateway_streaming.py`, each one overridable by the operat
 Plan your capacity on 50: Core runs more than one process, but nothing lets you choose which one a stream lands on. Send a heartbeat comment (`:\n\n`) well inside 60 seconds — every 20 is plenty — and expect the 15-minute close: it is the point where a reconnect re-runs authentication, so the client reconnects with `Last-Event-ID` and the server resumes from it.
 
 On a `user` route the stream is authenticated once, at connect. `EventSource` cannot send headers and is not covered by session renewal; in a standalone tab a reconnect after the session lapsed is a `401` that `EventSource` gives up on. Read such a stream with `fetch` and a body reader, which renewal does cover.
+
+### Scheduled jobs — `schedules`
+
+Since Core MAN-1373 (merged 2026-10-03) the platform runs your schedules; no scheduler in
+your container. Declare up to 20:
+
+```json
+"schedules": [
+  {"name": "nightly", "cron": "0 3 * * *", "timezone": "Europe/Moscow",
+   "handler_path": "/cron/nightly", "timeout_seconds": 300}
+]
+```
+
+At each minute the 5-field `cron` matches in `timezone` (default `UTC`), Core POSTs
+`handler_path` on the internal network, for the app's owner tenant, with
+`Authorization: Bearer <system token>` (RS256, Core's key; `aud` = your `MANAURUM_APP_ID`;
+`scope: system`), `X-Manaurum-Caller-System: cron-scheduler` and a body
+`{tenant_id, app_id, schedule, scheduled_for, firing_id}`. `handler_path` is lowercase
+segments, not under `/api/` or `/agent/`, not the health path; the public gateway answers
+`404` for it and anything below it.
+
+**Verify the token before doing anything** — any process that can reach your container can
+send the headers; only Core can sign the token:
+
+```python
+from jose import jwt
+claims = jwt.decode(request.headers["authorization"].removeprefix("Bearer "),
+                    os.environ["CORE_USER_CONTEXT_PUBLIC_KEY_PEM"], algorithms=["RS256"],
+                    audience=os.environ["MANAURUM_APP_ID"], issuer="manaurum-core")
+assert claims["scope"] == "system" and claims["caller_system"] == "cron-scheduler"
+```
+
+What you can rely on: at most once per slot (a firing that may have reached you is never
+retried — make the handler idempotent on `firing_id` or `scheduled_for`); after downtime
+only the newest slot missed by less than 15 minutes fires; a slot whose previous run is
+still going is skipped; `timeout_seconds` (default 60, max 3600) ends the wait, not your
+handler. Source: Core's `docs/handoff/V2_DEVELOPER_GUIDE.md` §9 and
+`backend/app/services/v2_apps/system_token.py` (`verify_system_token`).
 
 ### `hosted` (default — what 99% of apps want)
 

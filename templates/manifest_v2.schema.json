@@ -151,9 +151,10 @@
                 "enum": [
                   "user",
                   "anonymous",
-                  "optional"
+                  "optional",
+                  "people"
                 ],
-                "description": "How the Core gateway authenticates requests matching `path`. `user`: gateway mints a 60s user_context JWT signed by Core and injects it as `X-Manaurum-User-Context`; the container verifies via Core public key. The user bearer is NEVER forwarded to the container. `anonymous`: gateway proxies the request with no user_context (kiosk/public endpoints \u2014 explicit declaration required, no implicit anonymous fallback). `optional`: a signed-in member of the app's tenant is treated as on `user` and also gets the person pass `X-Manaurum-Person` (verify it with `aud` = your `MANAURUM_APP_ID`); anyone else, including a member of another tenant, is proxied as on `anonymous` and never gets a 401. Use it for pages that guests and members both open (share links, voting rooms, invites)."
+                "description": "How the Core gateway authenticates requests matching `path`. `user`: gateway mints a 60s user_context JWT signed by Core and injects it as `X-Manaurum-User-Context`; the container verifies via Core public key. The user bearer is NEVER forwarded to the container. `anonymous`: gateway proxies the request with no user_context (kiosk/public endpoints \u2014 explicit declaration required, no implicit anonymous fallback). `optional`: a signed-in member of the app's tenant is treated as on `user` and also gets the person pass `X-Manaurum-Person` (verify it with `aud` = your `MANAURUM_APP_ID`); anyone else, including a member of another tenant, is proxied as on `anonymous` and never gets a 401. Use it for pages that guests and members both open (share links, voting rooms, invites). `people` (App people): a member of the app's tenant when the manifest's `people.members.allow` is on and their facts map to a declared role, or an outside person invited into this app who signed in with an emailed code; both arrive with `X-Manaurum-Person` (members also with the user_context); anyone else gets 401 with `X-Manaurum-People-Login`. Requires a top-level `people` block."
               }
             }
           }
@@ -205,6 +206,38 @@
         "image": {
           "type": "string",
           "description": "Legacy/informational image reference from early manifests. The platform derives the real image tag from (registry, app_id, version) at deploy and ignores this key. Declared for compatibility; do not set it in new manifests."
+        }
+      }
+    },
+    "people": {
+      "type": "object",
+      "description": "App people: outside people invited into this app by the tenant's admins, who sign in with a code from an email on the app's own host. Declares the roles the app understands and whether members of the tenant pass through. Needs the tenant flag `experiment.app_people`; refused in the public tenant.",
+      "required": ["roles", "default_role"],
+      "additionalProperties": false,
+      "properties": {
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
+          "description": "Roles an invited person can hold. Lower-case, up to 32 characters."
+        },
+        "default_role": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$", "description": "The role the invite form preselects. Must be one of `roles`."},
+        "members": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Whether members of the tenant get in without a second sign-in, and with which role.",
+          "properties": {
+            "allow": {"type": "boolean", "description": "Default false."},
+            "tenant_admin_role": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$", "description": "Role for a tenant admin. Must be one of `roles`."},
+            "workspace_roles": {
+              "type": "object",
+              "description": "Workspace role (owner | admin | member | viewer, or `*` for any) to app role. A member whose role maps to nothing is not admitted as a member.",
+              "propertyNames": {"enum": ["owner", "admin", "member", "viewer", "*"]},
+              "additionalProperties": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"}
+            }
+          }
         }
       }
     },
@@ -528,7 +561,8 @@
     },
     "schedules": {
       "type": "array",
-      "description": "Cron schedules. NOTE (v2.x): platform cron is DEFERRED \u2014 this field is parsed and validated for shape but Core does NOT yet invoke the handler. For v2.x, run an in-container scheduler (APScheduler / cron-style library) and reference this field as documentation of intended schedules. The platform-cron behaviour lands in v2.next; manifests authored today are forward-compatible.",
+      "description": "Cron schedules. At each matching minute in the schedule's timezone, Core POSTs `handler_path` on the internal network for the app's owner tenant, with `Authorization: Bearer <system token>` (aud = the app id, scope = system) and `X-Manaurum-Caller-System: cron-scheduler`. At most once per slot; a slot missed for more than 15 minutes is not replayed; a firing that reached the app is never retried. The handler path is not reachable through the public gateway. See V2_DEVELOPER_GUIDE §9.",
+      "maxItems": 20,
       "items": {
         "type": "object",
         "required": [
@@ -543,12 +577,12 @@
             "minLength": 1,
             "maxLength": 64,
             "pattern": "^[a-z][a-z0-9_-]*$",
-            "description": "Schedule identifier \u2014 used in the Core URL `/apps/<app_id>/cron/<name>`. Lowercase letters / digits / underscore / hyphen, must start with a letter."
+            "description": "Schedule identifier, unique within the app. Sent to the handler as `schedule`. Lowercase letters / digits / underscore / hyphen, must start with a letter."
           },
           "cron": {
             "type": "string",
             "minLength": 9,
-            "description": "Standard 5-field cron expression (`minute hour dom month dow`). Validated for syntactic shape at deploy time."
+            "description": "Standard 5-field cron expression (`minute hour day-of-month month day-of-week`): `*`, numbers, ranges, lists, steps, `jan`-`dec`, `sun`-`sat`. No `@daily` macros, no seconds. Parsed at deploy time."
           },
           "timezone": {
             "type": "string",
@@ -557,14 +591,14 @@
           },
           "handler_path": {
             "type": "string",
-            "pattern": "^/",
-            "description": "App-side handler path the scheduler POSTs to. Must start with `/`. Called with `Caller-System: cron-scheduler` and the body carries `tenant_id`."
+            "pattern": "^(/[a-z0-9][a-z0-9_-]*)+$",
+            "description": "Path on the app the scheduler POSTs to, e.g. `/cron/nightly`. Lowercase segments, no trailing slash, not under `/api/` or `/agent/`, not the health path. The public gateway answers 404 for it and anything below it. Body: `{tenant_id, app_id, schedule, scheduled_for, firing_id}`."
           },
           "timeout_seconds": {
             "type": "integer",
             "minimum": 1,
             "maximum": 3600,
-            "description": "Per-firing handler timeout. Core kills the request past this; the scheduler records the firing as failed but does not retry. Default 60s when omitted; max 1h."
+            "description": "Per-firing handler timeout. Core stops waiting for an answer after this; the scheduler records the firing as failed but does not retry. Default 60s when omitted; max 1h."
           }
         }
       }

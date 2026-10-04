@@ -265,3 +265,91 @@ def test_person_pass_without_any_audience_is_rejected(person_pass, keypair):
     with pytest.raises(HTTPException) as exc:
         verify_person_pass(no_aud)
     assert exc.value.detail == "person_pass_invalid"
+
+
+# ── The person's language (`locale` / `dir`, Core MAN-3244) ────────────────
+#
+# Core adds both claims when the person picked a language, and reads only a
+# supported language with its own direction (`read_locale_claims`). A bad
+# pair is absent, never a 401: the language is a hint, not identity.
+
+_LANGUAGES = [("en", "ltr"), ("ru", "ltr"), ("he", "rtl")]
+_NOT_A_LANGUAGE = [
+    {"locale": "he", "dir": "ltr"},        # not Hebrew's direction
+    {"locale": "en", "dir": "rtl"},
+    {"locale": "he", "dir": "up"},
+    {"locale": "ar", "dir": "rtl"},        # a language ManAurum does not offer
+    {"locale": "HE", "dir": "rtl"},        # Core compares exactly
+    {"locale": "fr"},                      # Core's own copy raises KeyError here
+    {"locale": 5, "dir": "rtl"},
+    {"locale": None, "dir": None},
+    {"dir": "rtl"},
+]
+
+
+@pytest.mark.parametrize("locale,direction", _LANGUAGES)
+def test_the_persons_language_is_read(user_context, locale, direction):
+    claims = verify_user_context(user_context(locale=locale, dir=direction))
+    assert (claims.locale, claims.dir) == (locale, direction)
+
+
+@pytest.mark.parametrize("pair", _NOT_A_LANGUAGE, ids=repr)
+def test_a_language_that_is_not_one_reads_as_absent(user_context, pair):
+    """Accepted, with no language: a 401 here would lock the person out of
+    the app over a hint."""
+    claims = verify_user_context(user_context(user_id="u-bad-pair", **pair))
+    assert claims.user_id == "u-bad-pair"
+    assert (claims.locale, claims.dir) == (None, None)
+
+
+def test_a_token_without_the_language_still_verifies(user_context):
+    """What Core mints when the person made no explicit choice, and what
+    every token minted before MAN-3244 looked like."""
+    from jose import jwt
+
+    token = user_context()
+    assert "locale" not in jwt.get_unverified_claims(token)
+    claims = verify_user_context(token)
+    assert claims.user_id == "u-test"
+    assert (claims.locale, claims.dir) == (None, None)
+
+
+def test_the_person_pass_carries_the_language_too(person_pass):
+    from src.auth import verify_person_pass
+
+    p = verify_person_pass(person_pass(locale="he", dir="rtl"))
+    assert (p.locale, p.dir) == ("he", "rtl")
+    for pair in _NOT_A_LANGUAGE:
+        p = verify_person_pass(person_pass(**pair))
+        assert (p.sub, p.locale, p.dir) == ("u-ann", None, None), pair
+    p = verify_person_pass(person_pass())
+    assert (p.locale, p.dir) == (None, None)
+
+
+@pytest.mark.parametrize("locale,header,expected", [
+    ("he", "ru-RU,ru;q=0.9", "he"),        # the choice in ManAurum wins
+    (None, "fr-FR,ru;q=0.8,en;q=0.5", "ru"),  # else the browser's first en/ru/he
+    (None, "fr-FR,de", "en"),              # else English
+    (None, "", "en"),
+])
+def test_server_language_is_the_claim_then_accept_language_then_english(
+        locale, header, expected):
+    from starlette.requests import Request
+
+    from src.auth import LOCALE_DIRECTION, UserContextClaims, server_language
+
+    request = Request({"type": "http",
+                       "headers": [(b"accept-language", header.encode())] if header else []})
+    claims = UserContextClaims(user_id="u", tenant_id="t", app_id="a", app_version="1",
+                               locale=locale, dir=LOCALE_DIRECTION.get(locale or ""))
+    assert server_language(request, claims) == expected
+
+
+def test_server_language_without_claims_reads_the_header():
+    """An `anonymous` route has no token: `Accept-Language` is all there is."""
+    from starlette.requests import Request
+
+    from src.auth import server_language
+
+    request = Request({"type": "http", "headers": [(b"accept-language", b"he-IL,en;q=0.5")]})
+    assert server_language(request) == "he"

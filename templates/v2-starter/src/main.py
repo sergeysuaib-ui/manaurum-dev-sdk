@@ -53,7 +53,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from src import agent_routes
-from src.auth import UserContextClaims, auth_claims
+from src.auth import UserContextClaims, auth_claims, server_language
 from src.capability import CapabilityError, read_note, write_note
 
 app = FastAPI(
@@ -72,13 +72,27 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 
 @app.get("/api/me")
-async def read_me(claims: UserContextClaims = Depends(auth_claims)) -> dict[str, str]:
-    """Who is calling. The smallest possible `auth: "user"` route."""
+async def read_me(
+    request: Request,
+    claims: UserContextClaims = Depends(auth_claims),
+) -> dict[str, str | None]:
+    """Who is calling. The smallest possible `auth: "user"` route.
+
+    `locale` / `dir` are the language the person picked in ManAurum, or
+    null when they picked none; `language` is what this server would write
+    text in (`server_language`: that choice, else `Accept-Language`, else
+    English). A standalone tab learns the person's language from here. The
+    page inside the window keeps following `manaurum:locale-change`, which
+    is live, where these can trail a switch by up to a minute.
+    """
     return {
         "user_id": claims.user_id,
         "tenant_id": claims.tenant_id,
         "app_id": claims.app_id,
         "app_version": claims.app_version,
+        "locale": claims.locale,
+        "dir": claims.dir,
+        "language": server_language(request, claims),
     }
 
 

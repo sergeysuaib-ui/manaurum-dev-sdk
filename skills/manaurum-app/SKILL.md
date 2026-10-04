@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.16.0.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.17.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -240,7 +240,7 @@ container never sees the request. There is no implicit fallback, not even to ano
 Each entry is `{ "path": …, "auth": … }`:
 
 - `path` starts with `/`. A trailing `/*` matches anything **below** that prefix.
-- `auth` is required: `"user"`, `"anonymous"` or `"optional"`.
+- `auth` is required: `"user"`, `"anonymous"` or `"optional"` (`"people"`, App people, exists behind a tenant flag; not covered here yet).
   - `"user"`: the gateway injects a 60-second `X-Manaurum-User-Context` JWT; the user's own token never reaches you. **A good signature is not enough** — accept it only if `app_id` is your slug and `tenant_id` equals `MANAURUM_TENANT_ID`, and refuse a request that carries the header twice. Never read it on an `anonymous` route. `templates/v2-starter/src/auth.py` does all of this; copy it.
   - `"anonymous"`: proxied with no user context — a kiosk or public endpoint. A route you forget is unreachable, not open.
   - `"optional"` (Core MAN-3200): the user if signed in, a guest otherwise, never a `401` — share links, voting rooms. `auth.py` → `optional_person`.
@@ -370,8 +370,8 @@ rather than retyping this one. Four things are non-negotiable:
    init and on every `manaurum:locale-change`, and use logical CSS (`margin-inline-start`,
    never `margin-left`) so Hebrew mirrors — `check_ui.py` fails on all three. Write UI
    strings for en, ru and he, re-render on a switch, and format numbers and dates with
-   `Intl`, as the starter does. What your server cannot learn:
-   `references/sdk-api.md` → "The person's language".
+   `Intl`, as the starter does. Your server reads the same choice from the token
+   (`claims.locale`): `references/sdk-api.md` → "The person's language".
 
 postMessage is for this handshake and window framing only: never send the v1 data verbs
 (`manaurum:storage-*`, `manaurum:file-*`, `manaurum:notification`) from a v2 app. Every
