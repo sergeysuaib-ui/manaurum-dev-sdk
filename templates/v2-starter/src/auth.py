@@ -88,9 +88,8 @@ def locale_pair(claims: dict) -> tuple[str | None, str | None]:
 
     Exact match, as Core reads it: ``"HE"``, ``"fr"``, or ``"he"`` with
     ``"ltr"`` are all absent, so the app falls back instead of meeting a
-    language it has no strings for. (Core's own copy looks the direction up
-    after comparing, so an unknown locale with no ``dir`` at all raises
-    KeyError there; Core never mints one, and this copy returns absent.)
+    language it has no strings for. An unknown locale with no ``dir`` at all
+    is absent too, as in Core's ``read_locale_claims``.
     """
     locale = claims.get("locale")
     expected = LOCALE_DIRECTION.get(locale) if isinstance(locale, str) else None

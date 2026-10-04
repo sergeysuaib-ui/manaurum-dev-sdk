@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.17.0.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.18.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -114,8 +114,8 @@ is, install the wheel from this repo's
 [releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
 ```bash
-pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.0/manaurum_cli-0.3.0-py3-none-any.whl
-manaurum --version
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.1/manaurum_cli-0.3.1-py3-none-any.whl
+manaurum --version        # manaurum, version 0.3.1
 ```
 
 Then save your token. Mint it in **DevHub → Credentials** (`mna_…`) and keep the
@@ -139,8 +139,10 @@ manaurum app deploy             # 202 + poll; prints the live URL when it activa
 ```
 
 Copy the starter rather than running `manaurum app init`. The CLI's scaffold has the same
-shape (MAN-1397, in `cli-v0.3.0`), but the starter is the one this repository tests on every
-PR, and it carries what this plugin teaches since. `pip install manaurum-cli` still 404s on
+shape (MAN-1397), and since `cli-v0.3.1` it follows the person's language too, but the
+starter is the one this repository tests on every PR, so a rule this plugin adds reaches it
+first. Use CLI 0.3.1 or later: 0.3.0 refuses `auth: "optional"` and `auth: "people"` routes
+in `app validate` and in the deploy preflight. `pip install manaurum-cli` still 404s on
 PyPI (MAN-1385); install the wheel above.
 
 The starter deploys unchanged. It is not a hello-world stub: it serves a UI that answers
@@ -235,7 +237,7 @@ parts inlined. Reading one real app beats reading four pages about apps.
   Postgres — in CI too, including the broken `init=` pool it replaces.
 * `templates/manifest_v2.schema.json` + `templates/platform-contract.json` +
   `scripts/platform-strings.json` — the copy of Core's contract the linters and
-  `check_repo.py` read: the manifest schema, the 32 registered capabilities, the reserved
+  `check_repo.py` read: the manifest schema, every registered capability, the reserved
   slugs, the slug pattern, the write-verb rule, the Assistant's tool-name limit, every
   capability's input fields, the
   window's message types, and the snake_case words in the string literals of the Core

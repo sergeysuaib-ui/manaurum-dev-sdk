@@ -1,9 +1,19 @@
 # Capabilities — input/output reference
 
-The exhaustive reference for every Platform v2 capability. All **32** capabilities
-registered on Core (checked against Core `main` 8fe6f5d, 2026-10-02) are documented below,
-all `version: 1`. Every entry gives the input (from the capability's JSON Schema), the
-output on success, and the errors that capability itself raises.
+The exhaustive reference for every Platform v2 capability. All **34** capabilities
+registered on Core's `main` at `7c1f09566` (2026-10-04) are documented below, all
+`version: 1`. Every entry gives the input (from the capability's JSON Schema), the output on
+success, and the errors that capability itself raises.
+
+> **Production lags `main` here.** `os.ai.speak`, the voice-key funding of
+> `os.ai.transcribe` (sergeysuaib-ui/manaurum#2382) and `os.directory.list_users` (#2112)
+> merged in Core on 2026-10-04, and production had not deployed them that day, so it
+> registered 32 capabilities. Until it does, `os.ai.speak` and `os.directory.list_users`
+> answer `404 capability_not_found`, and `os.ai.transcribe` runs on the tenant's own OpenAI
+> key only (`412 integration_not_configured` without one). The three sections below
+> describe `main`, and each points back here. CLI 0.3.1 does not know either new name
+> (they arrive in the unpublished 0.3.2), so `manaurum app validate` says nothing about a
+> call to one your manifest does not declare; `check_app.py` does.
 
 | Family | Capabilities |
 |---|---|
@@ -12,14 +22,16 @@ output on success, and the errors that capability itself raises.
 | The user's Drive | `os.drive.stage`, `.publish`, `.list`, `.read`, `.write`, `.delete` |
 | The user's calendar | `os.calendar.create_event`, `.list_events` |
 | Locations | `os.locations.list`, `.get` |
-| AI | `os.ai.complete`, `.embed`, `.transcribe`, `.image_submit`, `.image_poll`, `.providers`, `os.ocr.extract` |
+| The team | `os.directory.list_users` |
+| AI | `os.ai.complete`, `.embed`, `.transcribe`, `.speak`, `.image_submit`, `.image_poll`, `.providers`, `os.ocr.extract` |
 | Messaging and events | `os.notifications.send_to_user`, `os.events.emit` |
 | Outbound HTTP | `os.http.fetch` |
 | Audit | `os.compliance.audit_query` |
 | Other apps | `os.apps.call`, `os.apps.bulk_export` |
 
 Nothing else exists: there is no `os.kv.delete` or `os.kv.list`, no `os.secrets.delete`,
-no calendar update or delete, and no `os.workspace.members` (MAN-1289).
+no calendar update or delete, and no `os.workspace.members` (MAN-1289); the team's names
+and addresses come from `os.directory.list_users`.
 
 ## The call contract
 
@@ -31,7 +43,7 @@ Authorization: Bearer ${MANAURUM_RUNTIME_TOKEN}
 X-Manaurum-Tenant-Id: ${MANAURUM_TENANT_ID}
 X-Manaurum-App-Id:    <your slug, or MANAURUM_APP_ID for os.kv.* / os.events.emit>
 X-Manaurum-User-Context: <the JWT your route received>   # required for auth_mode: user
-X-Manaurum-Workspace-Id: <workspace uuid>                # os.ai.complete / .providers, rarely
+X-Manaurum-Workspace-Id: <workspace uuid>                # os.ai.complete / .providers / .speak / .transcribe, rarely
 Content-Type: application/json
 
 <the capability's input object — no wrapper>
@@ -118,24 +130,26 @@ These fire in the gateway, in this order, before any handler code, so they apply
 | 404 | `capability_not_found` | No such capability (a typo). |
 | 403 | `user_context_required` | `auth_mode: "user"` capability and no user context. |
 | 422 | `input_schema_violation` (+ `message`, `path`) | The input fails the capability's schema. Every schema here is `additionalProperties: false`, so an unknown field is a `422`. |
-| 403 | `capability_denied_in_dev_mode` | A `runtime.mode: dev` app calling outside the dev allow-list: `os.kv.*`, `os.files.*`, `os.tenant_config.*`, `os.secrets.*`, `os.compliance.audit_query`. |
-| — | workspace errors, `ai_disabled` | `os.ai.complete` and `os.ai.providers` only; see `os.ai.complete`. |
+| — | workspace errors, `ai_disabled` | `os.ai.complete` and `os.ai.providers`, see `os.ai.complete`; `os.ai.speak` and `os.ai.transcribe`, see `os.ai.transcribe`. |
 | 401 | `invalid_user_context`, `"user_context app mismatch"` | The user context was minted for another app. |
 | 403 | `capability_not_granted` | The install's `granted_capabilities` lack this capability. **An install with an empty grant list denies everything.** |
 | 429 | `quota_exceeded` | Not reachable today: no capability declares a daily quota (see Quotas). |
 | 500 | `handler_exception` | The handler crashed. Usually bad input the schema could not catch (a malformed date), or a provider failure in `os.ocr.extract` / the image capabilities. |
 
 Grant enforcement applies whenever your app has an install row in the calling tenant,
-which every deployed hosted app has in its own tenant. Dev-mode apps and active BYO hosts
-skip it, and so, today, does an app id with **no** install row there (MAN-2199): do not
+which every deployed hosted app has in its own tenant. Active BYO hosts skip it (except
+for `os.ai.complete` and `os.ai.providers`, which are still checked), and so, today, does
+an app id with **no** install row there (MAN-2199): do not
 read a successful call as proof of a grant. There is no
 wildcard grant (MAN-1585): every capability has to be listed. A redeploy never widens an
 existing install's grants, so a capability you add in a later version is missing on old
 installs until an admin grants it (MAN-1112).
 
-**Sensitive capabilities.** `os.ai.*`, `os.ocr.*`, `os.notifications.*`, `os.http.*` and
-`os.secrets.*` are classed sensitive. When the platform runs with strict grants, these are
-not granted automatically at install; a tenant admin grants them explicitly.
+**Sensitive capabilities.** `os.ai.*`, `os.ocr.*`, `os.notifications.*`,
+`os.directory.*`, `os.http.*` and `os.secrets.*` are classed sensitive
+(`backend/app/services/capabilities/sensitivity.py`). When the platform runs with strict
+grants, these are not granted automatically at install; a tenant admin grants them
+explicitly.
 
 ---
 
@@ -473,22 +487,63 @@ Resolve a `location_id` the tenant uses elsewhere (a shop, a warehouse) to a nam
 
 ---
 
-## The AI family — what all seven share
+## `os.directory.list_users` — the people on the app's team (MAN-2519)
 
-`os.ai.complete`, `os.ai.embed`, `os.ai.transcribe`, `os.ai.image_submit`,
+Fill an assignee or recipient picker, or show a name for a `sub` from the user context.
+Read-only, `auth_mode: "app"`. Merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112);
+production had not deployed it that day — until it does, the call is
+`404 capability_not_found` (the note at the top of this page).
+
+**Input:** `{}` — exactly that; any field is a `422 input_schema_violation`.
+
+**Output:**
+
+```json
+{ "users": [ { "user_id": "…", "display_name": "Dana Levi", "email": "dana@example.com",
+               "avatar_url": "https://…/api/profile/uploads/…" } ] }
+```
+
+- **Who is in it.** Each active, non-anonymous member once, even one who belongs to several
+  workspaces, ordered by email address. In a team tenant that is everyone in the tenant. In
+  the public tenant, where people do not know each other, it is only the workspace the
+  forwarded `X-Manaurum-User-Context` was minted for (or, when the person can no longer
+  reach that one, their primary workspace in the tenant), and only when one of the app's
+  owners works in that workspace. An app-only call there (no user context), or a person
+  from a workspace none of the app's owners is in, gets `{ "users": [] }`. So forward the
+  user context when you call it on someone's behalf.
+- **`display_name`** is the profile's full name, else a nickname the person changed from the
+  default, else the part of the address before the `@`. It is never empty.
+- **`avatar_url`** is present only when the person has one. A profile upload, which Core
+  stores as a path, comes back prefixed with the OS origin (Core's `app_base_url`) rather
+  than as a path that would resolve against your app's host; any other stored value comes
+  back as stored.
+- **No paging, no filter.** A team is small; filter in your container.
+- **The tenant comes only from the verified gateway context.** No input names a tenant, so
+  an app cannot list another one.
+- **Sensitive** (`os.directory.*`). An App Store install has it only when the installer
+  grants it. The home install gets it from the first deploy, unless the platform runs with
+  strict grants, when an admin grants it. Without a grant: `403 capability_not_granted`.
+
+---
+
+## The AI family — what all eight share
+
+`os.ai.complete`, `os.ai.embed`, `os.ai.transcribe`, `os.ai.speak`, `os.ai.image_submit`,
 `os.ai.image_poll`, `os.ai.providers` and `os.ocr.extract`:
 
 - **All are sensitive** (the `os.ai.` / `os.ocr.` prefixes). With strict grants switched on
   they are not seeded at install and a tenant admin has to grant them.
-- **None works for a `runtime.mode: dev` app** — `403 capability_denied_in_dev_mode`.
 - **None has a daily quota**, so `429 quota_exceeded` cannot fire for them. The limit that
-  does fire is the shared-AI spend cap on `os.ai.complete` (below).
+  does fire is the shared ManAurum AI spending limit (`429 ai_spend_cap`): on an unpinned
+  `os.ai.complete`, and on `os.ai.speak` / `os.ai.transcribe` when Manaurum's voice key
+  pays (below).
 - **Errors come in two shapes.** Some `detail`s are a bare string
   (`"upstream_error:openai"`, `"audio_too_large"`, `"ai_provider_not_configured"`), some an
   object (`{"error": "…", …}`). Handle both.
 - **A cost that cannot be priced is `null`**, never `0`; `cost_known` says which.
-- **Upstream timeouts are long** (180 s for completion, embedding and OCR), but a request a
-  browser makes to your app is cut at **30 s** by the gateway (`504 upstream_timeout`). A
+- **Upstream timeouts are long** (180 s for completion, embedding and OCR, 120 s for speech
+  and transcription), but a request a browser makes to your app is cut at **30 s** by the
+  gateway (`504 upstream_timeout`). A
   slow completion inside a browser-initiated `/api/*` call fails there first. Run it as a
   background job your page polls, or declare the route `"streaming": true` and stream (the
   30 s cut applies to buffered routes; streams have their own limits, `v2-platform.md`).
@@ -624,11 +679,54 @@ created.
 
 ---
 
-## `os.ai.transcribe` — speech-to-text (BYOK, OpenAI only)
+## `os.ai.transcribe` — speech-to-text (OpenAI only)
 
-Base64 audio in → transcript text out (MAN-1316). BYOK with the tenant's **OpenAI** key
-specifically — an Anthropic key alone does not cover STT. This is the platform STT path:
-the tenant's key never reaches your container. `X-Manaurum-Workspace-Id` is ignored.
+Base64 audio in → transcript text out (MAN-1316). This is the platform's speech-to-text
+path: no key ever reaches your container. OpenAI only — an Anthropic key alone does not
+cover it.
+
+**Who pays — this and `os.ai.speak`** (Core sergeysuaib-ui/manaurum#2382, MAN-2727 /
+MAN-3256). Merged in Core on 2026-10-04; production had not deployed it that day — until it
+does, `os.ai.transcribe` runs on the tenant's own OpenAI key only and `os.ai.speak` is
+`404 capability_not_found` (the note at the top of this page). On `main`, both voice
+capabilities are paid for like text AI:
+
+1. **The tenant's OpenAI integration**, when the tenant has one. The tenant pays OpenAI
+   directly, and the shared limits are not touched. An integration that exists but holds
+   no usable key is `412 integration_not_configured`; it does not fall through to
+   Manaurum's key.
+2. **Otherwise Manaurum's metered voice key**, for a call from a resolved workspace that is
+   not temporary. It draws on the same user and tenant spending windows as managed text AI
+   — a call with a forwarded user context counts against the user and the tenant, an
+   app-only call against the tenant — and a full window is `429 ai_spend_cap` before the
+   provider is contacted.
+3. Neither: `412 integration_not_configured` with `provider: "openai"`.
+
+**Which workspace.** The forwarded user context's `workspace_id`, else
+`X-Manaurum-Workspace-Id`, picks it among the workspaces your app is installed in that are
+not temporary and that the forwarded person can reach; with neither, the one such workspace
+if there is exactly one. A voice call does not need a workspace: when none resolves (no
+install qualifies, or several and nothing chose), it still runs, on the tenant's own
+integration only. Manaurum's key needs a workspace, so forward the user context whenever
+you can. Four answers refuse the call even when the tenant has its own key
+(`completion_context.py`):
+
+- `403 workspace_context_mismatch` — the user context and the header name different
+  workspaces.
+- `400 workspace_context_required` — the header is sent blank.
+- `412 workspace_context_unavailable` — the only installs the call could resolve to are
+  temporary (the Sandbox), including when the user context or the header names the
+  Sandbox: no key pays for a call from there.
+- `403 workspace_context_unavailable` — the forwarded user context names a workspace where
+  your app has no install the person can reach.
+
+**AI Off applies.** If a workspace administrator switched AI off for your app in the
+resolved workspace, both capabilities answer `403 ai_disabled` before any key is read; when
+no workspace resolves, AI off for your app in any workspace of the tenant refuses the call.
+
+Every call, on either key, is recorded in the workspace's AI usage, attributed to your app
+and to the forwarded user, priced per second of audio. Neither the audio, the text nor the
+transcript is stored; the record holds sizes, the voice and the MIME type.
 
 To RECORD audio inside the OS shell iframe, the app must also declare
 `"permissions": ["microphone"]` in its manifest (see `v2-platform.md` §1) — without it the
@@ -650,7 +748,7 @@ browser blocks `getUserMedia` in the iframe.
 |---|---|---|
 | `audio_base64` | yes | Max **25 MiB decoded**; the string itself is capped at 35,000,000 chars (`422` beyond). Decoding is strict: a `data:` prefix, spaces or line breaks make it `400 invalid_audio_base64`. |
 | `mime_type` | optional | Default `audio/webm`. Pass what you actually recorded — Chrome MediaRecorder emits `audio/webm`, iOS Safari `audio/mp4`. |
-| `model` | optional | Default `gpt-4o-transcribe`; `whisper-1` and `gpt-4o-mini-transcribe` also work. |
+| `model` | optional | Default `gpt-4o-transcribe`; `whisper-1` and `gpt-4o-mini-transcribe` also work. On Manaurum's voice key only these three are served (anything else is `400 model_not_available`); the tenant's own key passes any model through. |
 | `language` | optional | ISO-639-1 hint, e.g. `"ru"`. |
 | `prompt` | optional | Vocabulary-biasing prompt (names, domain terms), ≤ 4000 chars. |
 
@@ -664,15 +762,68 @@ There is no `provider` and no `log_prompt` field; sending either is a `422`.
 
 No token or cost fields.
 
-**Errors:**
+**Errors** (beyond the gates at the top of this page):
 - `400 invalid_audio_base64` — undecodable, non-strict or empty base64.
 - `400 audio_too_large` — decoded audio over 25 MiB.
-- `412 {"error":"integration_not_configured","provider":"openai"}` — no OpenAI key.
-- `502 upstream_error:openai` — EVERY upstream failure (non-2xx, timeout, transport); the
-  status is not included. Upstream timeout is 120 s.
+- `400 model_not_available` — on Manaurum's voice key, a `model` other than the three above.
+- `403 {"error":"ai_disabled","message":…}` — AI is off for your app (above).
+- `400 {"error":"workspace_context_required"}`, `403 {"error":"workspace_context_mismatch"}`,
+  `403` / `412 {"error":"workspace_context_unavailable","message":…}` — the workspace cases
+  under "Which workspace" above.
+- `412 {"error":"integration_not_configured","provider":"openai"}` — no key can serve, or
+  the tenant's OpenAI integration holds no usable key. The tenant admin fixes either in
+  Settings → Integrations.
+- `429 {"error":"ai_spend_cap","message":…,"subject":…,"window":…}` — Manaurum's voice key,
+  and a shared spending window is full.
+- `502 upstream_error:openai` — EVERY upstream failure (non-2xx, timeout, transport), on
+  either key; the status is not included, and it is never a `504`. Upstream timeout is
+  120 s.
 
-Privacy note: the platform logs only the audio size + MIME — never the audio or the
-transcript. Keep your own transcript record if you need one.
+Keep your own transcript record if you need one: the platform keeps none.
+
+---
+
+## `os.ai.speak` — text to speech, MP3 out (OpenAI only)
+
+Text or Markdown in → the whole MP3 back as base64. Merged in Core on 2026-10-04
+(sergeysuaib-ui/manaurum#2382); production had not deployed it that day — until it does,
+the call is `404 capability_not_found` (the note at the top of this page). Paid for,
+workspace-resolved and switched off exactly as `os.ai.transcribe` above; the same errors
+apply except the audio and model ones. Model `gpt-4o-mini-tts`; you cannot choose
+another.
+
+**Input:**
+
+```json
+{ "text": "Your order **#1042** is ready for pickup.", "voice": "nova", "lang": "en" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `text` | string | **yes** | 1–20,000 characters of plain text or Markdown. Code blocks are spoken as a short placeholder, links as their label, formatting marks are dropped. At most 4,000 characters of what remains are spoken: longer text is cut at the last sentence end (or hard at 4,000 when there is none in the second half) and `truncated` comes back `true`. |
+| `voice` | string | no | `alloy` (default), `coral`, `nova`, `onyx`, `sage`. Anything else is `422 input_schema_violation`. |
+| `lang` | string | no | ISO-639-1 code of the text, e.g. `"ru"`: the code-block placeholder is spoken in it. English when absent or unknown. |
+
+**Output:**
+
+```json
+{ "audio_base64": "<base64 of the MP3>", "mime_type": "audio/mpeg", "voice": "nova",
+  "model": "gpt-4o-mini-tts", "truncated": false }
+```
+
+It is not a stream. Hand the base64 to your page and play it as a `data:` URL of
+`mime_type` (`new Audio("data:" + mime_type + ";base64," + audio_base64)`); to play it again
+later, store the decoded bytes with `os.files.upload` — the platform keeps neither the text
+nor the audio. For longer text, split it at sentence ends, make one call per part and play
+them in order, or check `truncated`.
+
+**Errors** (beyond the gates, and those of `os.ai.transcribe` that are not about audio or
+`model`):
+
+| HTTP | `detail` | When |
+|---|---|---|
+| 400 | `{"error":"nothing_to_speak","message":…}` | Once code and formatting marks are removed, nothing speakable is left. |
+| 422 | `input_schema_violation` | Empty `text`, `text` over 20,000 characters, or a `voice` outside the five. |
 
 ---
 
@@ -761,7 +912,12 @@ grants. Advisory only: nothing is reserved, and things can change before the rea
 
 - `providers` — the tenant's BYOK keys, never the keys themselves. `serves` is what each can
   answer *here*: `complete` for all five, `embed` for openai and gemini, `transcribe` for
-  openai, `image` for openai only when the flag is on.
+  openai, `image` for openai only when the flag is on. `transcribe` on the openai row means
+  the tenant's integration pays for both `os.ai.transcribe` and `os.ai.speak` (there is no
+  `speak` entry). Once production runs `main` (the note at the top of this page), its
+  absence does **not** mean voice is unavailable: Manaurum's voice key may still serve the
+  call, so make it and handle a `412` rather than hiding a voice feature on this field
+  alone.
 - `completion` — whether an **unpinned** `os.ai.complete` will work, and with what.
   `unavailable_reason` is `capability_not_granted`, `ai_disabled` or
   `ai_backend_unavailable` when it will not.
@@ -1122,7 +1278,7 @@ The limits that do fire are per capability:
 | 50 MiB per object | `os.files.upload` (`size_hint`) | `422 input_schema_violation` |
 | 20 saves a minute, 200 an hour, per user | `os.drive.publish` / `.write` | `429 publish_rate_limited` |
 | 10 a hour, 50 a day, per (app, recipient) | `os.notifications.send_to_user`, in-app | `429 notification_rate_limited` |
-| Shared ManAurum AI spend, per user and per tenant, day and month | `os.ai.complete` on the managed backend | `429 ai_spend_cap` |
+| Shared ManAurum AI spend, per user and per tenant, day and month | `os.ai.complete` on the managed backend; `os.ai.speak` / `os.ai.transcribe` on Manaurum's voice key | `429 ai_spend_cap` |
 
 The manifest key `quota_per_tenant_per_day` is accepted and has no effect.
 
@@ -1133,12 +1289,16 @@ The manifest key `quota_per_tenant_per_day` is accepted and has no effect.
 The registry is the source of truth: `backend/app/services/capabilities/` in the monorepo —
 `grep -rn 'name="os\.' backend/app/services/capabilities/` enumerates every capability that
 exists, and each `CapabilityDefinition` carries the `auth_mode` and input schema this page
-describes. This page was last checked against Core `main` 8fe6f5d (2026-10-02),
-capability by capability.
+describes. This page was last read against the handlers capability by capability at Core
+`main` 8fe6f5d (2026-10-02); `os.ai.speak`, the voice funding and workspace rules of
+`os.ai.transcribe` and `os.directory.list_users` were read against `7c1f09566`
+(2026-10-04). Separately, `scripts/check_repo.py` holds this page to the contract copy
+synced at `7c1f09566`: every registered capability documented, the count above, and each
+single-capability section's input example and field table equal to its schema.
 
 When a capability is added or changed in the monorepo, the checklist that must be walked is
 `docs/standards/ADDING_A_V2_CAPABILITY.md`. Its § 9 covers this plugin explicitly — this
 file, `manaurum-app/SKILL.md`, `v2-platform.md` § 1 and `manaurum-setup/SKILL.md` all have
-to move with the code, because a stale skill actively generates broken apps. There is
-**no** automated parity check between the registry and any documentation surface (this
-one included); the checklist is the mechanism.
+to move with the code, because a stale skill actively generates broken apps. Beyond the
+names and inputs `check_repo.py` compares, nothing checks outputs, errors or behaviour
+against the registry; the checklist is the mechanism.
