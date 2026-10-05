@@ -415,7 +415,7 @@ COPY --from=web /web/dist/ src/static/ # the server serves src/static
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-Commit `package-lock.json` (`npm ci` refuses to run without it) and leave `node_modules` and `dist` out of git. The handshake still goes inline in `web/index.html`, which Vite copies into the bundle as it is: `references/sdk-api.md` → "The pattern that actually shipped". Point `templates/check_ui.py` at the built directory (`web/dist` after a local `npm run build`) or at the sources, since it reads `.jsx` and `.tsx` as well as `.js`; a built bundle's `className:"sidebar"` is caught too.
+Commit `package-lock.json` (`npm ci` refuses to run without it) and leave `node_modules` and `dist` out of git. On a deploy, `COPY web/ ./` cannot overwrite what `npm ci` installed, because the packer leaves `node_modules` out of the archive too; a local `docker build` sends whatever is in the directory, so list `web/node_modules` and `web/dist` in a `.dockerignore` for that (it only affects local builds, as above). The handshake still goes inline in `web/index.html`, which Vite copies into the bundle as it is: `references/sdk-api.md` → "The pattern that actually shipped". Point `templates/check_ui.py` at the built directory (`web/dist` after a local `npm run build`) or at the sources, since it reads `.jsx` and `.tsx` as well as `.js`; a built bundle's `className:"sidebar"` is caught too.
 
 Env vars the platform sets on every task:
 
