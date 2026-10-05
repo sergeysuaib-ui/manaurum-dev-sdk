@@ -349,8 +349,11 @@ claims = jwt.decode(request.headers["authorization"].removeprefix("Bearer "),
                     os.environ["CORE_USER_CONTEXT_PUBLIC_KEY_PEM"], algorithms=["RS256"],
                     audience=os.environ["MANAURUM_APP_ID"], issuer="manaurum-core",
                     options={"require_aud": True, "require_iss": True, "require_exp": True})
-assert claims.get("scope") == "system" and claims.get("caller_system") == "cron-scheduler"
-assert claims.get("tenant_id") == os.environ["MANAURUM_TENANT_ID"]
+# Explicit checks, not `assert`: `python -O` strips asserts.
+if (claims.get("scope") != "system"
+        or claims.get("caller_system") != "cron-scheduler"
+        or claims.get("tenant_id") != os.environ["MANAURUM_TENANT_ID"]):
+    raise PermissionError("not this app's cron system token")
 ```
 
 A user context and a person pass name your app in `aud` too; the `scope` check is what
