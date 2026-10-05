@@ -5,13 +5,10 @@ registered on Core's `main` at `7c1f09566` (2026-10-04) are documented below, al
 `version: 1`. Every entry gives the input (from the capability's JSON Schema), the output on
 success, and the errors that capability itself raises.
 
-> **Production lags `main` here.** `os.ai.speak`, the voice-key funding of
-> `os.ai.transcribe` (sergeysuaib-ui/manaurum#2382) and `os.directory.list_users` (#2112)
-> merged in Core on 2026-10-04, and production had not deployed them that day, so it
-> registered 32 capabilities. Until it does, `os.ai.speak` and `os.directory.list_users`
-> answer `404 capability_not_found`, and `os.ai.transcribe` runs on the tenant's own OpenAI
-> key only (`412 integration_not_configured` without one). The three sections below
-> describe `main`, and each points back here. CLI 0.3.2 knows both new names: `manaurum
+> **Live in production.** `os.ai.speak` (sergeysuaib-ui/manaurum#2382, Gemini and `model`
+> in #2385), the voice-key funding of `os.ai.transcribe` (#2382) and
+> `os.directory.list_users` (#2112) merged in Core on 2026-10-04 and are deployed (checked
+> 2026-10-05). CLI 0.3.2 knows both new names: `manaurum
 > app validate` refuses a call to one your manifest does not declare, as `check_app.py`
 > does. 0.3.1 does not know them and says nothing.
 
@@ -490,9 +487,7 @@ Resolve a `location_id` the tenant uses elsewhere (a shop, a warehouse) to a nam
 ## `os.directory.list_users` — the people on the app's team (MAN-2519)
 
 Fill an assignee or recipient picker, or show a name for a `sub` from the user context.
-Read-only, `auth_mode: "app"`. Merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112);
-production had not deployed it that day — until it does, the call is
-`404 capability_not_found` (the note at the top of this page).
+Read-only, `auth_mode: "app"`. Merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112).
 
 **Input:** `{}` — exactly that; any field is a `422 input_schema_violation`.
 
@@ -686,10 +681,7 @@ path: no key ever reaches your container. OpenAI only — an Anthropic key alone
 cover it.
 
 **Who pays — this and `os.ai.speak`** (Core sergeysuaib-ui/manaurum#2382, MAN-2727 /
-MAN-3256). Merged in Core on 2026-10-04; production had not deployed it that day — until it
-does, `os.ai.transcribe` runs on the tenant's own OpenAI key only and `os.ai.speak` is
-`404 capability_not_found` (the note at the top of this page). On `main`, both voice
-capabilities are paid for like text AI:
+MAN-3256). Both voice capabilities are paid for like text AI:
 
 1. **The tenant's OpenAI integration**, when the tenant has one. The tenant pays OpenAI
    directly, and the shared limits are not touched. An integration that exists but holds
@@ -701,6 +693,9 @@ capabilities are paid for like text AI:
    app-only call against the tenant — and a full window is `429 ai_spend_cap` before the
    provider is contacted.
 3. Neither: `412 integration_not_configured` with `provider: "openai"`.
+
+For `os.ai.speak` the provider is the speaking model's: a Gemini model is paid by the
+tenant's Gemini integration, else Manaurum's Gemini key, and the 412 names `"gemini"`.
 
 **Which workspace.** The forwarded user context's `workspace_id`, else
 `X-Manaurum-Workspace-Id`, picks it among the workspaces your app is installed in that are
@@ -783,14 +778,17 @@ Keep your own transcript record if you need one: the platform keeps none.
 
 ---
 
-## `os.ai.speak` — text to speech, MP3 out (OpenAI only)
+## `os.ai.speak` — text to speech, MP3 out (OpenAI or Gemini)
 
 Text or Markdown in → the whole MP3 back as base64. Merged in Core on 2026-10-04
-(sergeysuaib-ui/manaurum#2382); production had not deployed it that day — until it does,
-the call is `404 capability_not_found` (the note at the top of this page). Paid for,
-workspace-resolved and switched off exactly as `os.ai.transcribe` above; the same errors
-apply except the audio and model ones. Model `gpt-4o-mini-tts`; you cannot choose
-another.
+(sergeysuaib-ui/manaurum#2382; Gemini and `model` in #2385). Workspace-resolved and switched off exactly as `os.ai.transcribe` above; the
+same errors apply except the audio ones.
+
+**Which model speaks:** the `model` you pass, else the model a workspace admin chose for
+your app (Settings → Agent Management → App Setup, a model and a voice per app), else
+Manaurum's default (`gpt-4o-mini-tts`). It is paid like `os.ai.transcribe`, by the
+speaking model's provider: the tenant's own integration for that provider, else
+Manaurum's key for it where Manaurum has one.
 
 **Input:**
 
@@ -801,7 +799,8 @@ another.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `text` | string | **yes** | 1–20,000 characters of plain text or Markdown. Code blocks are spoken as a short placeholder, links as their label, formatting marks are dropped. At most 4,000 characters of what remains are spoken: longer text is cut at the last sentence end (or hard at 4,000 when there is none in the second half) and `truncated` comes back `true`. |
-| `voice` | string | no | `alloy` (default), `coral`, `nova`, `onyx`, `sage`. Anything else is `422 input_schema_violation`. |
+| `model` | string | no | `gpt-4o-mini-tts`, `gemini-3.8-flash-tts` or `gemini-3.8-flash-lite-tts`. Omit it to use your app's setting or Manaurum's default. |
+| `voice` | string | no | OpenAI: `alloy` (default), `coral`, `nova`, `onyx`, `sage`. Gemini: `en-us-bodi` (default) and the 30 prebuilt voices (Achernar, Achird, Algenib, Algieba, Alnilam, Aoede, Autonoe, Callirrhoe, Charon, Despina, Enceladus, Erinome, Fenrir, Gacrux, Iapetus, Kore, Laomedeia, Leda, Orus, Puck, Pulcherrima, Rasalgethi, Sadachbia, Sadaltager, Schedar, Sulafat, Umbriel, Vindemiatrix, Zephyr, Zubenelgenubi). A name in neither list is `422 input_schema_violation`. A voice of the other provider is replaced by the configured voice, unless you also passed `model`: then it is `400 unknown_voice`. |
 | `lang` | string | no | ISO-639-1 code of the text, e.g. `"ru"`: the code-block placeholder is spoken in it. English when absent or unknown. |
 
 **Output:**
@@ -823,7 +822,14 @@ them in order, or check `truncated`.
 | HTTP | `detail` | When |
 |---|---|---|
 | 400 | `{"error":"nothing_to_speak","message":…}` | Once code and formatting marks are removed, nothing speakable is left. |
-| 422 | `input_schema_violation` | Empty `text`, `text` over 20,000 characters, or a `voice` outside the five. |
+| 400 | `{"error":"unknown_voice","message":…}` | You passed `model` with a voice of the other provider. (A name in neither voice list is the `422` below.) |
+| 412 | `{"error":"integration_not_configured","provider":…}` | Neither the tenant nor Manaurum has a key for the speaking model's provider, or the tenant has an integration for it that holds no usable key — that does not fall through to Manaurum's key. |
+| 412 | `{"error":"speech_setting_invalid",…}` | Your app's voice setting names a model or voice that is no longer offered; a workspace admin updates it in Settings. |
+| 422 | `input_schema_violation` | Empty `text`, `text` over 20,000 characters, or an unknown `model` or `voice`. |
+
+Gemini audio comes back as `audio/mpeg` like OpenAI's, at 64 kbps. A Gemini call costs a
+little more with a library voice such as `en-us-bodi`: a fixed input overhead per call of
+about $0.0008 on top of the audio.
 
 ---
 

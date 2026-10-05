@@ -149,9 +149,7 @@ Validation rules:
   digits and hyphens, starting with a letter and ending with a letter or digit; not
   shaped like a UUID (`422 app_id_invalid`); not a reserved platform name (`api`, `app`,
   `www`, …); not under the `draft-` prefix, which is Aurum Studio's private drafts
-  (`422 slug_reserved`; that refusal merged in Core on 2026-10-04,
-  sergeysuaib-ui/manaurum#2368, and production had not deployed it that day — until it
-  does, the deploy itself accepts a `draft-` name). From CLI 0.3.1, `manaurum app init`
+  (`422 slug_reserved`; merged in Core on 2026-10-04, sergeysuaib-ui/manaurum#2368). From CLI 0.3.1, `manaurum app init`
   refuses such a name before writing anything, and `manaurum app validate` and the deploy
   preflight refuse it before the build; `check_app.py` does too. Becomes
   `<app_id>.apps.manaurum.com`.
@@ -191,8 +189,7 @@ Validation rules:
   declaration. Voice apps also declare `os.ai.transcribe` (and `os.ai.speak`
   to answer aloud) in `requires_capabilities` (that part is the platform's
   speech; `permissions` is only the browser side). `os.ai.speak` merged in Core
-  on 2026-10-04 (sergeysuaib-ui/manaurum#2382); production had not deployed it
-  that day — until it does, it answers `404 capability_not_found`.
+  on 2026-10-04 (sergeysuaib-ui/manaurum#2382).
 
 To use AI / declare a dedicated DB schema / migrations, see `manaurum-app/SKILL.md` and `references/v2-platform.md`.
 
