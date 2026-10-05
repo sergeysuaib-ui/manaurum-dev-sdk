@@ -702,6 +702,9 @@ capabilities are paid for like text AI:
    provider is contacted.
 3. Neither: `412 integration_not_configured` with `provider: "openai"`.
 
+For `os.ai.speak` the provider is the speaking model's: a Gemini model is paid by the
+tenant's Gemini integration, else Manaurum's Gemini key, and the 412 names `"gemini"`.
+
 **Which workspace.** The forwarded user context's `workspace_id`, else
 `X-Manaurum-Workspace-Id`, picks it among the workspaces your app is installed in that are
 not temporary and that the forwarded person can reach; with neither, the one such workspace
