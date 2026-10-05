@@ -832,7 +832,7 @@ them in order, or check `truncated`.
 | HTTP | `detail` | When |
 |---|---|---|
 | 400 | `{"error":"nothing_to_speak","message":…}` | Once code and formatting marks are removed, nothing speakable is left. |
-| 400 | `{"error":"unknown_voice","message":…}` | You passed `model` with a voice that model does not have. |
+| 400 | `{"error":"unknown_voice","message":…}` | You passed `model` with a voice of the other provider. (A name in neither voice list is the `422` below.) |
 | 412 | `{"error":"integration_not_configured","provider":…}` | Neither the tenant nor Manaurum has a key for the speaking model's provider, or the tenant has an integration for it that holds no usable key — that does not fall through to Manaurum's key. |
 | 412 | `{"error":"speech_setting_invalid",…}` | Your app's voice setting names a model or voice that is no longer offered; a workspace admin updates it in Settings. |
 | 422 | `input_schema_violation` | Empty `text`, `text` over 20,000 characters, or an unknown `model` or `voice`. |
