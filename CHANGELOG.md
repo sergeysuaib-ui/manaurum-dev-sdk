@@ -34,7 +34,8 @@ Summary: The starter app refuses a sign-in token that was made for a different a
   audience alone, no audience, the right audience with another slug, `MANAURUM_APP_ID`
   unset, a missing `iss`, a person pass and a system token refused as a user context, a
   token carrying `scope`, a system token refused as a person pass, a user context refused
-  as a person pass with its code, and a pass without `typ: "person"` refused.
+  as a person pass with its code, and a pass without `typ: "person"` refused. Eight of
+  them fail against 3.18.1's `auth.py`.
 * **The verification docs bind the app.** `v2-platform.md`'s four steps require your
   `MANAURUM_APP_ID` as the audience, no `typ` / `scope`, the tenant and the slug, and say
   which test covers what; its env table names `MANAURUM_APP_ID` as the audience, and on a
