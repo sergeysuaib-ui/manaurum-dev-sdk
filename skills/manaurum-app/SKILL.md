@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.18.0.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.18.1.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its

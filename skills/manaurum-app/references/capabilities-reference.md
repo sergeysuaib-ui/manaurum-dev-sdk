@@ -783,14 +783,19 @@ Keep your own transcript record if you need one: the platform keeps none.
 
 ---
 
-## `os.ai.speak` — text to speech, MP3 out (OpenAI only)
+## `os.ai.speak` — text to speech, MP3 out (OpenAI or Gemini)
 
 Text or Markdown in → the whole MP3 back as base64. Merged in Core on 2026-10-04
-(sergeysuaib-ui/manaurum#2382); production had not deployed it that day — until it does,
-the call is `404 capability_not_found` (the note at the top of this page). Paid for,
-workspace-resolved and switched off exactly as `os.ai.transcribe` above; the same errors
-apply except the audio and model ones. Model `gpt-4o-mini-tts`; you cannot choose
-another.
+(sergeysuaib-ui/manaurum#2382; Gemini and `model` in #2385); production had not deployed
+it that day — until it does, the call is `404 capability_not_found` (the note at the top of
+this page). Workspace-resolved and switched off exactly as `os.ai.transcribe` above; the
+same errors apply except the audio ones.
+
+**Which model speaks:** the `model` you pass, else the model a workspace admin chose for
+your app (Settings → Agent Management → App Setup, a model and a voice per app), else
+Manaurum's default (`gpt-4o-mini-tts`). It is paid like `os.ai.transcribe`, by the
+speaking model's provider: the tenant's own integration for that provider, else
+Manaurum's key for it where Manaurum has one.
 
 **Input:**
 
@@ -801,7 +806,8 @@ another.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `text` | string | **yes** | 1–20,000 characters of plain text or Markdown. Code blocks are spoken as a short placeholder, links as their label, formatting marks are dropped. At most 4,000 characters of what remains are spoken: longer text is cut at the last sentence end (or hard at 4,000 when there is none in the second half) and `truncated` comes back `true`. |
-| `voice` | string | no | `alloy` (default), `coral`, `nova`, `onyx`, `sage`. Anything else is `422 input_schema_violation`. |
+| `model` | string | no | `gpt-4o-mini-tts`, `gemini-3.8-flash-tts` or `gemini-3.8-flash-lite-tts`. Omit it to use your app's setting or Manaurum's default. |
+| `voice` | string | no | OpenAI: `alloy` (default), `coral`, `nova`, `onyx`, `sage`. Gemini: `en-us-bodi` (default) and the 30 prebuilt voices (Achernar, Achird, Algenib, Algieba, Alnilam, Aoede, Autonoe, Callirrhoe, Charon, Despina, Enceladus, Erinome, Fenrir, Gacrux, Iapetus, Kore, Laomedeia, Leda, Orus, Puck, Pulcherrima, Rasalgethi, Sadachbia, Sadaltager, Schedar, Sulafat, Umbriel, Vindemiatrix, Zephyr, Zubenelgenubi). A name in neither list is `422 input_schema_violation`. A voice of the other provider is replaced by the configured voice, unless you also passed `model`: then it is `400 unknown_voice`. |
 | `lang` | string | no | ISO-639-1 code of the text, e.g. `"ru"`: the code-block placeholder is spoken in it. English when absent or unknown. |
 
 **Output:**
@@ -823,7 +829,14 @@ them in order, or check `truncated`.
 | HTTP | `detail` | When |
 |---|---|---|
 | 400 | `{"error":"nothing_to_speak","message":…}` | Once code and formatting marks are removed, nothing speakable is left. |
-| 422 | `input_schema_violation` | Empty `text`, `text` over 20,000 characters, or a `voice` outside the five. |
+| 400 | `{"error":"unknown_voice","message":…}` | You passed `model` with a voice that model does not have. |
+| 412 | `{"error":"integration_not_configured","provider":…}` | Neither the tenant nor Manaurum has a key for the speaking model's provider. |
+| 412 | `{"error":"speech_setting_invalid",…}` | Your app's voice setting names a model or voice that is no longer offered; a workspace admin updates it in Settings. |
+| 422 | `input_schema_violation` | Empty `text`, `text` over 20,000 characters, or an unknown `model` or `voice`. |
+
+Gemini audio comes back as `audio/mpeg` like OpenAI's, at 64 kbps. A Gemini call costs a
+little more with a library voice such as `en-us-bodi`: a fixed input overhead per call of
+about $0.0008 on top of the audio.
 
 ---
 

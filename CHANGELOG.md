@@ -1,3 +1,29 @@
+# 3.18.1 - `os.ai.speak` speaks with Gemini too
+
+Summary: `os.ai.speak` takes an optional `model` and can speak with Gemini; the capability reference says how the model and voice are chosen.
+
+### Why
+
+Core sergeysuaib-ui/manaurum#2385 (merged 2026-10-04) added Gemini 3.8 Flash TTS and
+Flash-Lite TTS next to OpenAI. The reference still called `os.ai.speak` OpenAI only, with
+five voices and no way to choose a model.
+
+### What changed
+
+* `capabilities-reference.md`, `os.ai.speak`:
+  * the optional `model`;
+  * the voices of each model, with `en-us-bodi` as the Gemini default;
+  * the order that picks the model (the request, then the app's voice setting in
+    Settings, then Manaurum's default);
+  * that the speaking model's provider pays;
+  * the `400 unknown_voice`, `412 integration_not_configured` and
+    `412 speech_setting_invalid` errors;
+  * Gemini's 64 kbps MP3 and its per-call overhead.
+* The platform contract is re-synced from Core `main` @ b9980413e
+  (`scripts/sync_contract.py`). That brings in `model` on `os.ai.speak` and the new error
+  codes (`unknown_voice`, `speech_setting_invalid`), together with whatever else Core
+  merged since the last sync, including the manifest's new `people` section.
+
 # 3.18.0 - CLI 0.3.2, and Core's 2026-10-04 merges ahead of their deploy: the SDK's language, speech, the team list, no dev runtime
 
 Summary: The guide installs command-line tool 0.3.2 and describes what ManAurum merged on 4 October before it goes live: speaking aloud, a list of your team, and the person's language in the browser.

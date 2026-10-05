@@ -488,7 +488,52 @@
           "type": "array"
         },
         "events": {
-          "type": "array"
+          "type": "array",
+          "description": "Events this app emits with `os.events.emit`. An entry that is an object with `payload_schema` is a typed declaration: it must carry `name` (and may carry `version` and `description`), its `payload_schema` must be a valid JSON Schema describing an object, and no two typed declarations share a `name` and `version`. The platform's event catalogue reads typed declarations to tell the assistant what an event carries. Any other entry (a bare event name, or an object without `payload_schema`) is accepted, declaring the event without a payload type.",
+          "items": {
+            "if": {
+              "type": "object",
+              "required": [
+                "payload_schema"
+              ]
+            },
+            "then": {
+              "required": [
+                "name"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "description": "The `event_name` this app passes to `os.events.emit`."
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "description": "Version of this event's payload contract. A name may be typed once per version."
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 400,
+                  "description": "What has happened when this event is emitted, written for people and the assistant."
+                },
+                "payload_schema": {
+                  "type": "object",
+                  "required": [
+                    "type"
+                  ],
+                  "properties": {
+                    "type": {
+                      "const": "object"
+                    }
+                  },
+                  "description": "JSON Schema (Draft 2020-12) of the event's `payload`. It must describe an object, because `os.events.emit` takes an object payload, and it must itself be a valid schema; both are checked when the manifest is validated."
+                }
+              }
+            }
+          }
         }
       }
     },
