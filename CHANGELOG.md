@@ -61,7 +61,12 @@ Summary: The starter app refuses a sign-in token that was made for a different a
   production's `5c2dbdb62`; re-running
   `py -3.12 scripts/sync_contract.py --monorepo C:/Users/sergei/Desktop/Manaurum --ref b9980413ec890ecf161d18e865ce9f38855a1e4f`
   reproduces it byte for byte. The capability reference's header and footer name it.
-* CLI 0.3.3 — README pin pending release
+* **CLI 0.3.3** ([cli-v0.3.3](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.3),
+  Core sergeysuaib-ui/manaurum#2402): README installs its wheel and `open-claims.txt`'s
+  MAN-1385 line names it (PyPI still answers `404`, re-checked 2026-10-05). 0.3.3's starter
+  binds the user_context as this starter now does, refuses an `app_id` ending in a newline,
+  and checks typed event declarations. `check_app.py` refuses that newline too: it compares
+  the slug with `re.fullmatch`, so the contract's `$` no longer matches before a final `\n`.
 
 ### Not in this release
 

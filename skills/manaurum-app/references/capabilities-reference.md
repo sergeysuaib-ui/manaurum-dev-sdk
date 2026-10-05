@@ -8,7 +8,7 @@ funding of `os.ai.transcribe` (#2382) and `os.directory.list_users` (#2112) amon
 Every entry gives the input (from the capability's JSON Schema), the output on success, and
 the errors that capability itself raises.
 
-CLI 0.3.2 knows every one of them: `manaurum app validate` refuses a call to one your
+CLI 0.3.2 and later know every one of them: `manaurum app validate` refuses a call to one your
 manifest does not declare, as `check_app.py` does. 0.3.1 does not know `os.ai.speak` or
 `os.directory.list_users` and says nothing about a call to either.
 
