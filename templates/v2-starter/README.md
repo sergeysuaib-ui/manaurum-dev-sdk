@@ -106,8 +106,11 @@ the app inside the Manaurum desktop before calling a deploy good.
 **4. Identity comes from a header, not a token.** On an `auth: "user"`
 route the gateway mints a 60-second RS256 JWT and injects it as
 `X-Manaurum-User-Context`. Your container verifies it against
-`CORE_USER_CONTEXT_PUBLIC_KEY_PEM` (see `verify_user_context()` in
-`src/auth.py`). The end user's own bearer never reaches you.
+`CORE_USER_CONTEXT_PUBLIC_KEY_PEM` with its own `MANAURUM_APP_ID` as the
+audience and its own `MANAURUM_TENANT_ID` as the tenant (see
+`verify_user_context()` in `src/auth.py`): every app's tokens share one key,
+so only those two say a token is for this app. The end user's own bearer
+never reaches you.
 
 **5. `agent_capabilities` is what makes the app part of the OS.** The two
 entries in `manifest.json` are served by `src/agent_routes.py` and let the

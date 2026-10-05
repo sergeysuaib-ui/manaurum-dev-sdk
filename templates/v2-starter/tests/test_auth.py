@@ -6,10 +6,12 @@ Each negative test names a real way the check can be silently wrong. A
 verifier that decodes without checking `iss`/`aud`/`exp` passes the
 happy-path test and fails all of these.
 
-The last group is the one a signature check cannot do: Core signs every
-app's tokens with the same key and the same audience, so a token minted
-for another app, or for this app in another tenant, has a perfectly good
-signature. Only the `app_id` and `tenant_id` checks stop it.
+The binding group is the one a signature check cannot do: Core signs every
+app's tokens with the same key, and every token carries the shared
+audience `manaurum-app`, so a token minted for another app, or for this
+app in another tenant, has a perfectly good signature. Only the per-app
+audience (MANAURUM_APP_ID, MAN-3231), the `app_id` and `tenant_id` checks,
+and the refusal of Core's other token kinds stop it.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from fastapi import HTTPException
 
 from src.auth import verify_user_context
 from src.capability import APP_SLUG
-from tests.conftest import TENANT_ID
+from tests.conftest import APP_UUID, OTHER_APP_UUID, SHARED_AUDIENCE, TENANT_ID
 
 
 def test_valid_token_is_accepted(user_context):
@@ -54,6 +56,7 @@ def test_wrong_audience_is_rejected(user_context):
     with pytest.raises(HTTPException) as exc:
         verify_user_context(user_context(aud="manaurum-something-else"))
     assert exc.value.status_code == 401
+    assert exc.value.detail == "user_context_wrong_app"
 
 
 def test_token_without_subject_is_rejected(user_context):
@@ -105,11 +108,43 @@ def test_token_signed_by_a_different_key_is_rejected(user_context, monkeypatch):
 
 def test_token_minted_for_another_app_is_rejected(user_context):
     """Every app's users carry tokens with this exact signature, issuer and
-    audience. The developer of any app they open sees them, and has 60
-    seconds to present one here."""
+    shared audience. The developer of any app they open sees them, and has
+    60 seconds to present one here. Core names that other app in `aud`."""
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(user_context(aud=[SHARED_AUDIENCE, OTHER_APP_UUID],
+                                         app_id="some-other-app"))
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "user_context_wrong_app"
+
+
+def test_token_with_only_the_shared_audience_is_rejected(user_context):
+    """What a Core from before MAN-3231 minted, for every app alike. It names
+    no app, so nothing says it is this one's."""
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(user_context(aud=SHARED_AUDIENCE))
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "user_context_wrong_app"
+
+
+def test_token_without_an_audience_is_rejected(user_context, keypair):
+    """python-jose skips the audience check for a token with no `aud` at
+    all; the verifier has to require the claim."""
+    from jose import jwt
+
+    claims = jwt.get_unverified_claims(user_context())
+    del claims["aud"]
+    no_aud = jwt.encode(claims, keypair[0], algorithm="RS256")
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(no_aud)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "user_context_wrong_app"
+
+
+def test_the_right_audience_with_another_apps_slug_is_rejected(user_context):
+    """The audience names this app, `app_id` another: not a token the
+    gateway mints for anyone, so the slug check stands on its own."""
     with pytest.raises(HTTPException) as exc:
         verify_user_context(user_context(app_id="some-other-app"))
-    assert exc.value.status_code == 401
     assert exc.value.detail == "user_context_wrong_app"
 
 
@@ -137,15 +172,17 @@ def test_token_missing_a_required_claim_is_rejected(user_context, claim):
     assert exc.value.detail == "user_context_incomplete"
 
 
-@pytest.mark.parametrize("dropped", ["exp", "iat"])
-def test_token_without_exp_or_iat_is_rejected(keypair, dropped):
-    """Core always mints both. Without `exp` python-jose would accept the
-    token forever."""
+@pytest.mark.parametrize("dropped", ["exp", "iat", "iss"])
+def test_token_without_exp_iat_or_iss_is_rejected(keypair, dropped):
+    """Core always mints all three. Without `exp` python-jose would accept
+    the token forever; a token with no `iss` or `iat` was not minted by
+    Core either."""
     from jose import jwt
 
     now = datetime.now(timezone.utc)
     claims = {"sub": "u-1", "tenant_id": TENANT_ID, "app_id": APP_SLUG,
-              "app_version": "0.1.0", "iss": "manaurum-core", "aud": "manaurum-app",
+              "app_version": "0.1.0", "iss": "manaurum-core",
+              "aud": [SHARED_AUDIENCE, APP_UUID],
               "iat": now, "exp": now + timedelta(seconds=60)}
     del claims[dropped]
     token = jwt.encode(claims, keypair[0], algorithm="RS256")
@@ -163,19 +200,25 @@ def test_missing_tenant_env_fails_closed(monkeypatch, user_context):
     assert exc.value.status_code == 503
 
 
-# ── Person pass (`auth: "optional"`, Core MAN-3200) ────────────────────────
+def test_missing_app_id_env_fails_closed(monkeypatch, user_context):
+    """No MANAURUM_APP_ID means no audience to require: 503, never 'any app'."""
+    token = user_context()
+    monkeypatch.delenv("MANAURUM_APP_ID")
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(token)
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "manaurum_app_id_not_injected"
 
-APP_UUID = "44444444-4444-4444-4444-444444444444"
-OTHER_APP_UUID = "55555555-5555-5555-5555-555555555555"
+
+# ── Person pass (`auth: "optional"`, Core MAN-3200) ────────────────────────
 
 
 @pytest.fixture
-def person_pass(keypair, monkeypatch):
+def person_pass(keypair):
     """Mint the pass the gateway sends a member on an `optional` route.
-    Its audience is the app's UUID, so the test env needs MANAURUM_APP_ID."""
+    Its audience is the app's UUID alone, which the autouse fixture puts in
+    MANAURUM_APP_ID."""
     from jose import jwt
-
-    monkeypatch.setenv("MANAURUM_APP_ID", APP_UUID)
 
     def mint(**overrides) -> str:
         now = datetime.now(timezone.utc)
@@ -211,10 +254,67 @@ def test_person_pass_for_another_app_is_rejected(person_pass):
 
 
 def test_user_context_is_not_a_person_pass(person_pass, user_context):
+    """A user context names this app in its audience too, since MAN-3231:
+    only the missing `typ: "person"` refuses it here."""
     from src.auth import verify_person_pass
 
-    with pytest.raises(HTTPException):
+    with pytest.raises(HTTPException) as exc:
         verify_person_pass(user_context())
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "person_pass_invalid"
+
+
+@pytest.fixture
+def system_token(keypair):
+    """Mint the token Core's scheduler sends a `schedules` handler: this
+    app's id as its audience, `scope: "system"`, no `typ`, no `app_version`."""
+    from jose import jwt
+
+    def mint(**overrides) -> str:
+        now = datetime.now(timezone.utc)
+        claims = {
+            "iss": "manaurum-core", "aud": APP_UUID, "sub": "system:cron-scheduler",
+            "scope": "system", "caller_system": "cron-scheduler",
+            "tenant_id": TENANT_ID, "iat": now, "exp": now + timedelta(seconds=60),
+            "jti": "j-1",
+        }
+        claims.update(overrides)
+        return jwt.encode(claims, keypair[0], algorithm="RS256")
+
+    return mint
+
+
+def test_a_person_pass_is_not_a_user_context(person_pass):
+    """Same key, same issuer, this app's audience: only `typ` gives it away.
+    Accepted as a user context it would read as a caller to act for."""
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(person_pass())
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "user_context_wrong_kind"
+
+
+def test_a_system_token_is_not_a_user_context(system_token):
+    """The scheduler's token names this app too; `scope` gives it away."""
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(system_token())
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "user_context_wrong_kind"
+
+
+def test_a_user_context_carrying_a_scope_is_rejected(user_context):
+    """Whatever else it says, a token with `scope` is not a user context."""
+    with pytest.raises(HTTPException) as exc:
+        verify_user_context(user_context(scope="system"))
+    assert exc.value.detail == "user_context_wrong_kind"
+
+
+def test_a_system_token_is_not_a_person_pass(system_token):
+    from src.auth import verify_person_pass
+
+    with pytest.raises(HTTPException) as exc:
+        verify_person_pass(system_token())
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "person_pass_invalid"
 
 
 def test_person_pass_from_another_tenant_is_rejected(person_pass):

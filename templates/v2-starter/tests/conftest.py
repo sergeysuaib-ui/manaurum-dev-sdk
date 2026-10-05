@@ -10,7 +10,7 @@ You do NOT need Core running, and you must not copy a real token: the
 verifier only checks a signature against whatever public key is in
 `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`. So we generate a throwaway keypair
 per test session, point the app at the public half, and sign with the
-private half. Same algorithm, same issuer, same audience, no network.
+private half. Same algorithm, same issuer, same audiences, no network.
 
 This starter declares `data: {"none": true}` and persists through
 `os.kv`, so there is no database fixture here. If your app uses the
@@ -34,10 +34,15 @@ from src.capability import APP_SLUG  # noqa: E402
 
 # Must match src/auth.py — and src/auth.py must match Core.
 _ISSUER = "manaurum-core"
-_AUDIENCE = "manaurum-app"
+# The audience every token Core mints carries, whatever app it is for.
+SHARED_AUDIENCE = "manaurum-app"
 # The tenant the deploy injects as MANAURUM_TENANT_ID, and therefore the
 # only tenant src/auth.py accepts a token for.
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
+# This app's v2_apps id, which the deploy injects as MANAURUM_APP_ID and
+# Core names in every token's audience (MAN-3231).
+APP_UUID = "44444444-4444-4444-4444-444444444444"
+OTHER_APP_UUID = "55555555-5555-5555-5555-555555555555"
 
 
 @pytest.fixture(scope="session")
@@ -65,14 +70,15 @@ def keypair() -> tuple[str, str]:
 
 @pytest.fixture(autouse=True)
 def _core_public_key(keypair, monkeypatch):
-    """Point src.auth at the test public key and tenant for every test.
+    """Point src.auth at the test public key, app and tenant for every test.
 
-    autouse, because forgetting either produces a 503
+    autouse, because forgetting any of them produces a 503
     (`core_user_context_public_key_not_provisioned` /
-    `manaurum_tenant_id_not_injected`) that reads like a bug in the app
-    rather than a missing fixture.
+    `manaurum_app_id_not_injected` / `manaurum_tenant_id_not_injected`)
+    that reads like a bug in the app rather than a missing fixture.
     """
     monkeypatch.setenv("CORE_USER_CONTEXT_PUBLIC_KEY_PEM", keypair[1])
+    monkeypatch.setenv("MANAURUM_APP_ID", APP_UUID)
     monkeypatch.setenv("MANAURUM_TENANT_ID", TENANT_ID)
 
 
@@ -84,10 +90,11 @@ def user_context(keypair):
     `iss="somebody-else"` or `exp=<past>` to prove the verifier actually
     rejects a token instead of merely decoding one.
 
-    The defaults are what the gateway really mints: `app_id` is the
+    The defaults are what the gateway really mints: `aud` is the shared
+    audience plus this app's v2_apps id (MAN-3231), `app_id` is the
     manifest's slug, not the UUID, and `tenant_id` is the tenant the app
-    was deployed into. Mint a UUID here and a test of the app binding
-    passes against a token production never sends.
+    was deployed into. Mint something else here and a test of the app
+    binding passes against a token production never sends.
     """
     from jose import jwt
 
@@ -102,7 +109,7 @@ def user_context(keypair):
             "app_version": "0.1.0",
             "workspace_id": "33333333-3333-3333-3333-333333333333",
             "iss": _ISSUER,
-            "aud": _AUDIENCE,
+            "aud": [SHARED_AUDIENCE, APP_UUID],
             "iat": now,
             # The real gateway mints these with a 60-second TTL.
             "exp": now + timedelta(seconds=60),

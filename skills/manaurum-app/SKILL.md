@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.18.1.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.19.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -241,7 +241,7 @@ Each entry is `{ "path": …, "auth": … }`:
 
 - `path` starts with `/`. A trailing `/*` matches anything **below** that prefix.
 - `auth` is required: `"user"`, `"anonymous"` or `"optional"` (`"people"`, App people, exists behind a tenant flag; not covered here yet).
-  - `"user"`: the gateway injects a 60-second `X-Manaurum-User-Context` JWT; the user's own token never reaches you. **A good signature is not enough** — accept it only if `app_id` is your slug and `tenant_id` equals `MANAURUM_TENANT_ID`, and refuse a request that carries the header twice. Never read it on an `anonymous` route. `templates/v2-starter/src/auth.py` does all of this; copy it.
+  - `"user"`: the gateway injects a 60-second `X-Manaurum-User-Context` JWT; the user's own token never reaches you. **A good signature is not enough** — accept it only if its audience includes your `MANAURUM_APP_ID` (every token also carries the shared `manaurum-app`, which proves nothing), `tenant_id` equals `MANAURUM_TENANT_ID`, `app_id` is your slug and it has no `typ` or `scope` (a person pass or a system token), and refuse a request that carries the header twice. Never read it on an `anonymous` route. `templates/v2-starter/src/auth.py` does all of this; copy it.
   - `"anonymous"`: proxied with no user context — a kiosk or public endpoint. A route you forget is unreachable, not open.
   - `"optional"` (Core MAN-3200): the user if signed in, a guest otherwise, never a `401` — share links, voting rooms. `auth.py` → `optional_person`.
 - `"streaming": true` for `text/event-stream` routes.
@@ -351,9 +351,9 @@ rather than retyping this one. Four things are non-negotiable:
 1. **The sender check.** Exactly `https://manaurum.com` and `https://app.manaurum.com`,
    plus the page's own origin on loopback only (so `templates/preview.py` can frame it).
    Not `www.`, never a `*.manaurum.com` pattern (that admits every app), not just one of
-   the two. `manaurum-v2.mjs` checks the sender itself only from 2.4.0, and production
-   still served 2.3.0 on 2026-10-04, which does **not** check it, so keep this listener
-   registered first, before any script or module that listens for `message`.
+   the two. `manaurum-v2.mjs` checks the sender itself since 2.4.0, but only once it has
+   loaded, and the appearance and language have to be applied before then, so keep this
+   listener registered first, before any script or module that listens for `message`.
 2. **Answer within 10 seconds.** For an SPA with a deferred bundle, `manaurum:init` can
    arrive before the bundle parses — so the listener is inline in the HTML, **and** you
    post one proactive `manaurum:ready` after mount:
@@ -402,7 +402,7 @@ into the user's Files, read a file they pick, or work in a folder they granted, 
 | `os.kv.set` / `os.kv.get` | Per-app KV. No list, no delete. |
 | `os.secrets.set` / `os.secrets.get` | Per-app encrypted secrets. |
 | `os.files.upload` / `.download` / `.delete` / `.list` | `upload` **requires `size_hint`**, the exact byte length. |
-| `os.ai.complete`, `.embed`, `.transcribe`, `.speak`, `.image_submit`, `.image_poll`, `.providers`; `os.ocr.extract` | `complete` runs on the workspace's AI by default and answers `content` + `tokens_used`; `providers` says what this app can use here; `transcribe` (speech to text, OpenAI) and `speak` (text to MP3, OpenAI or Gemini) run on the tenant's integration for that provider, else — when a workspace that is not temporary resolves — on Manaurum's metered voice key within the shared AI limits; `embed`, `image_*` and `ocr` need the tenant's own key (`image_*` also needs `platform.ai_image`). `speak` and the voice key merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2382). |
+| `os.ai.complete`, `.embed`, `.transcribe`, `.speak`, `.image_submit`, `.image_poll`, `.providers`; `os.ocr.extract` | `complete` runs on the workspace's AI by default and answers `content` + `tokens_used`; `providers` says what this app can use here; `transcribe` (speech to text, OpenAI) and `speak` (text to MP3, OpenAI or Gemini) run on the tenant's integration for that provider, else — when a workspace that is not temporary resolves — on Manaurum's metered voice key within the shared AI limits; `embed`, `image_*` and `ocr` need the tenant's own key (`image_*` also needs `platform.ai_image`). `speak` and the voice key: Core sergeysuaib-ui/manaurum#2382. |
 | `os.notifications.send_to_user` | In-app or email. SMS does not work. |
 | `os.events.emit` | **No hosted app can receive events today.** |
 | `os.http.fetch` | External HTTP, to `egress_allowed_hosts` only. |
@@ -410,7 +410,7 @@ into the user's Files, read a file they pick, or work in a folder they granted, 
 | `os.compliance.audit_query` | **Every app's** log in the tenant unless you pass `app_filter`. |
 | `os.apps.call` | Four methods of two built-in apps — **not** RPC between v2 apps; there is none. |
 | `os.locations.list` / `os.locations.get` | The tenant's sales points and warehouses, by id. |
-| `os.directory.list_users` | The team, for assignee and recipient pickers: id, name, email, avatar. In the public tenant only the caller's workspace, with the user context forwarded and one of the app's owners in it. Merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112). |
+| `os.directory.list_users` | The team, for assignee and recipient pickers: id, name, email, avatar. In the public tenant only the caller's workspace, with the user context forwarded and one of the app's owners in it. Core sergeysuaib-ui/manaurum#2112. |
 | `os.tenant_config.get`, `os.apps.bulk_export` | ⚠️ `tenant_config` reads only `prompt_extension`; `bulk_export` answers `404` to everything. |
 
 ### Document it in the same edit that writes it

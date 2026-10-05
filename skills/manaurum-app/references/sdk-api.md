@@ -6,7 +6,7 @@ Every app built outside the monorepo is a **Platform v2** app, and this page is 
 
 | | **Platform v2** |
 |---|---|
-| Client SDK | `https://manaurum.com/sdk/manaurum-v2.mjs` — ES module, exports `ManaurumV2`, internal `VERSION = '2.5.0'` on Core's main (production still served `'2.3.0'` on 2026-10-04 — read `ManaurumV2.version`) |
+| Client SDK | `https://manaurum.com/sdk/manaurum-v2.mjs` — ES module, exports `ManaurumV2`, internal `VERSION = '2.5.0'` |
 | Where the app runs | your own container, served at `https://<app_id>.apps.manaurum.com` |
 | Data + capabilities | HTTP only: browser → your backend → `POST {MANAURUM_CORE_URL}/api/capability/<name>` |
 | postMessage is used for | the ready handshake, window framing, and the Drive picker — **nothing else** |
@@ -92,7 +92,7 @@ For the shell to accept the reply, all of these must hold (`:375-380`):
 2. `event.source` is the iframe's own `contentWindow`. Post from your top-level document — a message relayed from a nested iframe or a worker is rejected.
 3. `data.type` is a string starting with `manaurum:`.
 
-A `payload` is optional; the shell reads none. (The v2 SDK sends its own version, `{ sdk_version: '2.5.0' }` on Core's main; the 2.3.0 production served on 2026-10-04 sends `'2.3.0'`.)
+A `payload` is optional; the shell reads none. (The v2 SDK sends `{ sdk_version: '2.5.0' }`.)
 
 ### The pattern that actually shipped
 
@@ -136,7 +136,7 @@ for (const origin of ['https://manaurum.com', 'https://app.manaurum.com']) {
 
 A proactive `manaurum:ready` is safe: the shell registers its listener when the host component mounts, before it sends `init`. Post it once per shell origin rather than to `'*'`; the post whose origin is not the parent's is not delivered, and Chrome logs a console error for it ("target origin provided … does not match"). That error is expected.
 
-If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for you, but only *after* `manaurum:init` arrives. **Since 2.4.0 the SDK checks who sent it** (Core sergeysuaib-ui/manaurum#2318): it takes `manaurum:init` only from `window.parent` on a shell origin (`https://manaurum.com`, `https://app.manaurum.com`, plus the https or loopback origin that served the SDK file), pins that window and origin for everything after it, and stops every other `manaurum:*` message (`stopImmediatePropagation()` in the capture phase) before any non-capture handler, or any capture-phase handler registered after the SDK's, sees it (a capture-phase handler registered earlier, like the inline guard, still does) — except `manaurum:session-response`, which it leaves to Core's injected session runtime. **2.3.0 does not**, and 2.3.0 is what production served on 2026-10-04: it adopts whichever window posts `manaurum:init` as its shell, again on every `init` (the latest sender wins), replies to that window's origin, and sends that window your Drive pick requests (see `app.pickFromDrive()` below). Keep the inline listener above in every app that loads the SDK. It stops every message it refuses, so the SDK never sees one from anybody but the shell, as long as it is registered **before** the SDK's listener: inline at the top of `<head>`, ahead of any module.
+If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for you, but only *after* `manaurum:init` arrives. **Since 2.4.0 the SDK checks who sent it** (Core sergeysuaib-ui/manaurum#2318): it takes `manaurum:init` only from `window.parent` on a shell origin (`https://manaurum.com`, `https://app.manaurum.com`, plus the https or loopback origin that served the SDK file), pins that window and origin for everything after it, and stops every other `manaurum:*` message (`stopImmediatePropagation()` in the capture phase) before any non-capture handler, or any capture-phase handler registered after the SDK's, sees it (a capture-phase handler registered earlier, like the inline guard, still does) — except `manaurum:session-response`, which it leaves to Core's injected session runtime. Versions before 2.4.0 adopted whichever window posted `manaurum:init`. Keep the inline listener above in every app that loads the SDK anyway: it answers the handshake and applies the appearance and language before any module has loaded, it is what `check_ui.py` checks, and it stops every message it refuses before the SDK's listener sees it, as long as it is registered **first**: inline at the top of `<head>`, ahead of any module.
 
 > **The trap.** Your standalone URL `https://<slug>.apps.manaurum.com/` works perfectly without the handshake — no shell, no timeout, no overlay. The failure appears *only* inside the desktop window and the mobile home screen, which is where your users are. Libi shipped this way and needed a follow-up release (MAN-1321). Test from the desktop, not just from the tab.
 
@@ -145,7 +145,7 @@ If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for 
 A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from the shell at `manaurum.com`. Consequences:
 
 - postMessage is the only channel. No shared DOM, no shared `localStorage`, no `document.domain` tricks.
-- You cannot read the shell's origin from inside the frame, so check it: act on a `manaurum:*` message only when `event.source === window.parent` and `event.origin` is `https://manaurum.com` or `https://app.manaurum.com`. Use both origins, never `www.`, and never a `*.manaurum.com` pattern, because every v2 app is a `*.manaurum.com` page and may frame yours. Not just one of them either: an app that pinned the apex stopped hearing the shell when it moved to `app.` and never became ready. Never adopt the origin of whoever posts `manaurum:init`: an unauthenticated sender then becomes your shell. SDK 2.3.0 does exactly that, on every `init` (2.4.0 and later do not), which is why the inline guard above has to run before it.
+- You cannot read the shell's origin from inside the frame, so check it: act on a `manaurum:*` message only when `event.source === window.parent` and `event.origin` is `https://manaurum.com` or `https://app.manaurum.com`. Use both origins, never `www.`, and never a `*.manaurum.com` pattern, because every v2 app is a `*.manaurum.com` page and may frame yours. Not just one of them either: an app that pinned the apex stopped hearing the shell when it moved to `app.` and never became ready. Never adopt the origin of whoever posts `manaurum:init`: an unauthenticated sender then becomes your shell. SDK versions before 2.4.0 did exactly that; 2.4.0 and later check the sender themselves, and the inline guard above still runs first.
 - The shell posts `manaurum:init` with your origin as `targetOrigin`, so no other embedder can receive it.
 - The iframe sandbox is `allow-scripts allow-forms allow-same-origin` (`iframeHostPolicy.ts`). `allow-modals` is never emitted — `alert()` / `confirm()` / `prompt()` are dead in the shell (and work fine on your standalone URL, so "it worked in my browser" proves nothing). Nor are `allow-downloads` or `allow-popups`, and `allow` never delegates `clipboard-write`: downloads, `target="_blank"`, `window.open()` and `navigator.clipboard.writeText()` all fail in the window. What to do instead: `design.md` → "Window rules".
 - Browser features are delegated through the iframe `allow` attribute only when your manifest declares them in `permissions[]` (`:197-206`, and the `allow` attribute at `:887`). See `references/v2-platform.md`.
@@ -196,7 +196,7 @@ The person picks the interface language in ManAurum's settings: English, Russian
 
 (`IframeAppHost.tsx:309-314`, `:603-616`.) `locale` is `en`, `ru` or `he`; `dir` is `ltr` or `rtl`. Take `dir` as sent rather than deriving it from a language list of your own. Read them in the inline listener, behind the sender check, next to the appearance: it runs before any module loads, so the first paint is already in the right language, and it is what `check_ui.py` looks for.
 
-**With the SDK.** `manaurum-v2.mjs` 2.5.0 (Core sergeysuaib-ui/manaurum#2379, MAN-3233) hands the same pair to module code: `app.locale` / `app.dir`, the same two fields on the `onReady` context (both from `manaurum:init`), and `app.onLocaleChange(cb)`, called with `{ locale, dir }` on every `manaurum:locale-change`. Both are `null` until the handshake, outside the shell, or when the shell did not send them; fall back to `navigator.language` then. The SDK keeps `locale` only when it is a language tag and `dir` only when it is `ltr` or `rtl`, and a `locale-change` without a usable `locale` changes nothing. The callback can repeat the current value (the shell posts one right after the handshake), so keep it idempotent. An older copy of the SDK has none of the three, and calling a missing `onLocaleChange` throws: test `typeof app.onLocaleChange === 'function'` first, or read `ManaurumV2.version`. This is the language the shell is showing, which is not always the token's pair below: the shell always shows some language (the person's choice, else their browser's, else English), while the token carries one only when the person chose it. Details: "Platform v2 — frontend SDK" below.
+**With the SDK.** `manaurum-v2.mjs` 2.5.0 (Core sergeysuaib-ui/manaurum#2379, MAN-3233) hands the same pair to module code: `app.locale` / `app.dir`, the same two fields on the `onReady` context (both from `manaurum:init`), and `app.onLocaleChange(cb)`, called with `{ locale, dir }` on every `manaurum:locale-change`. Both are `null` until the handshake, outside the shell, or when the shell did not send them; fall back to `navigator.language` then. The SDK keeps `locale` only when it is a language tag and `dir` only when it is `ltr` or `rtl`, and a `locale-change` without a usable `locale` changes nothing. The callback can repeat the current value (the shell posts one right after the handshake), so keep it idempotent. Versions before 2.5.0 have none of the three. This is the language the shell is showing, which is not always the token's pair below: the shell always shows some language (the person's choice, else their browser's, else English), while the token carries one only when the person chose it. Details: "Platform v2 — frontend SDK" below.
 
 **What the app does with it.** All four are in the starter's `index.html` and `app.css`, and `check_ui.py` fails on the first and the last:
 
@@ -231,12 +231,9 @@ app.onReady((ctx) => {
   document.documentElement.dataset.appearance = ctx.appearance; // 'light' | 'dark'
   render(ctx.user?.nickname);
 });
-// onLocaleChange is 2.5.0+: calling it on 2.3.0 or 2.4.0 throws.
-const stop = typeof app.onLocaleChange === 'function'
-  ? app.onLocaleChange(({ locale, dir }) => setLanguage(locale, dir))
-  : undefined;
+const stop = app.onLocaleChange(({ locale, dir }) => setLanguage(locale, dir));
 // later, when this view goes away:
-if (typeof stop === 'function') stop();
+stop();
 
 const res    = await app.fetch('/api/orders');
 const orders = await res.json();
@@ -246,18 +243,18 @@ const orders = await res.json();
 
 ### Exported surface
 
-The module exports three names (2.3.0 exports the first two). `ManaurumV2` has exactly two members: `init(options?)` and the `version` getter. `findClippedContent(doc)` is the layout guard's own test, exported so it can be tested without a browser: it returns `{ element, selector, hiddenPx, boxHeight }` for the outermost element that hides content with nothing to scroll it, or `null`. `trustedShellOrigins(sdkUrl)` (2.4.0+) returns the shell origins that copy of the SDK accepts: the two above, plus the origin it was loaded from when that is https or loopback http.
+The module exports three names. `ManaurumV2` has exactly two members: `init(options?)` and the `version` getter. `findClippedContent(doc)` is the layout guard's own test, exported so it can be tested without a browser: it returns `{ element, selector, hiddenPx, boxHeight }` for the outermost element that hides content with nothing to scroll it, or `null`. `trustedShellOrigins(sdkUrl)` (2.4.0+) returns the shell origins that copy of the SDK accepts: the two above, plus the origin it was loaded from when that is https or loopback http.
 
 **The layout guard.** After the handshake the SDK watches the page (resize, and DOM mutations for its first 40 checks; at most once a second) and console-errors `content is clipped and nothing scrolls` with the element's selector, once per element, also reporting it to the shell as `manaurum:diagnostic`. `app.checkLayout()` runs it now — call it right after rendering a view you know is long. `init({ layoutCheck: false })` turns it off.
 
-**Callbacks** — all fire-and-forget; a throwing callback is caught and logged as `[ManaurumV2]`, it does not break the SDK. Since 2.5.0 every `on…` registration, `onReady` included, returns a function that unregisters the callback: call it when the view that registered goes away. 2.3.0 and 2.4.0 return nothing, so check that what came back is a function before calling it.
+**Callbacks** — all fire-and-forget; a throwing callback is caught and logged as `[ManaurumV2]`, it does not break the SDK. Every `on…` registration, `onReady` included, returns a function that unregisters the callback (since 2.5.0): call it when the view that registered goes away.
 
 | Method | Fires |
 |---|---|
 | `app.onReady(cb)` | once `manaurum:init` arrives, with the context object. **If init already arrived, `cb` runs immediately** — registering late is safe — and the function it returns has nothing left to unregister. |
 | `app.onThemeChange(cb)` | on `manaurum:theme-change`, with the theme name. Note: the SDK listens for `manaurum:theme-change`, not the legacy `manaurum:theme`. |
 | `app.onDeviceChange(cb)` | on `manaurum:device-change`, with `{ device, platform, screen, safeAreaInsets, navigationMode }`. The shell fires it only when the mobile/desktop classification or the safe-area insets actually change — a same-class resize is a no-op. |
-| `app.onLocaleChange(cb)` (2.5.0+) | on `manaurum:locale-change` that carries a usable `locale`, with `{ locale, dir }` (`dir` is `null` when the shell sent none); after init, `app.locale` / `app.dir` already hold the new pair. The shell also posts one right after the handshake, so it can repeat the current value: keep the callback idempotent. |
+| `app.onLocaleChange(cb)` | on `manaurum:locale-change` that carries a usable `locale`, with `{ locale, dir }` (`dir` is `null` when the shell sent none); after init, `app.locale` / `app.dir` already hold the new pair. The shell also posts one right after the handshake, so it can repeat the current value: keep the callback idempotent. |
 | `app.onAuthFailure(cb)` | when an `app.fetch(...)` response has status **401**, with the `Response`. The SDK does **not** redirect — you own the "session expired, reload to log in" UX. The caller still receives the Response. |
 
 **Context and getters**
@@ -271,11 +268,11 @@ The module exports three names (2.3.0 exports the first two). `ManaurumV2` has e
 | `app.device` | `'mobile'` / `'desktop'` — defaults to `'desktop'` before init |
 | `app.platform` | `'mobile'` / `'desktop'` — mirrors `device` today, kept separate for a future native/web split |
 | `app.isMobile` | `true` only when `device === 'mobile'`; `false` before init |
-| `app.locale` | 2.5.0+. The person's language from `manaurum:init`, e.g. `'en'` / `'ru'` / `'he'`; `null` before init, outside the shell, or when the shell did not send one — fall back to `navigator.language`. `undefined` on 2.3.0 and 2.4.0, which have no such getter. |
-| `app.dir` | 2.5.0+. `'ltr'` / `'rtl'` for that language, or `null` (as for `locale`); `undefined` before 2.5.0. |
+| `app.locale` | the person's language from `manaurum:init`, e.g. `'en'` / `'ru'` / `'he'`; `null` before init, outside the shell, or when the shell did not send one — fall back to `navigator.language` |
+| `app.dir` | `'ltr'` / `'rtl'` for that language, or `null` (as for `locale`) |
 | `ManaurumV2.version` | the SDK version string — useful in diagnostic logs |
 
-`app.context` is built from the init payload with defaults: `{ theme, appearance, accent, user, permissions, windowId, appId, device, platform, screen, safeAreaInsets, navigationMode, shell, locale, dir }` — `locale` and `dir` from 2.5.0 only; on 2.3.0 and 2.4.0 the context has neither key.
+`app.context` is built from the init payload with defaults: `{ theme, appearance, accent, user, permissions, windowId, appId, device, platform, screen, safeAreaInsets, navigationMode, shell, locale, dir }`.
 
 Two gaps worth knowing:
 
@@ -334,7 +331,7 @@ if (!res.cancelled) {
 - Resolves to `{ cancelled: true }` if the user cancels, if another pick is already open (`picker_busy`), or if nothing answers within **120 s**. Otherwise `{ files: [...] }`.
 - Each handle is `{ file_id, filename, mime_type, size_bytes, download_url, expires_at }`. `download_url` is attachment-pinned and short-lived (~5 min) — fetch it promptly and ask again rather than caching it.
 - Wire: the SDK posts `manaurum:drive-pick` with a `_reqId` and awaits `manaurum:drive-pick-response`. It only works inside the shell — outside it there is no shell to post to and the promise resolves `{ cancelled: true }` after the timeout.
-- SDK 2.3.0 sends the request (and its `_reqId`) to whichever window last posted it `manaurum:init`, and accepts a response carrying that id from any window. Without the inline sender check above, a page that framed your app and posted `init` receives the pick and can answer it with download URLs of its own choosing. 2.4.0 and later send it only to the pinned shell and take the answer only from it.
+- The SDK sends the request only to the shell it pinned at the handshake and takes the answer only from it (since 2.4.0; earlier versions sent it to whichever window last posted `manaurum:init` and accepted an answer from any window).
 
 ### What this SDK deliberately does not do
 

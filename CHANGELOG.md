@@ -1,3 +1,96 @@
+# 3.19.0 - the starter accepts only tokens minted for its own app, and the SDK pages describe SDK 2.5.0 as served
+
+Summary: The starter app refuses a sign-in token that was made for a different app, and the guide describes the browser helper as ManAurum serves it now.
+
+### Why
+
+* **Core names the app in every user_context** (MAN-3231, sergeysuaib-ui/manaurum#2380, live
+  since production's 2026-10-05 deploy at `5c2dbdb62`): `aud` is
+  `["manaurum-app", "<the app's v2_apps id>"]`, and the deploy injects that id as
+  `MANAURUM_APP_ID`. Core's bundled verifier (`_manaurum_runtime.py::verify_token`) requires
+  it, with the tenant, and refuses a person pass or a system token, and so will the scaffold
+  CLI 0.3.3 writes (MAN-3268, Core `c6d58a05b`). The starter still accepted any token with
+  the shared audience `manaurum-app` and checked only the `app_id` and `tenant_id` claims, so
+  a person pass or a system token for the app would have been read as a user context had it
+  carried those claims, and nothing tied a token to the app's own id.
+* **Production serves `manaurum-v2.mjs` 2.5.0** since the same deploy (checked 2026-10-05).
+  3.18.1 removed the pre-deploy notes from the capability pages, but `sdk-api.md`,
+  `SKILL.md` Step 2.5 and the starter's comments still named 2.3.0 as what production
+  serves and had apps feature-detect `onLocaleChange`.
+
+### What changed
+
+* **Starter `src/auth.py` binds the user_context to its app (MAN-3268)**, as Core's
+  bundled verifier does: the audience must be `MANAURUM_APP_ID` (the shared `manaurum-app`
+  proves nothing), with `aud`, `iss`, `exp` and `iat` required; a token with `typ` (a person
+  pass) or `scope` (a system token) is `401 user_context_wrong_kind`; a missing or foreign
+  audience is `401 user_context_wrong_app`; `MANAURUM_APP_ID` unset is
+  `503 manaurum_app_id_not_injected`, as `MANAURUM_TENANT_ID` unset already was. The slug
+  and tenant checks, the error shapes, `locale` / `dir`, `server_language` and
+  `PersonClaims` are unchanged; the person pass still requires `typ: "person"` (and now
+  says `require_iss` explicitly), so neither kind stands in for the other.
+* **Starter tests.** The `user_context` fixture mints `aud: ["manaurum-app", APP_UUID]` and
+  the autouse fixture sets `MANAURUM_APP_ID`. New: another app's audience, the shared
+  audience alone, no audience, the right audience with another slug, `MANAURUM_APP_ID`
+  unset, a missing `iss`, a person pass and a system token refused as a user context, a
+  token carrying `scope`, a system token refused as a person pass, and a user context
+  refused as a person pass with its code. Seven of them fail against 3.18.1's `auth.py`.
+* **The verification docs bind the app.** `v2-platform.md`'s four steps require your
+  `MANAURUM_APP_ID` as the audience, no `typ` / `scope`, the tenant and the slug, and say
+  which test covers what; its env table names `MANAURUM_APP_ID` as the audience, and on a
+  `byo` host you set it yourself. The scheduled-jobs example requires `aud` / `iss` / `exp`
+  and checks the tenant, and says the `scope` check is what refuses a user context or a
+  person pass. README's model, `SKILL.md`'s `auth: "user"` rule, `manaurum-setup`'s env
+  table, the starter's README and `main.py` docstring say the same.
+* **SDK 2.5.0 as served.** `sdk-api.md` states 2.5.0's behaviour: a plain
+  `app.onLocaleChange(...)` call and `stop()` in the example, no feature detection, and a
+  "since 2.4.0" / "since 2.5.0" or "versions before 2.5.0 have none of the three" only where
+  it helps; the notes on what production served on 2026-10-04 go. `SKILL.md` Step 2.5 says
+  why the inline listener stays first (it runs before any module). The starter's
+  `index.html` and `tests/test_static.py` comments no longer speak of 2.3.0 as the SDK.
+* **On top of 3.18.1.** `publishing.md` says the dev-apps routes are gone (production
+  answers `404` there) instead of telling people not to use them. The `os.ai.speak`
+  section adds that the app's speech setting is per workspace (so it applies only when a
+  workspace resolves), that a voice giving way keeps an OpenAI-voiced app speaking after an
+  admin moves it to Gemini, that the response's `model` and `voice` say what spoke, that
+  Gemini's voices speak the text's language, that `speech_setting_invalid` is never
+  silently replaced, the output encoding per provider, and the library voice's overhead in
+  tokens; "Who pays" lists the per-provider order once, for transcription and speech.
+  `os.ai.providers`' `transcribe` entry covers speech on an OpenAI model only.
+* **The contract copy stays at Core `b9980413e`**, 3.18.1's sync, which is newer than
+  production's `5c2dbdb62`; re-running
+  `py -3.12 scripts/sync_contract.py --monorepo C:/Users/sergei/Desktop/Manaurum --ref b9980413ec890ecf161d18e865ce9f38855a1e4f`
+  reproduces it byte for byte. The capability reference's header and footer name it.
+* CLI 0.3.3 — README pin pending release
+
+### Not in this release
+
+* **Typed event declarations** (MAN-3063 / MAN-3064, #2377, in the schema since 3.18.1's
+  sync): a `provides.events[]` entry that is an object with `payload_schema` must carry
+  `name` and an object JSON Schema, and the deploy validates it. The skills do not teach it,
+  and `check_repo.py` asks for nothing.
+* **Between production's `5c2dbdb62` and the synced `b9980413e`:** Studio can pause and
+  resume an app, with a paused page that names who paused it, and a disabled app's signed-out
+  page, API call and asset all answer `503` before any login redirect (MAN-3137, #2400); a
+  Sandbox story animation and a Finance release. Not deployed when this was written, and
+  `v2-platform.md`'s `503 app_disabled` row stays true.
+* **CLI 0.3.3's other fixes** — the hosted-slug pattern refusing a trailing newline on the
+  server and in the CLI (MAN-3270), and the scaffold's page setting `dir` for a Hebrew
+  browser outside the shell (MAN-3271) — are not on Core's `main` yet. The starter's page
+  has set `dir` from the browser's language since 3.16.0.
+
+### Checked
+
+* `py -3.12 scripts/check_repo.py`: clean. `py -3.12 scripts/linter_mutations.py`: every
+  mutation caught. `py -3.12 scripts/smoke_tools.py`: passes. The starter's `pytest -q`
+  (requirements.txt and requirements-dev.txt in a temporary venv) passes; `check_ui.py`
+  and `check_app.py` say `clean` for the starter, and `check_ui.py` for the patterns page.
+* Against Core: `_manaurum_runtime.py`, `user_context_jwt.py`, `person_pass.py`,
+  `system_token.py`, `capabilities/ai.py`, `services/voice.py`, `ai_service.py`,
+  `capabilities/completion_context.py` and the guide's "Voice" section and error table at
+  `5c2dbdb62`; the CLI's `auth.py.template` and its tests at `c6d58a05b`. python-jose 3.5.0
+  raises a plain `JWTError` for a missing required claim, which the audience mapping covers.
+
 # 3.18.1 - `os.ai.speak` speaks with Gemini too
 
 Summary: `os.ai.speak` takes an optional `model` and can speak with Gemini; the capability reference says how the model and voice are chosen.

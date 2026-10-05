@@ -85,8 +85,8 @@ def test_handshake_trusts_the_shell_not_the_first_sender():
 
     Every v2 app can be framed by another `*.manaurum.com` page. A listener
     that answers whoever posts `manaurum:init` hands that page the app's
-    appearance and its `manaurum:ready`, and manaurum-v2.mjs 2.3.0 adopts
-    every `init` sender as its shell. The guard has to run before the init
+    appearance and its `manaurum:ready`, and manaurum-v2.mjs before 2.4.0
+    adopted every `init` sender as its shell. The guard has to run before the init
     branch, drop what it refuses, and be registered before the SDK's listener.
     It lets exactly `manaurum:session-*` through, for Core's injected session
     runtime, and nothing broader.
@@ -132,9 +132,9 @@ def test_the_language_comes_from_the_shell_on_init_and_on_change():
     """The person's language reaches <html lang dir>, on init AND on a switch.
 
     The shell sends `locale` and `dir` in `manaurum:init` and posts
-    `manaurum:locale-change` whenever the person changes language;
-    manaurum-v2.mjs 2.3.0 passes neither on, so the inline listener is the
-    only thing that applies them. Without `dir` a Hebrew screen is laid out
+    `manaurum:locale-change` whenever the person changes language; the
+    inline listener applies them before any module loads (manaurum-v2.mjs
+    hands them on only since 2.5.0, once it has loaded). Without `dir` a Hebrew screen is laid out
     left to right; without the change handler one window stays in the old
     language until it is reopened.
     """

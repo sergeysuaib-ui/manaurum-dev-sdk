@@ -149,7 +149,7 @@ Validation rules:
   digits and hyphens, starting with a letter and ending with a letter or digit; not
   shaped like a UUID (`422 app_id_invalid`); not a reserved platform name (`api`, `app`,
   `www`, …); not under the `draft-` prefix, which is Aurum Studio's private drafts
-  (`422 slug_reserved`; merged in Core on 2026-10-04, sergeysuaib-ui/manaurum#2368). From CLI 0.3.1, `manaurum app init`
+  (`422 slug_reserved`, Core sergeysuaib-ui/manaurum#2368). From CLI 0.3.1, `manaurum app init`
   refuses such a name before writing anything, and `manaurum app validate` and the deploy
   preflight refuse it before the build; `check_app.py` does too. Becomes
   `<app_id>.apps.manaurum.com`.
@@ -188,8 +188,8 @@ Validation rules:
   via `<input type="file" capture="environment">` is not gated and needs no
   declaration. Voice apps also declare `os.ai.transcribe` (and `os.ai.speak`
   to answer aloud) in `requires_capabilities` (that part is the platform's
-  speech; `permissions` is only the browser side). `os.ai.speak` merged in Core
-  on 2026-10-04 (sergeysuaib-ui/manaurum#2382).
+  speech; `permissions` is only the browser side). `os.ai.speak`: Core
+  sergeysuaib-ui/manaurum#2382.
 
 To use AI / declare a dedicated DB schema / migrations, see `manaurum-app/SKILL.md` and `references/v2-platform.md`.
 
@@ -304,7 +304,7 @@ If your app needs to call the OS (KV, files, AI, etc.), the platform passes thes
 | `MANAURUM_CORE_URL` | Base URL of the capability gateway. Never hardcode a host. |
 | `MANAURUM_RUNTIME_TOKEN` | `Authorization: Bearer …`. An `mna_*` credential scoped to this one app, minted fresh on every deploy. |
 | `MANAURUM_TENANT_ID` | `X-Manaurum-Tenant-Id` header on capability calls. |
-| `MANAURUM_APP_ID` | `X-Manaurum-App-Id` header (the UUID form — required by `os.kv.*` and `os.events.emit`). |
+| `MANAURUM_APP_ID` | `X-Manaurum-App-Id` header (the UUID form — required by `os.kv.*` and `os.events.emit`), and the audience your `X-Manaurum-User-Context` verifier requires. |
 | `MANAURUM_VERSION` | (optional) which version is running. |
 | `MANAURUM_TARGET_SCHEMA` | Your Postgres schema name, `app_<slug>__<tenant_hex>`. |
 | `DATABASE_URL` | Injected **only** in the managed schema modes (the default, and `data.shared`). Absent under `data.none` / `data.byo`. |

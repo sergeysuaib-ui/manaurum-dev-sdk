@@ -28,7 +28,8 @@ The five moving parts, in the order the platform exercises them:
    The end user's own bearer is NEVER forwarded. That header is the only
    caller identity you get, and it is trustworthy only after
    ``src/auth.py`` has checked it was minted for THIS app and tenant —
-   every app's tokens share one key and one audience.
+   every app's tokens share one key, and only this app's own id in the
+   audience (``MANAURUM_APP_ID``) says a token is for it.
 4. ``GET/PUT /api/notes`` — the same auth, plus a real capability call.
 5. ``POST /agent/*`` — the OS Assistant, dispatched server-to-server.
    Not a gateway route. See src/agent_routes.py.

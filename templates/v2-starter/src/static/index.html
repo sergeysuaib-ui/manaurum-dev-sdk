@@ -42,9 +42,10 @@
      another app included — and post `manaurum:init` at it. So a message is
      acted on only when it comes from the parent window AND from one of the
      shell's origins. Anything else is dropped here before any later listener
-     sees it: manaurum-v2.mjs 2.3.0 has no such check of its own and adopts
-     whoever posts `manaurum:init`, on every init, so this script is also what
-     protects the SDK. That works because this listener is registered FIRST
+     sees it. manaurum-v2.mjs checks the sender itself since 2.4.0, but only
+     once it has loaded, and versions before it adopted whoever posted
+     `manaurum:init`; this check runs before any module, so it holds whatever
+     the SDK does. That works because this listener is registered FIRST
      (inline, before the module import below); keep it that way.
      `manaurum:session-*` is let through untouched: Core injects a session
      runtime into this page that talks to a Core-origin frame of its own and
@@ -57,8 +58,9 @@
      both onto <html lang dir> and window.__manaurum and fire
      `manaurum-locale`; the strings at the bottom of this file re-render on
      it, and app.css uses logical properties so the whole page mirrors under
-     dir="rtl" by itself. manaurum-v2.mjs 2.3.0 passes neither value on
-     (MAN-3233), which is why this listener reads them. A standalone tab never
+     dir="rtl" by itself. This listener reads them, not the SDK (which hands
+     them on since 2.5.0), because it runs before any module loads, so the
+     first paint is already in the right language. A standalone tab never
      hears the shell: it guesses from the browser's languages instead.
 -->
 <script>
