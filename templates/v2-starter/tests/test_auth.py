@@ -111,8 +111,7 @@ def test_token_minted_for_another_app_is_rejected(user_context):
     shared audience. The developer of any app they open sees them, and has
     60 seconds to present one here. Core names that other app in `aud`."""
     with pytest.raises(HTTPException) as exc:
-        verify_user_context(user_context(aud=[SHARED_AUDIENCE, OTHER_APP_UUID],
-                                         app_id="some-other-app"))
+        verify_user_context(user_context(aud=[SHARED_AUDIENCE, OTHER_APP_UUID]))
     assert exc.value.status_code == 401
     assert exc.value.detail == "user_context_wrong_app"
 
@@ -253,9 +252,29 @@ def test_person_pass_for_another_app_is_rejected(person_pass):
     assert exc.value.detail == "person_pass_invalid"
 
 
+@pytest.mark.parametrize("typ", [None, "other"])
+def test_a_pass_without_the_person_type_is_refused(keypair, person_pass, typ):
+    """`typ: "person"` is what marks the pass; the right audience, kind and
+    tenant do not make a token without it one."""
+    from jose import jwt
+
+    from src.auth import verify_person_pass
+
+    claims = jwt.get_unverified_claims(person_pass())
+    if typ is None:
+        claims.pop("typ")
+    else:
+        claims["typ"] = typ
+    token = jwt.encode(claims, keypair[0], algorithm="RS256")
+    with pytest.raises(HTTPException) as exc:
+        verify_person_pass(token)
+    assert exc.value.detail == "person_pass_invalid"
+
+
 def test_user_context_is_not_a_person_pass(person_pass, user_context):
-    """A user context names this app in its audience too, since MAN-3231:
-    only the missing `typ: "person"` refuses it here."""
+    """A user context names this app in its audience too, since MAN-3231.
+    It carries neither `typ: "person"` nor `kind`, and either refuses it
+    here."""
     from src.auth import verify_person_pass
 
     with pytest.raises(HTTPException) as exc:

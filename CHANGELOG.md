@@ -8,11 +8,11 @@ Summary: The starter app refuses a sign-in token that was made for a different a
   since production's 2026-10-05 deploy at `5c2dbdb62`): `aud` is
   `["manaurum-app", "<the app's v2_apps id>"]`, and the deploy injects that id as
   `MANAURUM_APP_ID`. Core's bundled verifier (`_manaurum_runtime.py::verify_token`) requires
-  it, with the tenant, and refuses a person pass or a system token, and so will the scaffold
-  CLI 0.3.3 writes (MAN-3268, Core `c6d58a05b`). The starter still accepted any token with
-  the shared audience `manaurum-app` and checked only the `app_id` and `tenant_id` claims, so
-  a person pass or a system token for the app would have been read as a user context had it
-  carried those claims, and nothing tied a token to the app's own id.
+  it, with the tenant, and refuses a person pass or a system token, and so does the scaffold
+  CLI 0.3.3 writes (MAN-3268, Core `45f13bc07`, #2402). The starter still accepted any token
+  with the shared audience `manaurum-app` and checked only the `app_id` and `tenant_id`
+  claims, so a person pass or a system token for the app would have been read as a user
+  context had it carried those claims, and nothing tied a token to the app's own id.
 * **Production serves `manaurum-v2.mjs` 2.5.0** since the same deploy (checked 2026-10-05).
   3.18.1 removed the pre-deploy notes from the capability pages, but `sdk-api.md`,
   `SKILL.md` Step 2.5 and the starter's comments still named 2.3.0 as what production
@@ -33,8 +33,8 @@ Summary: The starter app refuses a sign-in token that was made for a different a
   the autouse fixture sets `MANAURUM_APP_ID`. New: another app's audience, the shared
   audience alone, no audience, the right audience with another slug, `MANAURUM_APP_ID`
   unset, a missing `iss`, a person pass and a system token refused as a user context, a
-  token carrying `scope`, a system token refused as a person pass, and a user context
-  refused as a person pass with its code. Seven of them fail against 3.18.1's `auth.py`.
+  token carrying `scope`, a system token refused as a person pass, a user context refused
+  as a person pass with its code, and a pass without `typ: "person"` refused.
 * **The verification docs bind the app.** `v2-platform.md`'s four steps require your
   `MANAURUM_APP_ID` as the audience, no `typ` / `scope`, the tenant and the slug, and say
   which test covers what; its env table names `MANAURUM_APP_ID` as the audience, and on a
@@ -79,10 +79,12 @@ Summary: The starter app refuses a sign-in token that was made for a different a
   page, API call and asset all answer `503` before any login redirect (MAN-3137, #2400); a
   Sandbox story animation and a Finance release. Not deployed when this was written, and
   `v2-platform.md`'s `503 app_disabled` row stays true.
-* **CLI 0.3.3's other fixes** — the hosted-slug pattern refusing a trailing newline on the
-  server and in the CLI (MAN-3270), and the scaffold's page setting `dir` for a Hebrew
-  browser outside the shell (MAN-3271) — are not on Core's `main` yet. The starter's page
-  has set `dir` from the browser's language since 3.16.0.
+* **The deploy's own refusal of a slug ending in a newline** (MAN-3270, Core
+  sergeysuaib-ui/manaurum#2402) is on Core's `main` but was not deployed on 2026-10-05:
+  until it is, production's deploy still lets `"probe-app\n"` through, though CLI 0.3.3 and
+  `check_app.py` refuse it. MAN-3271 (the CLI scaffold's page setting `dir` for a Hebrew
+  browser outside the shell) changes nothing here: this starter's page has done that since
+  3.16.0.
 
 ### Checked
 
@@ -93,7 +95,7 @@ Summary: The starter app refuses a sign-in token that was made for a different a
 * Against Core: `_manaurum_runtime.py`, `user_context_jwt.py`, `person_pass.py`,
   `system_token.py`, `capabilities/ai.py`, `services/voice.py`, `ai_service.py`,
   `capabilities/completion_context.py` and the guide's "Voice" section and error table at
-  `5c2dbdb62`; the CLI's `auth.py.template` and its tests at `c6d58a05b`. python-jose 3.5.0
+  `5c2dbdb62`; the CLI's `auth.py.template` and its tests at `45f13bc07`. python-jose 3.5.0
   raises a plain `JWTError` for a missing required claim, which the audience mapping covers.
 
 # 3.18.1 - `os.ai.speak` speaks with Gemini too

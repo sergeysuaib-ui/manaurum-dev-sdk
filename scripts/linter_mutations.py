@@ -452,7 +452,7 @@ def a_studio_draft_slug(app: Path) -> None:
 
 def a_slug_ending_in_a_newline(app: Path) -> None:
     # The contract's pattern ends in `$`, which re.match lets match before a
-    # final newline; the deploy refuses it (422 app_id_invalid).
+    # final newline. The deploy refuses it too (422 app_id_invalid) from Core #2402.
     patch_manifest(app, lambda data: data.update(app_id="probe-app\n"))
 
 
