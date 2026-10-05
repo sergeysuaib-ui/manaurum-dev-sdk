@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.18.1.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.19.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -25,8 +25,9 @@ declared in the manifest and granted by the tenant admin at install time.
 
 **Who is asking arrives as a signed header.** For routes you mark `auth: "user"`, the
 gateway mints a 60-second RS256 JWT and injects it as `X-Manaurum-User-Context`. Verify it
-against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, then check it names your app and your tenant:
-every app's tokens share one key and one audience. The end user's own session token is
+against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM` with your `MANAURUM_APP_ID` as the audience, and
+check its `tenant_id` is your `MANAURUM_TENANT_ID`: every app's tokens share one key and the
+audience `manaurum-app`, so only your own id in `aud` says a token is yours. The end user's own session token is
 never forwarded to you. Forward the user context to the capability gateway when you act on
 the user's behalf; `os.drive.*` and `os.calendar.*` refuse a call without it.
 
@@ -114,8 +115,8 @@ is, install the wheel from this repo's
 [releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
 ```bash
-pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.2/manaurum_cli-0.3.2-py3-none-any.whl
-manaurum --version        # manaurum, version 0.3.2
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.3/manaurum_cli-0.3.3-py3-none-any.whl
+manaurum --version        # manaurum, version 0.3.3
 ```
 
 Then save your token. Mint it in **DevHub → Credentials** (`mna_…`) and keep the

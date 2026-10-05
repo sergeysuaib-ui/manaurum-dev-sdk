@@ -6,19 +6,23 @@ server-to-server by the OS Assistant). Both get the SAME token, minted
 with the same key, so they get the same verifier. Every real v2 app ends
 up with this file.
 
-Mirrors Core's own verifier
-(``app/services/v2_apps/user_context_jwt.py::verify_user_context``) and
-then does the two checks Core's helper leaves to you.
+Binds the token the way Core's own bundled verifier does
+(``backend/app/services/v2_apps/_manaurum_runtime.py::verify_token``).
 
-A valid signature is NOT enough. Core signs one token per request with
-one key and one audience (``manaurum-app``) for EVERY app, so a token
-minted for some other app — or for this app in some other tenant —
-verifies here just as well. Whoever runs that other app sees its users'
-tokens, and has 60 seconds to present one to you. So this module also
-checks that the token names THIS app and THIS tenant, and refuses a
-request that carries the header twice. Since MAN-3214 the gateway drops
-a copy the client sent; an earlier version added its own and forwarded
-the client's too, and this check costs nothing to keep.
+A valid signature is NOT enough. Core signs every app's tokens with one
+key, and every token still carries the shared audience ``manaurum-app``,
+so a token minted for some other app — or for this app in some other
+tenant — has a perfectly good signature here. Whoever runs that other app
+sees its users' tokens, and has 60 seconds to present one to you. Since
+MAN-3231 Core also names the app in ``aud`` (``["manaurum-app", "<the
+app's v2_apps id>"]``), and the deploy injects that id as
+``MANAURUM_APP_ID``. So this module requires THIS app's id as the
+audience, THIS tenant (``MANAURUM_TENANT_ID``), this app's slug in
+``app_id``, and no ``typ`` or ``scope``: a person pass and a system token
+also name this app in their audience, and neither is a user context. It
+refuses a request that carries the header twice, too. Since MAN-3214 the
+gateway drops a copy the client sent; an earlier version added its own
+and forwarded the client's too, and this check costs nothing to keep.
 """
 from __future__ import annotations
 
@@ -32,7 +36,14 @@ from src.capability import APP_SLUG
 USER_CONTEXT_HEADER = "X-Manaurum-User-Context"
 _JWT_ALGORITHM = "RS256"
 _JWT_ISSUER = "manaurum-core"
-_JWT_AUDIENCE = "manaurum-app"
+# Every token carries the shared audience "manaurum-app" as well, so it is
+# NOT what this module checks: it proves nothing about which app a token is
+# for. The audience checked is this app's own id, from the deploy's env.
+_APP_ID_ENV = "MANAURUM_APP_ID"
+_TENANT_ID_ENV = "MANAURUM_TENANT_ID"
+# Claims only Core's OTHER tokens carry: a person pass has `typ`, a system
+# token (cron) has `scope`. Both name this app in their audience too.
+_OTHER_TOKEN_KIND_CLAIMS = ("typ", "scope")
 # Core refuses a token without these, so a token without them was not
 # minted by the gateway or the Assistant for anybody.
 _REQUIRED_CLAIMS = ("sub", "tenant_id", "app_id", "app_version")
@@ -128,6 +139,13 @@ def server_language(
 def verify_user_context(token: str) -> UserContextClaims:
     """Verify a raw JWT string, or raise the right HTTPException.
 
+    503 when the key, ``MANAURUM_APP_ID`` or ``MANAURUM_TENANT_ID`` is not
+    set (fail closed). 401 ``user_context_wrong_app`` for a token whose
+    audience does not name this app (or names none) or whose ``app_id`` is
+    not this slug, ``user_context_wrong_tenant``, ``user_context_wrong_kind``
+    for a person pass or a system token, ``user_context_expired``,
+    ``user_context_incomplete``, and ``user_context_invalid`` for the rest.
+
     Kept separate from the request so it is directly unit-testable —
     see tests/test_auth.py, which signs tokens with a throwaway keypair.
     """
@@ -138,10 +156,14 @@ def verify_user_context(token: str) -> UserContextClaims:
             status_code=503,
             detail="core_user_context_public_key_not_provisioned",
         )
-    tenant_id = (os.environ.get("MANAURUM_TENANT_ID") or "").strip()
+    # Same reasoning for the two ids: without them nothing says which app
+    # and tenant a token has to be for, and skipping either check would
+    # accept a token minted for any app, or any tenant.
+    app_id = (os.environ.get(_APP_ID_ENV) or "").strip()
+    if not app_id:
+        raise HTTPException(status_code=503, detail="manaurum_app_id_not_injected")
+    tenant_id = (os.environ.get(_TENANT_ID_ENV) or "").strip()
     if not tenant_id:
-        # Same reasoning: without our own tenant there is nothing to bind
-        # the token to, and skipping the check would accept any tenant's.
         raise HTTPException(status_code=503, detail="manaurum_tenant_id_not_injected")
 
     from jose import jwt
@@ -153,23 +175,39 @@ def verify_user_context(token: str) -> UserContextClaims:
             pem,
             algorithms=[_JWT_ALGORITHM],
             issuer=_JWT_ISSUER,
-            audience=_JWT_AUDIENCE,
-            options={"require_exp": True, "require_iat": True},
+            # This app's id, not the shared "manaurum-app" every token has.
+            audience=app_id,
+            # python-jose skips the audience check for a token with no `aud`
+            # at all, and the expiry check for one with no `exp`: require
+            # them (and `iss` and `iat`, which Core always mints), or the
+            # token is bound to no app and never expires.
+            options={"require_aud": True, "require_iss": True,
+                     "require_exp": True, "require_iat": True},
         )
     except ExpiredSignatureError:
         # 60s TTL. The gateway mints a fresh one per request, so this
         # normally means the token was stored and replayed.
         raise HTTPException(status_code=401, detail="user_context_expired")
-    except JWTError:
+    except JWTError as exc:
+        # A foreign or missing audience ("Invalid audience", or 'missing
+        # required key "aud"'): minted for another app, or naming none.
+        # Anything else (signature, issuer, another missing claim) is simply
+        # not a token Core made for us.
+        if "aud" in str(exc):
+            raise HTTPException(status_code=401, detail="user_context_wrong_app")
         raise HTTPException(status_code=401, detail="user_context_invalid")
 
+    # Before the required claims: a person pass or a system token lacks
+    # `app_version`, and "incomplete" would hide what it really is.
+    if any(name in claims for name in _OTHER_TOKEN_KIND_CLAIMS):
+        raise HTTPException(status_code=401, detail="user_context_wrong_kind")
     if any(not str(claims.get(name) or "") for name in _REQUIRED_CLAIMS):
         raise HTTPException(status_code=401, detail="user_context_incomplete")
 
-    # The two checks Core's helper does not do for you. The gateway mints
-    # `app_id` as the slug for both the browser and the Assistant, and
-    # `tenant_id` as the tenant the app was deployed into — the same value
-    # the deploy injects as MANAURUM_TENANT_ID.
+    # The audience already named this app by its id. The gateway also
+    # mints `app_id` as the slug, for both the browser and the Assistant,
+    # and `tenant_id` as the tenant the app was deployed into — the same
+    # value the deploy injects as MANAURUM_TENANT_ID.
     if str(claims["app_id"]) != APP_SLUG:
         raise HTTPException(status_code=401, detail="user_context_wrong_app")
     if str(claims["tenant_id"]) != tenant_id:
@@ -221,10 +259,13 @@ def auth_claims(request: Request) -> UserContextClaims:
 # of another tenant, which the gateway makes look exactly like a guest —
 # arrives with neither.
 #
-# Unlike the user_context, the pass IS bound to one app: its audience is
-# your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass
-# minted for another app fails here on the audience check. `require_aud`
-# matters: python-jose skips the audience check for a token with no `aud`.
+# Like the user_context, the pass is bound to one app: its audience is your
+# `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted
+# for another app fails here on the audience check. `require_aud` matters:
+# python-jose skips the audience check for a token with no `aud`. The two
+# kinds cannot stand in for each other: a pass carries `typ: "person"`,
+# which this verifier requires and `verify_user_context` refuses, and a
+# user context or a system token carries no `typ` at all.
 
 PERSON_HEADER = "X-Manaurum-Person"
 _PERSON_TYP = "person"
@@ -254,8 +295,8 @@ class PersonClaims:
 def verify_person_pass(token: str) -> PersonClaims:
     """Verify a raw `X-Manaurum-Person` JWT for THIS app, or raise."""
     pem = (os.environ.get("CORE_USER_CONTEXT_PUBLIC_KEY_PEM") or "").strip()
-    app_id = (os.environ.get("MANAURUM_APP_ID") or "").strip()
-    tenant_id = (os.environ.get("MANAURUM_TENANT_ID") or "").strip()
+    app_id = (os.environ.get(_APP_ID_ENV) or "").strip()
+    tenant_id = (os.environ.get(_TENANT_ID_ENV) or "").strip()
     if not pem:
         raise HTTPException(status_code=503, detail="core_user_context_public_key_not_provisioned")
     if not app_id:
@@ -274,7 +315,8 @@ def verify_person_pass(token: str) -> PersonClaims:
             algorithms=[_JWT_ALGORITHM],
             issuer=_JWT_ISSUER,
             audience=app_id,
-            options={"require_exp": True, "require_iat": True, "require_aud": True},
+            options={"require_exp": True, "require_iat": True, "require_aud": True,
+                     "require_iss": True},
         )
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="person_pass_expired")

@@ -20,10 +20,10 @@ a used version or a bad archive before building anything. Migrations and the bui
 the job. The full list: `manaurum-deploy/SKILL.md`. Poll `GET /api/dev/v2/deploy/<job_id>` (and
 `/stream` for progress events).
 
-Do not use the in-browser App Builder's browser-session publish route under
-`/api/dev/v2/dev-apps`: it is retired. Core sergeysuaib-ui/manaurum#2296 deleted it and the dev
-runtime behind it (merged 2026-10-04). Aurum Studio publishes
-`hosted` apps under the same owner rule as this endpoint.
+There is no second, browser-session publish route: the in-browser App Builder's dev runtime
+and its `/api/dev/v2/dev-apps` routes are gone (Core sergeysuaib-ui/manaurum#2296, merged
+2026-10-04; production answers `404` there). Aurum Studio publishes `hosted` apps under the
+same owner rule as this endpoint.
 
 A `succeeded` deploy means the new container answered the platform's readiness probe on
 `runtime.port` and `runtime.health_path`; a failed probe rolls back and fails the job.

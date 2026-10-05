@@ -1045,7 +1045,9 @@ def check_slug_and_tools(manifest: dict, contract: dict, problems: list,
                             "- 422 manifest_validation_failed" % slug)
         elif slug.startswith(STUDIO_DRAFT_PREFIX):
             pass            # check_manifest_shape reported it; one finding, as the deploy
-        elif UUID_SHAPED.match(slug) or not re.match(contract.get("slug_pattern", ".*"), slug):
+        # fullmatch, not match: with match the pattern's `$` also matches
+        # before a final newline, and "abc\n" is no slug the deploy accepts.
+        elif UUID_SHAPED.match(slug) or not re.fullmatch(contract.get("slug_pattern", ".*"), slug):
             problems.append("manifest.json: app_id %r is not a slug the deploy accepts "
                             "(3-40 chars of a-z, 0-9 and -, starting with a letter and "
                             "ending with a letter or digit, not shaped like a UUID) "

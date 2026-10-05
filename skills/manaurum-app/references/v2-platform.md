@@ -77,7 +77,7 @@ Validate before every deploy — `manaurum app validate` uses a byte-identical c
 |---|---|---|
 | `manifest_version` | string `"2"` | Pinned. |
 | `manaurum_sdk_version` | string `"2"` | Pinned. |
-| `app_id` | string | Your slug: the DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name. It must be 3–40 characters of lowercase letters, digits and hyphens, starting with a letter and ending with a letter or digit, and must not be shaped like a UUID (`422 app_id_invalid`), be a reserved platform name — `app`, `apps`, `www`, `landing`, `staging`, `mcp`, `api`, `registry`, `library`, `turn`, `burgerlab`, `wildcard-anchor`, `dokploy`, `traefik` (`422 manifest_validation_failed`) — or start with `draft-`, the prefix of Aurum Studio's private drafts (`422 slug_reserved`). The deploy refuses all of these before it builds (`owner_deploy_slug`, `backend/app/services/v2_apps/owner_deploy.py`); the `draft-` refusal merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2368). From CLI 0.3.1, `manaurum app init` refuses such a name before it writes anything, and `manaurum app validate` and the deploy preflight refuse it before the build (`app_id_error`, `manaurum_cli/manifest.py`). |
+| `app_id` | string | Your slug: the DNS label (`<app_id>.apps.manaurum.com`), the Swarm service name and the Postgres schema name. It must be 3–40 characters of lowercase letters, digits and hyphens, starting with a letter and ending with a letter or digit, and must not be shaped like a UUID (`422 app_id_invalid`), be a reserved platform name — `app`, `apps`, `www`, `landing`, `staging`, `mcp`, `api`, `registry`, `library`, `turn`, `burgerlab`, `wildcard-anchor`, `dokploy`, `traefik` (`422 manifest_validation_failed`) — or start with `draft-`, the prefix of Aurum Studio's private drafts (`422 slug_reserved`, Core sergeysuaib-ui/manaurum#2368). The deploy refuses all of these before it builds (`owner_deploy_slug`, `backend/app/services/v2_apps/owner_deploy.py`). From CLI 0.3.1, `manaurum app init` refuses such a name before it writes anything, and `manaurum app validate` and the deploy preflight refuse it before the build (`app_id_error`, `manaurum_cli/manifest.py`). |
 | `name` | string | Human-readable. Used in App Store + windowing. |
 | `version` | string | Semver `MAJOR.MINOR.PATCH`. Bump on every redeploy. No pre-release / build metadata. |
 | `runtime` | object | See § 2. |
@@ -204,7 +204,7 @@ Full contract: `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C) in the manauru
 }
 ```
 
-Two modes, one per app: `hosted`, where the platform builds and runs your container, and `byo`, where you host the app and the platform proxies to it. The schema still lists a third value, `dev`. It belonged to the retired in-browser App Builder and is not a separate runtime any more: the deploy does not look at it, and Core sergeysuaib-ui/manaurum#2296 (merged 2026-10-04) deleted the dev runtime, its `/api/dev/v2/dev-apps` routes and the capability gateway's dev-mode allow-list. Do not use either. Aurum Studio, the platform's builder, publishes `hosted` apps.
+Two modes, one per app: `hosted`, where the platform builds and runs your container, and `byo`, where you host the app and the platform proxies to it. The schema still lists a third value, `dev`. It belonged to the retired in-browser App Builder and is not a separate runtime any more: the deploy does not look at it, and Core sergeysuaib-ui/manaurum#2296 (merged 2026-10-04) deleted the dev runtime, its `/api/dev/v2/dev-apps` routes and the capability gateway's dev-mode allow-list. Do not use it. Aurum Studio, the platform's builder, publishes `hosted` apps.
 
 `runtime` is **strict** (`additionalProperties: false`, since MAN-1899 on 2026-08-23): a key outside the eleven below is a `422` at deploy, and `templates/check_app.py` says so before you upload.
 
@@ -278,12 +278,12 @@ The gateway strips `Cookie` and `Authorization` from every request it proxies, `
 
 **Verifying `X-Manaurum-User-Context`, all of it.** Check, in this order:
 
-1. The signature: RS256 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, issuer `manaurum-core`, audience `manaurum-app`, `exp` and `iat` present and `exp` in the future. A missing key is a `503`, never "trusted".
-2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`. A token without one was not minted by the gateway. Others are optional: `workspace_id` (absent on an Assistant call that has none), and the person's language as `locale` (`en` | `ru` | `he`) with `dir` (`ltr` | `rtl`), present only when the person picked one in ManAurum (Core MAN-3244). Read the language as a hint: a pair that is not a supported language with its own direction is absent, never a `401` — `references/sdk-api.md` → "The person's language".
-3. **That it is yours.** `app_id` must equal your manifest's slug, and `tenant_id` must equal `MANAURUM_TENANT_ID`. Core signs every app's tokens with the same key and gives every one the audience `manaurum-app`, so step 1 accepts a token minted for any app, and the developer of any app a user opens sees that user's tokens. Without step 3 they have 60 seconds to present one to you. (Core sergeysuaib-ui/manaurum#2380, merged 2026-10-04, adds your `MANAURUM_APP_ID` to `aud` as a second audience.) The capability gateway makes this check on its own surface (`401 invalid_user_context`, "app mismatch"); in your container it is yours to make.
+1. The signature and the audience: RS256 against `CORE_USER_CONTEXT_PUBLIC_KEY_PEM`, issuer `manaurum-core`, and **your `MANAURUM_APP_ID` as the audience** — Core mints `aud: ["manaurum-app", "<your app's v2_apps id>"]` (MAN-3231, Core sergeysuaib-ui/manaurum#2380), and the deploy injects that id. The shared `manaurum-app` is on every app's tokens, so it proves nothing. Require `aud`, `iss`, `exp` and `iat` to be present (python-jose skips the audience check for a token with no `aud` at all) and `exp` to be in the future. A missing key, `MANAURUM_APP_ID` or `MANAURUM_TENANT_ID` is a `503`, never "trusted".
+2. The claims Core always mints: `sub`, `tenant_id`, `app_id`, `app_version`, and never `typ` or `scope`. A token without one of the four was not minted by the gateway; a token with `typ` is a person pass and one with `scope` a system token, which name your app in `aud` too and are not user contexts. Others are optional: `workspace_id` (absent on an Assistant call that has none), and the person's language as `locale` (`en` | `ru` | `he`) with `dir` (`ltr` | `rtl`), present only when the person picked one in ManAurum (Core MAN-3244). Read the language as a hint: a pair that is not a supported language with its own direction is absent, never a `401` — `references/sdk-api.md` → "The person's language".
+3. **That it is yours.** `tenant_id` must equal `MANAURUM_TENANT_ID`, and `app_id` must equal your manifest's slug. Core signs every app's tokens with the same key, so a verifier that checks only the shared audience accepts a token minted for any app — and the developer of any app a user opens sees that user's tokens, with 60 seconds to present one to you. The audience in step 1 stops that; the tenant check stops a token for your app minted in another tenant; the slug check costs nothing. The capability gateway makes these checks on its own surface (`401 invalid_user_context`, "app mismatch"); in your container they are yours to make.
 4. **Exactly one header.** Until Core MAN-3214 (deployed 2026-10-02) the gateway added its own copy under a different letter case and did not remove a copy the client sent, so a request could reach your container with two (Starlette's `headers.get()` returned the client's). It now drops the client's copy. Keep counting the raw headers anyway — one header, or `401` — against an older Core or a proxy in front of you. (Node joins two copies with `", "`, which then fails JWT parsing, so it fails closed.)
 
-Never read the header on an `anonymous` route. Nothing is minted there, so a copy that does arrive did not come through the gateway, which drops the client's. `templates/v2-starter/src/auth.py` implements all four steps (it reads your slug as `APP_SLUG` from `src/capability.py`; copy both, or set it where you keep it) and `tests/test_auth.py` tests each one. `MANAURUM_TENANT_ID` is injected into `hosted` containers; on a `byo` host, set it yourself to the tenant you deploy into.
+Never read the header on an `anonymous` route. Nothing is minted there, so a copy that does arrive did not come through the gateway, which drops the client's. `templates/v2-starter/src/auth.py` implements all four steps, as Core's own bundled verifier (`_manaurum_runtime.py`) does (it reads your slug as `APP_SLUG` from `src/capability.py`; copy both, or set it where you keep it), and `tests/test_auth.py` tests each one: another app, the shared audience alone, no audience, another tenant, a person pass, a system token, and each id unset. `MANAURUM_APP_ID` and `MANAURUM_TENANT_ID` are injected into `hosted` containers; on a `byo` host, set them yourself: the app's UUID (`app_id` in `GET /api/dev/v2/apps/<slug>`) and the tenant you deploy into.
 
 ### Pages that guests and members both open
 
@@ -297,13 +297,13 @@ A share link, a voting room, an invite page: the same page, opened by people wit
 
 * **A signed-in member of your tenant** arrives exactly as on `user` — `X-Manaurum-User-Context`, which you forward to capabilities — and also with **`X-Manaurum-Person`**, a pass that says who they are: `sub` (the same user id), `email`, `name` (the profile name, or empty — never the email), `facts.is_tenant_admin`, `facts.workspace_role`, `kind: "member"`, and `locale` / `dir` when they picked a language (the same pair as on the `user_context`).
 * **Anyone else** arrives with neither header. That includes a member of another tenant: the gateway makes them look exactly like a guest, so the route cannot be used to find out who belongs where. There is no `401`.
-* **Verify the pass for your app.** Its `aud` is your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted for another app fails the audience check — unlike the `user_context`, whose audience is shared. `templates/v2-starter/src/auth.py` → `optional_person` returns `None` for a guest, the person for a member, and a `401` for a pass that is present but bad (an attack or a broken deploy — never treat it as a guest).
+* **Verify the pass for your app.** Its `aud` is your `MANAURUM_APP_ID` (the v2_apps UUID the deploy injects), so a pass minted for another app fails the audience check, as a `user_context` minted for another app does. What tells the two apart is `typ: "person"`, which only the pass carries. `templates/v2-starter/src/auth.py` → `optional_person` returns `None` for a guest, the person for a member, and a `401` for a pass that is present but bad (an attack or a broken deploy — never treat it as a guest).
 * **Decide deliberately what a request without a pass may do.** That is the guest's whole permission set: what the link was for (see the board, vote under a typed name), nothing a member's identity would unlock.
 * **Sessions.** A member whose session lapsed is served as a guest; the response carries `X-Manaurum-Session: stale`, and the platform script injected into your pages renews and repeats a GET/HEAD once. A POST is not repeated — it already reached you as a guest — so after a stale POST, ask the person to try again.
 
 Guests still need your own mechanism if a guest must be recognised across requests (a seat in a room, a typed name): keep a short-lived pass of your own, HMAC over what it grants with the key in `os.secrets`, in a header of your own (`X-App-Pass`; not `Authorization`, the gateway strips it). Members no longer need it.
 
-**Names and roles.** The `user_context` carries ids and the person's language only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). A name and an address for a user id, and the rest of the team, come from `os.directory.list_users` (`capabilities-reference.md`; in the public tenant only with the user context forwarded). It merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112). Inside the desktop window `manaurum:init` carries `user.nickname`.
+**Names and roles.** The `user_context` carries ids and the person's language only: no name, no email, no role. On an `optional` route the person pass carries the name, the email and the facts a role is made of (`is_tenant_admin`, `workspace_role`); on a `user` route there is still none of it, so an app that needs admins there keeps its own list (say, user ids in `os.secrets` or your schema). A name and an address for a user id, and the rest of the team, come from `os.directory.list_users` (`capabilities-reference.md`, Core sergeysuaib-ui/manaurum#2112; in the public tenant only with the user context forwarded). Inside the desktop window `manaurum:init` carries `user.nickname`.
 
 ### Streaming routes — the limits
 
@@ -347,9 +347,17 @@ send the headers; only Core can sign the token:
 from jose import jwt
 claims = jwt.decode(request.headers["authorization"].removeprefix("Bearer "),
                     os.environ["CORE_USER_CONTEXT_PUBLIC_KEY_PEM"], algorithms=["RS256"],
-                    audience=os.environ["MANAURUM_APP_ID"], issuer="manaurum-core")
-assert claims["scope"] == "system" and claims["caller_system"] == "cron-scheduler"
+                    audience=os.environ["MANAURUM_APP_ID"], issuer="manaurum-core",
+                    options={"require_aud": True, "require_iss": True, "require_exp": True})
+# Explicit checks, not `assert`: `python -O` strips asserts.
+if (claims.get("scope") != "system"
+        or claims.get("caller_system") != "cron-scheduler"
+        or claims.get("tenant_id") != os.environ["MANAURUM_TENANT_ID"]):
+    raise PermissionError("not this app's cron system token")
 ```
+
+A user context and a person pass name your app in `aud` too; the `scope` check is what
+refuses them here.
 
 What you can rely on: at most once per slot (a firing that may have reached you is never
 retried — make the handler idempotent on `firing_id` or `scheduled_for`); after downtime
@@ -393,7 +401,7 @@ Env vars the platform sets on every task:
 | Env var | Use |
 |---|---|
 | `MANAURUM_TENANT_ID` | UUID of the installed tenant. |
-| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. The `X-Manaurum-App-Id` for `os.kv.*` and `os.events.emit` only; send your slug everywhere else. |
+| `MANAURUM_APP_ID` | UUID of your app in `v2_apps`. The audience your verifier requires on `X-Manaurum-User-Context`, the person pass and the system token. The `X-Manaurum-App-Id` for `os.kv.*` and `os.events.emit` only; send your slug everywhere else. |
 | `MANAURUM_VERSION` | Currently-running semver. |
 | `MANAURUM_TARGET_SCHEMA` | Your per-(app, tenant) Postgres schema: `app_<slug>__<tenant_hex>`. |
 | `MANAURUM_RUNTIME_TOKEN` | The `mna_*` credential to call the capability gateway with. Minted fresh on every deploy, scoped to this one app. **Never bake your own developer token into the image.** |

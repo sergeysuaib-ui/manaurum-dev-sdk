@@ -450,6 +450,12 @@ def a_studio_draft_slug(app: Path) -> None:
     patch_manifest(app, lambda data: data.update(app_id="draft-notes"))
 
 
+def a_slug_ending_in_a_newline(app: Path) -> None:
+    # The contract's pattern ends in `$`, which re.match lets match before a
+    # final newline. The deploy refuses it too (422 app_id_invalid) from Core #2402.
+    patch_manifest(app, lambda data: data.update(app_id="probe-app\n"))
+
+
 def draft_inside_a_slug(app: Path) -> None:
     # MUST STAY GREEN. The deploy refuses the prefix, not the word.
     patch_manifest(app, lambda data: data.update(app_id="my-draft-notes"))
@@ -837,6 +843,8 @@ APP_MUTATIONS = [
     ("manifest: a UUID for a slug", a_uuid_for_a_slug, "not a slug the deploy accepts"),
     ("manifest: a slug under Studio's draft- prefix", a_studio_draft_slug,
      "reserved for Aurum Studio's private drafts"),
+    ("manifest: a slug ending in a newline", a_slug_ending_in_a_newline,
+     "not a slug the deploy accepts"),
     ("manifest: draft inside a slug stays green", draft_inside_a_slug, None),
     ("routes: a prefix on include_router", a_prefix_on_the_include,
      "GET /api/extra/items is served but no runtime.api_routes rule covers it"),
