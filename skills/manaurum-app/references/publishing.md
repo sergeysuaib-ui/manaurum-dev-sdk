@@ -22,8 +22,7 @@ the job. The full list: `manaurum-deploy/SKILL.md`. Poll `GET /api/dev/v2/deploy
 
 Do not use the in-browser App Builder's browser-session publish route under
 `/api/dev/v2/dev-apps`: it is retired. Core sergeysuaib-ui/manaurum#2296 deleted it and the dev
-runtime behind it (merged 2026-10-04); production had not deployed that change that day, so
-until it does the route still answers there. Aurum Studio publishes
+runtime behind it (merged 2026-10-04). Aurum Studio publishes
 `hosted` apps under the same owner rule as this endpoint.
 
 A `succeeded` deploy means the new container answered the platform's readiness probe on

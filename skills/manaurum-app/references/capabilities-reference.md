@@ -5,13 +5,10 @@ registered on Core's `main` at `7c1f09566` (2026-10-04) are documented below, al
 `version: 1`. Every entry gives the input (from the capability's JSON Schema), the output on
 success, and the errors that capability itself raises.
 
-> **Production lags `main` here.** `os.ai.speak`, the voice-key funding of
-> `os.ai.transcribe` (sergeysuaib-ui/manaurum#2382) and `os.directory.list_users` (#2112)
-> merged in Core on 2026-10-04, and production had not deployed them that day, so it
-> registered 32 capabilities. Until it does, `os.ai.speak` and `os.directory.list_users`
-> answer `404 capability_not_found`, and `os.ai.transcribe` runs on the tenant's own OpenAI
-> key only (`412 integration_not_configured` without one). The three sections below
-> describe `main`, and each points back here. CLI 0.3.2 knows both new names: `manaurum
+> **Live in production.** `os.ai.speak` (sergeysuaib-ui/manaurum#2382, Gemini and `model`
+> in #2385), the voice-key funding of `os.ai.transcribe` (#2382) and
+> `os.directory.list_users` (#2112) merged in Core on 2026-10-04 and are deployed (checked
+> 2026-10-05). CLI 0.3.2 knows both new names: `manaurum
 > app validate` refuses a call to one your manifest does not declare, as `check_app.py`
 > does. 0.3.1 does not know them and says nothing.
 
@@ -490,9 +487,7 @@ Resolve a `location_id` the tenant uses elsewhere (a shop, a warehouse) to a nam
 ## `os.directory.list_users` — the people on the app's team (MAN-2519)
 
 Fill an assignee or recipient picker, or show a name for a `sub` from the user context.
-Read-only, `auth_mode: "app"`. Merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112);
-production had not deployed it that day — until it does, the call is
-`404 capability_not_found` (the note at the top of this page).
+Read-only, `auth_mode: "app"`. Merged in Core on 2026-10-04 (sergeysuaib-ui/manaurum#2112).
 
 **Input:** `{}` — exactly that; any field is a `422 input_schema_violation`.
 
@@ -686,10 +681,7 @@ path: no key ever reaches your container. OpenAI only — an Anthropic key alone
 cover it.
 
 **Who pays — this and `os.ai.speak`** (Core sergeysuaib-ui/manaurum#2382, MAN-2727 /
-MAN-3256). Merged in Core on 2026-10-04; production had not deployed it that day — until it
-does, `os.ai.transcribe` runs on the tenant's own OpenAI key only and `os.ai.speak` is
-`404 capability_not_found` (the note at the top of this page). On `main`, both voice
-capabilities are paid for like text AI:
+MAN-3256). Both voice capabilities are paid for like text AI:
 
 1. **The tenant's OpenAI integration**, when the tenant has one. The tenant pays OpenAI
    directly, and the shared limits are not touched. An integration that exists but holds
@@ -789,9 +781,7 @@ Keep your own transcript record if you need one: the platform keeps none.
 ## `os.ai.speak` — text to speech, MP3 out (OpenAI or Gemini)
 
 Text or Markdown in → the whole MP3 back as base64. Merged in Core on 2026-10-04
-(sergeysuaib-ui/manaurum#2382; Gemini and `model` in #2385); production had not deployed
-it that day — until it does, the call is `404 capability_not_found` (the note at the top of
-this page). Workspace-resolved and switched off exactly as `os.ai.transcribe` above; the
+(sergeysuaib-ui/manaurum#2382; Gemini and `model` in #2385). Workspace-resolved and switched off exactly as `os.ai.transcribe` above; the
 same errors apply except the audio ones.
 
 **Which model speaks:** the `model` you pass, else the model a workspace admin chose for

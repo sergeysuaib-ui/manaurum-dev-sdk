@@ -19,6 +19,10 @@ five voices and no way to choose a model.
   * the `400 unknown_voice`, `412 integration_not_configured` and
     `412 speech_setting_invalid` errors;
   * Gemini's 64 kbps MP3 and its per-call overhead.
+* The 2026-10-04 Core changes are live in production (checked 2026-10-05), so the notes
+  saying they were not deployed are removed. That covers `os.ai.speak`, the voice-key
+  funding, `os.directory.list_users`, the `draft-` slug refusal, the removed dev runtime,
+  and the app id in `aud`.
 * The platform contract is re-synced from Core `main` @ b9980413e
   (`scripts/sync_contract.py`). That brings in `model` on `os.ai.speak` and the new error
   codes (`unknown_voice`, `speech_setting_invalid`), together with whatever else Core
