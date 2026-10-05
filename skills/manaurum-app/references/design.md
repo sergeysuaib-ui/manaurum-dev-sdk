@@ -321,6 +321,20 @@ boolean, use a checkbox with a `.field-label`. Reach for a sidebar only when a
 list genuinely drives a detail pane, and then build it from `.list` + `.row`
 rather than inventing a component.
 
+### A tool with several modules
+
+It is not the exception. A CRM with deals, contacts
+and reports, an admin with five areas: the pull toward a sidebar is strongest
+here, and the reason against it is the same 900px. Two or three modules are the
+`.btn-ghost` switch above. More than that is a home screen: one card per module,
+each saying what it holds (a count, the last change), and a URL fragment per
+module (`#deals`, `#contacts`) so a module opens directly and the screenshot
+check reaches it. Inside a module, a back control returns home. Each module
+can be large; the window only shows one at a time. If the modules have nothing
+to say to each other, they are separate apps, and the desktop is the navigation.
+`check_ui.py` flags a `sidebar` / `tabs` class in markup, JSX and built bundles
+alike.
+
 ## Patterns, and when to use them
 
 Classes are in `app.css`; this is the judgement that goes with them.

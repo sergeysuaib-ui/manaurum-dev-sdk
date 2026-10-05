@@ -9,6 +9,14 @@
 #
 # The versions match the platform's own runtime base, so the JWT your
 # container verifies is checked by the same library Core mints it with.
+#
+# python-jose pulls in ecdsa, which carries PYSEC-2026-1325 with no fixed
+# release. A deploy does not audit dependencies, but the manaurum monorepo's
+# app gate (scripts/audit_app_deps.py) does, and it fails every new app on
+# this advisory until the app is added, by name, to that advisory's `apps`
+# list there, with a comment saying why it is unreachable: this starter only
+# ever verifies an RS256 token (`jwt.decode`) and never signs with ECDSA.
+# Re-check that before you add yourself if your app signs anything.
 fastapi==0.136.1
 uvicorn[standard]==0.30.6
 python-jose[cryptography]==3.5.0

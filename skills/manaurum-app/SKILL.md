@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.19.0.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.20.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -27,7 +27,9 @@ Read it in order; every step ends in something you can run.
    back for.
 3. **Scaffold** with the `manaurum-setup` skill: copy `templates/v2-starter` as the
    project, add `.gitignore` and `deploy.sh`, and put the deploy token one level above
-   the app directory. Steps 1 – 3.6 then change that project, not an empty folder.
+   the app directory. If your session's skill list does not show `manaurum-setup`
+   (it has happened with the skill on disk), read `<plugin>/skills/manaurum-setup/SKILL.md`
+   and follow it: the file is the skill. Steps 1 – 3.6 then change that project, not an empty folder.
 4. **Steps 1 – 2.5** — manifest, Dockerfile, the `manaurum:ready` handshake.
 5. **Step 3** — call capabilities from your container.
 6. **Steps 3.5 and 3.6** — the two checks that fail what a green deploy hides. Both are
@@ -137,7 +139,9 @@ but rule 3 and the first half of rule 5.
 1. **No tab bar, and no sidebar as navigation.** The window is often 900px wide
    and sits in a desktop that already has navigation. Sections are cards; two
    views are two `.btn-ghost`s that swap the content. (One narrow exception, in
-   `design.md`: a list that genuinely drives a detail pane.)
+   `design.md`: a list that genuinely drives a detail pane.) A tool with many
+   modules gets a home screen of cards, one per module, not a sidebar
+   (`design.md` → "A tool with several modules").
 2. **Appearance and accent come from `manaurum:init` — in `e.data.payload`, not
    on the message root** — written onto `<html>` as `data-appearance` /
    `data-accent` (Step 2.5). Reading them off `e.data` applies nothing and
@@ -364,6 +368,11 @@ rather than retyping this one. Four things are non-negotiable:
      try { window.parent.postMessage({ type: 'manaurum:ready' }, origin); } catch { /* not embedded */ }
    }
    ```
+   The payload has the same race: a component that subscribes to `message` in
+   `useEffect` misses `init`, and a phone gets the desktop layout. The starter's
+   inline block keeps it on `window.__manaurum` and fires `manaurum-device` /
+   `manaurum-locale`; the bundle reads that state on mount, then listens
+   (`references/sdk-api.md` → "The bundle reads what the listener stored").
 3. **Apply the appearance from `e.data.payload`.** Answering the handshake and ignoring
    the payload is a shipped bug: the window works and renders in its own palette inside
    a dark desktop.

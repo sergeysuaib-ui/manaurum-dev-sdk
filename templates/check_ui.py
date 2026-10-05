@@ -122,7 +122,12 @@ FUNCTION_DEF = re.compile(
     r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?"
     r"(?:function\b|\([^()]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)|"
     r"function\s*\(|(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*=>")
-BANNED_CLASS = re.compile(r'class="[^"]*\b(tabs?|sidebar)\b')
+# Markup writes `class="..."`; JSX writes `className="..."` or
+# `className={`...`}`, and a built React or Preact bundle `className:"..."`.
+# Until 3.20.0 only the first was seen, so a sidebar in a Vite bundle passed.
+BANNED_CLASS = re.compile(
+    r"""\bclass(?:Name)?\s*[=:]\s*\{?\s*(?P<q>["'`])(?:(?!(?P=q)).)*?\b(tabs?|sidebar)\b""",
+    re.S)
 MEDIA_WIDTH = re.compile(r"@media[^{]*max-width")
 BUTTON_ROW = re.compile(r'<button[^>]*class="[^"]*\brow\b')
 PRIMARY = re.compile(r"btn-primary")
@@ -155,7 +160,7 @@ BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 # Trailing `//` comments too, but never the `//` in `https://`.
 LINE_COMMENT = re.compile(r"(?m)(?<![:\\])//[^\n]*$")
 
-CHECKED_SUFFIXES = (".html", ".htm", ".js", ".mjs")
+CHECKED_SUFFIXES = (".html", ".htm", ".js", ".mjs", ".jsx", ".tsx")
 
 # Geometry of the page root. A leaf CSS rule is `selector { declarations }`
 # with no brace inside; an @media wrapper is simply skipped over, which is

@@ -24,6 +24,14 @@ updating at 2.7.3 - so this hook, which only looked at siblings, never said a
 word. It now also reads the marketplace clone's version, and at most once a
 day asks GitHub for the released one (2 s timeout, nothing sent but the GET;
 set MANAURUM_SDK_NO_UPDATE_CHECK=1 to switch that off).
+
+Starting a new session is the fix, and a long agent run often cannot take it
+(SDK feedback, 2026-10-05: a run on 3.16.0 while 3.18.1 was out had nothing to
+do but carry on). So when nothing newer is in the cache, the message also says
+where the newer files can be read now: the marketplace clone, which
+`claude plugin marketplace update manaurum-sdk` refreshes without touching the
+running session, and lists the Summary line of every release in between from
+that clone's CHANGELOG.md.
 """
 
 import json
@@ -79,11 +87,59 @@ def semver(text):
     return tuple(int(part) for part in match.groups()) if match else None
 
 
+def marketplace_dir():
+    """Where the local marketplace clone lives, whether or not it exists."""
+    base = os.environ.get("MANAURUM_SDK_MARKETPLACE_DIR")
+    return Path(base) if base else Path.home() / ".claude" / "plugins" / "marketplaces" / "manaurum-sdk"
+
+
 def marketplace_version():
     """The version in the local marketplace clone, if there is one."""
-    base = os.environ.get("MANAURUM_SDK_MARKETPLACE_DIR")
-    path = Path(base) if base else Path.home() / ".claude" / "plugins" / "marketplaces" / "manaurum-sdk"
-    return declared_version(path)
+    return declared_version(marketplace_dir())
+
+
+SUMMARY_LIMIT = 8
+
+
+def summaries_since(changelog, mine):
+    """`3.19.0: <Summary line>` for every release newer than `mine`, newest first.
+
+    Read from a CHANGELOG.md whose release headings are `# X.Y.Z - ...` and
+    whose first `Summary:` line under each says what changed in plain words.
+    """
+    lines, version = [], None
+    try:
+        text = changelog.read_text(encoding="utf-8")
+    except Exception:
+        return lines
+    for raw in text.splitlines():
+        heading = re.match(r"^# (\d+\.\d+\.\d+)\b", raw)
+        if heading:
+            version = heading.group(1)
+            continue
+        if version and raw.startswith("Summary:") and semver(version) > mine:
+            lines.append("%s: %s" % (version, raw[len("Summary:"):].strip()))
+            version = None
+    return lines[:SUMMARY_LIMIT]
+
+
+def read_now(mine, newest):
+    """What a session that cannot restart can do instead, as one paragraph."""
+    clone = marketplace_dir()
+    if semver(declared_version(clone)) == semver(newest):
+        where = ("The marketplace clone at {clone} already holds {newest}. If you "
+                 "cannot start a new session now, read the skills from there "
+                 "({skill} and the others beside it) instead of from this "
+                 "session's copy.").format(clone=clone, newest=newest,
+                                           skill=clone / "skills" / "manaurum-app" / "SKILL.md")
+        changes = summaries_since(clone / "CHANGELOG.md", mine)
+        if changes:
+            where += " What changed since your version:\n- " + "\n- ".join(changes)
+        return where
+    return ("If you cannot start a new session now, run `claude plugin marketplace "
+            "update manaurum-sdk`: it refreshes the clone at {clone} without touching "
+            "this session, and you can then read the newer skills and CHANGELOG.md "
+            "there.").format(clone=clone)
 
 
 def released_version(cache_dir):
@@ -162,9 +218,9 @@ def main():
             message = (
                 "manaurum-dev-sdk: this session runs version {mine} of the plugin, and "
                 "{newest} has been released. The skill files already in your context "
-                "may teach things the platform no longer does. {how}"
+                "may teach things the platform no longer does. {how}\n\n{now}"
             ).format(mine=declared_version(root) or root.name, newest=newest_seen,
-                     how=UPDATE_HOW)
+                     how=UPDATE_HOW, now=read_now(mine_key, newest_seen))
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "SessionStart", "additionalContext": message}}))
         # We are the current copy: leave a pointer for anyone resolving the
