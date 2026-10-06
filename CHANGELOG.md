@@ -25,7 +25,9 @@ Summary: The README installs CLI 0.3.6, which previews what a deploy does with e
 * `SKILL.md` (the capability pitfall), `capabilities-reference.md` (grant enforcement and the
   `os.notifications.send_to_user` errors) and `checks.md` (`403 capability_not_granted`)
   describe the redeploy rule, the four outcomes and `--dry-run`, and keep the operator only
-  for another team's install.
+  for another team's install. `v2-platform.md` (grant enforcement) says the same, and the
+  sensitive-capabilities note says strict grants withhold them on a redeploy too, whoever
+  deploys.
 * `scripts/open-claims.txt`: MAN-1385 names the cli-v0.3.6 wheel; MAN-1112 is In Progress
   and now covers only the other-team case.
 
