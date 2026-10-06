@@ -149,8 +149,9 @@ grants it there until tenant admins get a screen for it (MAN-1112).
 **Sensitive capabilities.** `os.ai.*`, `os.ocr.*`, `os.notifications.*`,
 `os.directory.*`, `os.http.*` and `os.secrets.*` are classed sensitive
 (`backend/app/services/capabilities/sensitivity.py`). When the platform runs with strict
-grants, these are not granted automatically at install; a tenant admin grants them
-explicitly.
+grants, these are not granted automatically, at install or on a redeploy, whoever deploys
+— even someone who may grant them: the deploy reports them `withheld`, and a tenant admin
+grants them explicitly. Strict grants are off on production today.
 
 ---
 
