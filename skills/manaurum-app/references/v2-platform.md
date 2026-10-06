@@ -159,7 +159,9 @@ Note the shape of that description: a positive trigger ("use for household to-do
 input_schema/properties/q/$ref must be a local '#...' reference, not 'https://example.com/query.json'
 ```
 
-Declare the subschema inline, or under `$defs` and point at it with `"$ref": "#/$defs/query"`. A signal's `result_schema` follows the same rule, and its `$schema`, if given, must be Draft 2020-12.
+Declare the subschema inline, or under `$defs` and point at it with `"$ref": "#/$defs/query"`. The deploy does not check that a local pointer resolves: a dangling `#/...` deploys green, and every call of the tool then fails as invalid arguments.
+
+A signal's `result_schema` (`agent_capabilities[].signal`) is stricter. Its `$schema`, if given, must be Draft 2020-12. Every local pointer must point at a subschema, with no cycle. It may be at most 32 levels deep, and may not use `pattern`, `patternProperties` or `uniqueItems`. Declare its contract properties inline, not behind `$ref`: `value`, `unit` and `as_of` for a metric, or `as_of`, `rows` and each row's `id` for an entity list.
 
 **Shape a write's input for the approval card.** A write pauses on a card the user approves first. The card names the call by the record's id and title and shows the arguments, at most 10 keys per level. So an update takes **only the fields that change** (omitted means unchanged), the record's id is a **required, top-level** key named after the tool's noun (`update_order` → `order_id`), and every key is declared in `properties`.
 

@@ -11,8 +11,8 @@ Summary: The README now installs the newest command-line tool, 0.3.5, and the ap
   whose `$ref`, `$dynamicRef`, `$recursiveRef` or `$id` is not a local `#...` pointer. Under
   Draft-04 it refuses a remote `id` the same way. It also refuses a `$schema` other than
   Draft 2020-12, 2019-09, 07, 06 or 04. 0.3.5's `manaurum app validate` refuses the same
-  schemas before the upload. Older drafts' array-form `items`, `additionalItems` and
-  schema-valued `dependencies` are now walked too, in an `input_schema` and in a signal's
+  schemas before the upload. Core now walks older drafts' array-form `items`,
+  `additionalItems` and schema-valued `dependencies` too, in an `input_schema` and in a signal's
   `result_schema`.
 * README still installed `cli-v0.3.3`. That version knows neither signals nor the
   `telegram` block, both added in 0.3.4.
@@ -25,7 +25,9 @@ Summary: The README now installs the newest command-line tool, 0.3.5, and the ap
 * **`v2-platform.md` → `agent_capabilities[]` → "Keep each `input_schema`
   self-contained"**: the rule as Core's `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C2)
   states it, a refused remote `$ref` with the error the deploy returns, the local
-  `#/$defs/...` alternative, and that a signal's `result_schema` must be Draft 2020-12.
+  `#/$defs/...` alternative, that a dangling local pointer deploys green and fails every
+  call, and the stricter rules for a signal's `result_schema` (Draft 2020-12, contract
+  properties inline).
 * `scripts/open-claims.txt` names the cli-v0.3.5 wheel for MAN-1385. That issue was
   re-checked on 2026-10-06: it is still Backlog, and PyPI still answers `404` for
   `manaurum-cli`.
