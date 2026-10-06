@@ -149,6 +149,20 @@ Note the shape of that description: a positive trigger ("use for household to-do
 
 `routing_hints` are informational: today nothing matches against them. `example` is surfaced to the model as a usage hint. The model picks a tool by its `name`, `description` and `input_schema`, so **write the `description` with the words your user actually uses**, in their language as well as English: an app whose people type «сколько осталось» should say so in the description.
 
+**Keep each `input_schema` self-contained.** Core validates the model's arguments against it offline and never fetches what it names. Every `$ref`, `$dynamicRef`, `$recursiveRef` and `$id` (under Draft-04, `id` too) must be a local `#...` pointer, and `$schema`, if given, must be Draft 2020-12, 2019-09, 07, 06 or 04. Anything else is refused at deploy, and by `manaurum app validate` (CLI 0.3.5+) before the upload:
+
+```json
+"properties": {"q": {"$ref": "https://example.com/query.json"}}
+```
+
+```
+input_schema/properties/q/$ref must be a local '#...' reference, not 'https://example.com/query.json'
+```
+
+Declare the subschema inline, or under `$defs` and point at it with `"$ref": "#/$defs/query"`. The deploy does not check that a local pointer resolves: a dangling `#/...` deploys green, and every call of the tool then fails as invalid arguments.
+
+A signal's `result_schema` (`agent_capabilities[].signal`) is stricter. Its `$schema`, if given, must be Draft 2020-12. Every local pointer must point at a subschema, with no cycle. It may be at most 32 levels deep, and may not use `pattern`, `patternProperties` or `uniqueItems`. Declare its contract properties inline, not behind `$ref`: `value`, `unit` and `as_of` for a metric, or `as_of`, `rows` and each row's `id` for an entity list.
+
 **Shape a write's input for the approval card.** A write pauses on a card the user approves first. The card names the call by the record's id and title and shows the arguments, at most 10 keys per level. So an update takes **only the fields that change** (omitted means unchanged), the record's id is a **required, top-level** key named after the tool's noun (`update_order` → `order_id`), and every key is declared in `properties`.
 
 **Timeouts and retries.** The Assistant waits **30 seconds** for your handler, then reports the call as failed — but your handler keeps running. It does not pass you an idempotency key. So a write that can take longer than that must be idempotent on its own inputs (an upsert keyed by something in the request), or the user's retry writes twice. What the model sees of a failure is short: `{"ok": false, "error": …}` passes the first 300 characters of `error`, a non-2xx response the first 200 of its body, and the whole message is capped at 400.

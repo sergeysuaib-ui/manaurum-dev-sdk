@@ -1,3 +1,37 @@
+# 3.20.1 - README installs CLI 0.3.5, and an Assistant tool's schema stays self-contained
+
+Summary: The README now installs the newest command-line tool, 0.3.5, and the app guide says that an Assistant tool's input schema may not point outside itself, which 0.3.5 and the deploy both refuse.
+
+### Why
+
+* **CLI 0.3.5 is published**
+  ([cli-v0.3.5](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.5),
+  Core sergeysuaib-ui/manaurum#2448, MAN-3393). Core now checks the Assistant's arguments
+  against an `agent_capabilities[].input_schema` offline. So the deploy refuses a schema
+  whose `$ref`, `$dynamicRef`, `$recursiveRef` or `$id` is not a local `#...` pointer. Under
+  Draft-04 it refuses a remote `id` the same way. It also refuses a `$schema` other than
+  Draft 2020-12, 2019-09, 07, 06 or 04. 0.3.5's `manaurum app validate` refuses the same
+  schemas before the upload. Core now walks older drafts' array-form `items`,
+  `additionalItems` and schema-valued `dependencies` too, in an `input_schema` and in a signal's
+  `result_schema`.
+* README still installed `cli-v0.3.3`. That version knows neither signals nor the
+  `telegram` block, both added in 0.3.4.
+* `v2-platform.md` described `input_schema` without the rule, so an app that put a shared
+  schema behind a remote `$ref` learned of it only from a refused deploy.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.3.5` wheel.
+* **`v2-platform.md` → `agent_capabilities[]` → "Keep each `input_schema`
+  self-contained"**: the rule as Core's `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C2)
+  states it, a refused remote `$ref` with the error the deploy returns, the local
+  `#/$defs/...` alternative, that a dangling local pointer deploys green and fails every
+  call, and the stricter rules for a signal's `result_schema` (Draft 2020-12, contract
+  properties inline).
+* `scripts/open-claims.txt` names the cli-v0.3.5 wheel for MAN-1385. That issue was
+  re-checked on 2026-10-06: it is still Backlog, and PyPI still answers `404` for
+  `manaurum-cli`.
+
 # 3.20.0 - what an agent building a React app on 3.16 ran into: the device race, the bundle the deploy drops, a sidebar the linter missed
 
 Summary: React and Vite apps get their own instructions, the UI check catches a sidebar in them, and a session on an old SDK version is told where to read the new one without restarting.
