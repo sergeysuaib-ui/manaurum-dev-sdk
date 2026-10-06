@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.20.1.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.20.2.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -557,4 +557,4 @@ URL is not evidence.
 - **No downloads, no new tabs, no clipboard writes.** Put a file into the person's Files with `os.drive.publish` and say where it went; show a link as selectable text; show a value in a read-only field that selects itself on focus. Details: `references/design.md` → "Window rules".
 - **Don't set your own framing headers.** Core sets them; the rest of your CSP is kept, so a `connect-src` that forgets your API origin still breaks the app. `references/v2-platform.md` → "What else the gateway answers".
 - **A relative `frontend.icon`** renders as literal text in the tile (Step 1), and **a `.env*` inside the app directory** is deployed ("Required project structure").
-- **A capability in your manifest is not a capability you may call.** Grants are enforced per install; an empty grant list denies everything, and a redeploy still 403s until the tenant's install grants are extended.
+- **A capability in your manifest is not a capability you may call.** Grants are enforced per install, and an empty grant list denies everything. A redeploy adds a newly declared capability to your own team's install when you are allowed to grant it, and the deploy result says, per capability, `granted`, `not_granted`, `withheld` or `unknown`; check it before you rely on a new capability (`manaurum app deploy --dry-run` shows it in advance).

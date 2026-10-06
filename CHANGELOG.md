@@ -1,3 +1,36 @@
+# 3.20.2 - README installs CLI 0.3.6, and a redeploy grants your own team's new capabilities
+
+Summary: The README installs CLI 0.3.6, which previews what a deploy does with each capability, and the guides say a redeploy now adds one to your own team's install when you may grant it.
+
+### Why
+
+* **CLI 0.3.6 is published**
+  ([cli-v0.3.6](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.6),
+  Core sergeysuaib-ui/manaurum#2456 and #2462, MAN-3435, MAN-3436). `manaurum app deploy
+  --dry-run` reports what the deploy would do with each capability the manifest declares,
+  without deploying, and a real deploy prints the same list once it is live.
+* **Core changed what a redeploy does with grants** (live since 2026-10-06). A redeploy now
+  adds each newly declared capability to the app's install in its own team when the
+  deployer may grant it: a tenant admin, or an owner, admin or member of a workspace in
+  that team. It never removes one. Each declared capability comes back as `granted`,
+  `not_granted`, `withheld` or `unknown`. Installs of the app in another team are not
+  widened; a platform operator grants there until tenant admins get a screen (MAN-1112).
+* `SKILL.md`, `capabilities-reference.md` and `checks.md` said a redeploy never widens an
+  install's grants and sent every case to the platform operator, so an app adding a
+  capability would have waited on an operator for something its own redeploy now does.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.3.6` wheel.
+* `SKILL.md` (the capability pitfall), `capabilities-reference.md` (grant enforcement and the
+  `os.notifications.send_to_user` errors) and `checks.md` (`403 capability_not_granted`)
+  describe the redeploy rule, the four outcomes and `--dry-run`, and keep the operator only
+  for another team's install. `v2-platform.md` (grant enforcement) says the same, and the
+  sensitive-capabilities note says strict grants withhold them on a redeploy too, whoever
+  deploys.
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.3.6 wheel; MAN-1112 is In Progress
+  and now covers only the other-team case.
+
 # 3.20.1 - README installs CLI 0.3.5, and an Assistant tool's schema stays self-contained
 
 Summary: The README now installs the newest command-line tool, 0.3.5, and the app guide says that an Assistant tool's input schema may not point outside itself, which 0.3.5 and the deploy both refuse.

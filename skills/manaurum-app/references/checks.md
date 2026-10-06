@@ -294,4 +294,4 @@ before your capability does".
 | 412 `app_id_must_be_uuid` | `os.kv.*` or `os.events.emit` was called with the slug for `X-Manaurum-App-Id`. | Use the UUID from `process.env.MANAURUM_APP_ID` for those two families only. |
 | 412 `egress_not_declared` / `host_not_in_allow_list` | `os.http.fetch` with no egress hosts declared at all / to a host not in `runtime.egress_allowed_hosts`. | Add the host to the manifest, redeploy. |
 | 403 `user_context_required` | A user-scoped capability (`os.drive.*`, `os.calendar.*`) was called without `X-Manaurum-User-Context`. | Forward the header your `auth: "user"` route received. |
-| 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Redeploying is not enough — the tenant's install grants must be extended. |
+| 403 `capability_not_granted` | The capability is in your manifest but not in the install's grant set. | Read your last deploy's per-capability outcome. `not_granted`: you may not grant it in this team, so ask someone who can. `unknown`: the name is wrong. In another team's install, a redeploy does not widen grants; a platform operator does. |
