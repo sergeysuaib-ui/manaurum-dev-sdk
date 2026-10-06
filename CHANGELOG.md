@@ -1,3 +1,29 @@
+# 3.19.1 - README installs CLI 0.3.5
+
+Summary: The README now installs the newest command-line tool, 0.3.5, which refuses an Assistant tool whose input schema points outside itself.
+
+### Why
+
+* **CLI 0.3.5 is published**
+  ([cli-v0.3.5](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.5),
+  Core sergeysuaib-ui/manaurum#2448, MAN-3393). Core now checks the Assistant's arguments
+  against an `agent_capabilities[].input_schema` offline. So the deploy refuses a schema
+  whose `$ref`, `$dynamicRef`, `$recursiveRef` or `$id` is not a local `#...` pointer. Under
+  Draft-04 it refuses a remote `id` the same way. It also refuses a `$schema` other than
+  Draft 2020-12, 2019-09, 07, 06 or 04. 0.3.5's `manaurum app validate` refuses the same
+  schemas before the upload. Older drafts' array-form `items`, `additionalItems` and
+  schema-valued `dependencies` are now walked too, in an `input_schema` and in a signal's
+  `result_schema`.
+* README still installed `cli-v0.3.3`. That version knows neither signals nor the
+  `telegram` block, both added in 0.3.4.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.3.5` wheel.
+* `scripts/open-claims.txt` names the cli-v0.3.5 wheel for MAN-1385. That issue was
+  re-checked on 2026-10-06: it is still Backlog, and PyPI still answers `404` for
+  `manaurum-cli`.
+
 # 3.19.0 - the starter accepts only tokens minted for its own app, and the SDK pages describe SDK 2.5.0 as served
 
 Summary: The starter app refuses a sign-in token that was made for a different app, and the guide describes the browser helper as ManAurum serves it now.
