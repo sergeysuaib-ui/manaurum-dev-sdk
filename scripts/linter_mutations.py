@@ -914,6 +914,31 @@ def a_tab_bar(app: Path) -> None:
     edit(app / "src" / "static" / "index.html", "<body", '<body><nav class="tabs">x</nav')
 
 
+def a_sidebar_in_a_bundle(app: Path) -> None:
+    # What Vite emits for <aside className="sidebar">: no `class="` anywhere.
+    assets = app / "src" / "static" / "assets"
+    assets.mkdir(exist_ok=True)
+    (assets / "index-3f9a1c.js").write_text(
+        'import{j as e}from"./react.js";'
+        'function S(){return e.jsx("aside",{className:"app-sidebar",children:"x"})}\n',
+        encoding="utf-8")
+
+
+def a_tab_bar_in_jsx(app: Path) -> None:
+    (app / "src" / "static" / "Nav.tsx").write_text(
+        "export const Nav = ({ on }: { on: string }) =>\n"
+        "  <nav className={`tabs ${on}`}>x</nav>;\n", encoding="utf-8")
+
+
+def a_table_in_a_bundle(app: Path) -> None:
+    # `table` and `tab-index-ish` names are not a tab bar. Must stay green.
+    assets = app / "src" / "static" / "assets"
+    assets.mkdir(exist_ok=True)
+    (assets / "index-77b2e0.js").write_text(
+        'function T(){return e.jsx("table",{className:"table tabular",children:"x"})}\n',
+        encoding="utf-8")
+
+
 def a_native_modal(app: Path) -> None:
     edit(app / "src" / "static" / "index.html", "</body>",
          "<script>function go(){ confirm('sure?'); }</script></body>")
@@ -1372,6 +1397,10 @@ UI_MUTATIONS = [
      "declared nowhere"),
     ("ui: a hex in the markup", hex_in_the_markup, "in markup"),
     ("ui: a tab bar", a_tab_bar, "tab/tabs/sidebar class"),
+    ("ui: a sidebar in a built React bundle", a_sidebar_in_a_bundle,
+     "tab/tabs/sidebar class"),
+    ("ui: a tab bar in JSX", a_tab_bar_in_jsx, "tab/tabs/sidebar class"),
+    ("ui: a table in a bundle stays green", a_table_in_a_bundle, None),
     ("ui: confirm()", a_native_modal, "alert/confirm/prompt"),
     ("ui: @media max-width", a_media_query, "@media max-width"),
     ("ui: no manaurum:ready", the_handshake, "no manaurum:ready"),

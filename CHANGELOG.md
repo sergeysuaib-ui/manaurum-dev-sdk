@@ -1,6 +1,6 @@
-# 3.19.1 - README installs CLI 0.3.5
+# 3.20.1 - README installs CLI 0.3.5, and an Assistant tool's schema stays self-contained
 
-Summary: The README now installs the newest command-line tool, 0.3.5, which refuses an Assistant tool whose input schema points outside itself.
+Summary: The README now installs the newest command-line tool, 0.3.5, and the app guide says that an Assistant tool's input schema may not point outside itself, which 0.3.5 and the deploy both refuse.
 
 ### Why
 
@@ -16,13 +16,83 @@ Summary: The README now installs the newest command-line tool, 0.3.5, which refu
   `result_schema`.
 * README still installed `cli-v0.3.3`. That version knows neither signals nor the
   `telegram` block, both added in 0.3.4.
+* `v2-platform.md` described `input_schema` without the rule, so an app that put a shared
+  schema behind a remote `$ref` learned of it only from a refused deploy.
 
 ### What changed
 
 * README "Install the CLI" installs the `cli-v0.3.5` wheel.
+* **`v2-platform.md` → `agent_capabilities[]` → "Keep each `input_schema`
+  self-contained"**: the rule as Core's `docs/handoff/AGENT_TOOLS_INTEGRATION.md` (Path C2)
+  states it, a refused remote `$ref` with the error the deploy returns, the local
+  `#/$defs/...` alternative, and that a signal's `result_schema` must be Draft 2020-12.
 * `scripts/open-claims.txt` names the cli-v0.3.5 wheel for MAN-1385. That issue was
   re-checked on 2026-10-06: it is still Backlog, and PyPI still answers `404` for
   `manaurum-cli`.
+
+# 3.20.0 - what an agent building a React app on 3.16 ran into: the device race, the bundle the deploy drops, a sidebar the linter missed
+
+Summary: React and Vite apps get their own instructions, the UI check catches a sidebar in them, and a session on an old SDK version is told where to read the new one without restarting.
+
+### Why
+
+An agent built and deployed a multi-module React/Vite app on SDK 3.16.0 and logged twelve
+findings (2026-10-05). Checked one by one against this repository and the monorepo:
+
+* **A phone got the desktop shell.** The inline listener answered `manaurum:ready` in time,
+  but the app's components subscribed to `message` in `useEffect`, after `manaurum:init`
+  had come and gone, so `device` stayed at its default. Only `preview.py ?device=mobile`
+  showed it. `sdk-api.md`'s SPA pattern answered the handshake and said nothing about the
+  payload.
+* **`check_ui.py` could not see a sidebar in React.** `BANNED_CLASS` matched `class="…"`
+  only: JSX's `className="…"` / ``className={`…`}``, a built bundle's `className:"…"` and
+  single quotes all passed, and `.jsx` / `.tsx` files were never read.
+* **Nothing said how to ship a Vite front end.** The agent committed its build because it
+  believed the platform builder runs no node. It does: the build runs the Dockerfile's
+  `RUN` steps, and Core's scanner accepts multi-stage builds (`COPY --from=<stage>`). And
+  the CLI's packer drops every path segment named `dist` or `build`
+  (`manaurum_cli/packaging.py`), so Vite's default `web/dist` never reaches the archive.
+* **The reference apps contradict the SDK.** The agent copied `finance-v2`. The SDK never
+  named it, but nothing warned against it, and checking the apps the SDK does name found
+  that `family-space-v2` and `libi` post `manaurum:ready` to `'*'` with no sender check,
+  as `finance-v2` does, which also runs `SET search_path` in `init=`.
+* **Rule 1 had nothing for a tool with many modules,** which is where the pull toward a
+  sidebar is strongest.
+* **`manaurum-setup` was on disk but not in the session's skill list** (reproduced in a
+  second session on 3.16.0; cause not found), while `manaurum-app` sends you to it by name.
+* **A session on 3.16.0 was told 3.18.1 was out and to start a new session,** which a long
+  agent run cannot do, so it carried on with nothing better to read.
+* **Every new monorepo app fails the dependency gate on ecdsa PYSEC-2026-1325**, through
+  the starter's `python-jose`, and nothing in the SDK said what to do about it.
+
+### What changed
+
+* **`sdk-api.md` → "The bundle reads what the listener stored"**: copy the starter's whole
+  inline block, which keeps the payload on `window.__manaurum` and fires
+  `manaurum-device` / `manaurum-locale` / `manaurum-init`; read that state on mount, then
+  subscribe, with a `useManaurumDevice()` hook to copy. `SKILL.md` Step 2.5 item 2 says the
+  same in four lines.
+* **`check_ui.py`** matches `class` and `className` with `=` or `:`, any quote, and a JSX
+  `{…}`, and reads `.jsx` and `.tsx`. Three new mutations: a sidebar in a built bundle and
+  a tab bar in JSX are caught, and `className:"table tabular"` stays green (195 → 198).
+* **`v2-platform.md` → "A Vite / React front end: build it in the Dockerfile, not in git"**:
+  the any-depth exclusion of `dist` / `build`, why a committed bundle goes stale, a
+  two-stage Dockerfile that builds the front end and serves it from `src/static`, and
+  where to point `check_ui.py`.
+* **`reference-apps.md` → "What not to copy from the monorepo's apps"**: the handshake in
+  `family-space-v2` and `libi`, and `finance-v2`, which is not a reference.
+* **`design.md` → "A tool with several modules"**: two or three modules are the
+  `.btn-ghost` switch; more is a home screen of cards, one URL fragment per module, and a
+  back control. Rule 1 in `SKILL.md` points there.
+* **`SKILL.md`** says to read `<plugin>/skills/manaurum-setup/SKILL.md` directly when the
+  skill is not listed.
+* **`scripts/version_check.py`**: when nothing newer is in the cache, the message also says
+  how to read the newer release without a new session. If the marketplace clone already
+  holds it, it names the clone and lists the Summary line of every release in between; if
+  not, it says `claude plugin marketplace update manaurum-sdk` refreshes the clone without
+  touching the running session. `smoke_tools.py` checks both.
+* **The starter's `requirements.txt`** explains the ecdsa advisory and how a monorepo app
+  adds itself to the gate's exemption. The gate's own failure message is a Core change.
 
 # 3.19.0 - the starter accepts only tokens minted for its own app, and the SDK pages describe SDK 2.5.0 as served
 

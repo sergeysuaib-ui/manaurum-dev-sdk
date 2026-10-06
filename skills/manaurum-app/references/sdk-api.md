@@ -140,6 +140,31 @@ If you load `manaurum-v2.mjs` and call `ManaurumV2.init()`, the SDK answers for 
 
 > **The trap.** Your standalone URL `https://<slug>.apps.manaurum.com/` works perfectly without the handshake — no shell, no timeout, no overlay. The failure appears *only* inside the desktop window and the mobile home screen, which is where your users are. Libi shipped this way and needed a follow-up release (MAN-1321). Test from the desktop, not just from the tab.
 
+#### The bundle reads what the listener stored
+
+It never waits for `manaurum:init`. Answering the handshake early is half of it. The other half is the payload: `device`, the appearance and the language arrive once, in `manaurum:init`, and by the time a component's `useEffect` subscribes to `message`, that message has usually come and gone. The component then renders its defaults, and a phone gets the desktop layout. Nothing in a desktop test shows it; `templates/preview.py` with `&device=mobile` does (`references/checks.md`). So copy the starter's whole inline block rather than the short one above: it keeps the payload on `window.__manaurum` (`init`, `device`, `locale`, `dir`, `framed`) and fires `manaurum-device`, `manaurum-locale` and `manaurum-init` on `window` when they change. The bundle starts from that state and listens to those events:
+
+```ts
+// device.ts — the state is already there; the event only says it changed.
+import { useEffect, useState } from 'react';
+
+declare global { interface Window { __manaurum?: { device?: string } } }
+
+export function useManaurumDevice(): string {
+  const read = () => window.__manaurum?.device ?? 'desktop';
+  const [device, setDevice] = useState(read);
+  useEffect(() => {
+    const update = () => setDevice(read());
+    window.addEventListener('manaurum-device', update);
+    update();   // init may have landed between the first render and this effect
+    return () => window.removeEventListener('manaurum-device', update);
+  }, []);
+  return device;
+}
+```
+
+The same goes for anything else from the payload: read `window.__manaurum` first, then subscribe. A `message` listener inside a component is the race this paragraph is about.
+
 ### Cross-origin rules (v2 specifically)
 
 A v2 app served from `<slug>.apps.manaurum.com` is a **different origin** from the shell at `manaurum.com`. Consequences:

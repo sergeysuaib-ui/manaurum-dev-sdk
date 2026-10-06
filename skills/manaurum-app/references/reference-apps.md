@@ -26,6 +26,22 @@ why), and for Postgres the connection and search code to copy is
 business app with a data model, AI tools and reporting. Until then
 `family-space-v2` holds that slot.
 
+**What not to copy from the monorepo's apps, these three included** (checked
+against the monorepo on 2026-10-05). Apps age; this SDK is the contract, and
+where an app and the SDK disagree, the SDK wins:
+
+- **The handshake.** `family-space-v2` and `libi` post `manaurum:ready` to `'*'`
+  from `web/index.html` and `web/src/main.tsx`, and act on a `manaurum:init`
+  from any sender. Copy the starter's inline block instead (`sdk-api.md` → "The
+  pattern that actually shipped"): it checks the sender and answers the shell's
+  origin only.
+- **`finance-v2` is not a reference, whatever its name suggests.** Besides the
+  same handshake, its `src/platform/db.py` runs `SET search_path` in the pool's
+  `init=`, which `RESET ALL` undoes after the first request wherever the role's
+  default is not already the app's schema. The Postgres code to copy is
+  `templates/recipes/postgres/` (its docstring says why). Its `auth.py` binds the
+  token to the app, as the starter's does.
+
 ---
 
 ## Small — `shift-checklist`, 22 files

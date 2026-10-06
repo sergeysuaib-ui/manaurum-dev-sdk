@@ -149,6 +149,18 @@ Note the shape of that description: a positive trigger ("use for household to-do
 
 `routing_hints` are informational: today nothing matches against them. `example` is surfaced to the model as a usage hint. The model picks a tool by its `name`, `description` and `input_schema`, so **write the `description` with the words your user actually uses**, in their language as well as English: an app whose people type «сколько осталось» should say so in the description.
 
+**Keep each `input_schema` self-contained.** Core validates the model's arguments against it offline and never fetches what it names. Every `$ref`, `$dynamicRef`, `$recursiveRef` and `$id` (under Draft-04, `id` too) must be a local `#...` pointer, and `$schema`, if given, must be Draft 2020-12, 2019-09, 07, 06 or 04. Anything else is refused at deploy, and by `manaurum app validate` (CLI 0.3.5+) before the upload:
+
+```json
+"properties": {"q": {"$ref": "https://example.com/query.json"}}
+```
+
+```
+input_schema/properties/q/$ref must be a local '#...' reference, not 'https://example.com/query.json'
+```
+
+Declare the subschema inline, or under `$defs` and point at it with `"$ref": "#/$defs/query"`. A signal's `result_schema` follows the same rule, and its `$schema`, if given, must be Draft 2020-12.
+
 **Shape a write's input for the approval card.** A write pauses on a card the user approves first. The card names the call by the record's id and title and shows the arguments, at most 10 keys per level. So an update takes **only the fields that change** (omitted means unchanged), the record's id is a **required, top-level** key named after the tool's noun (`update_order` → `order_id`), and every key is declared in `properties`.
 
 **Timeouts and retries.** The Assistant waits **30 seconds** for your handler, then reports the call as failed — but your handler keeps running. It does not pass you an idempotency key. So a write that can take longer than that must be idempotent on its own inputs (an upsert keyed by something in the request), or the user's retry writes twice. What the model sees of a failure is short: `{"ok": false, "error": …}` passes the first 300 characters of `error`, a non-2xx response the first 200 of its body, and the whole message is capped at 400.
@@ -395,6 +407,27 @@ __pycache__  .venv  venv  .git  .pytest_cache  .ruff_cache  .mypy_cache  node_mo
 ```
 
 That is an exact-name match list with **no glob support and no `.env*` entry** — a `.env.manaurum` sitting next to your `Dockerfile` is packed verbatim into the build context, baked into an image layer by any `COPY . .`, retained per-version in object storage, downloadable later via `manaurum app fetch-source`, and committed to a per-app append-only git history. There is no practical way to un-leak it. Keep every `.env*` outside the deployed directory. A `.dockerignore` does not help here: the platform builds with Docker's classic builder (`POST /build`, `version=1`), which does not apply it to the uploaded context, and the file is in the stored tar either way — a `.dockerignore` only affects a local `docker build`. What keeps a file out of the *image* is a Dockerfile that `COPY`s only what it needs, as the starter's does.
+
+**A Vite / React front end: build it in the Dockerfile, not in git.** The excluded names match at **any depth** (`manaurum_cli/packaging.py` checks every path segment), and `dist` is Vite's default output: a bundle committed at `web/dist/` is silently left out of the archive, and the image serves whatever the Dockerfile copied instead. Committing the bundle under another name ships, but then every deploy carries the bundle from whenever someone last ran `npm run build`, and nothing tells you it is stale. The build runs your Dockerfile's `RUN` steps, the same way a Python app's `pip install` runs, so let it build the front end:
+
+```dockerfile
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build                      # writes /web/dist inside the image build
+
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY src/ src/
+COPY --from=web /web/dist/ src/static/ # the server serves src/static
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Commit `package-lock.json` (`npm ci` refuses to run without it) and leave `node_modules` and `dist` out of git. On a deploy, `COPY web/ ./` cannot overwrite what `npm ci` installed, because the packer leaves `node_modules` out of the archive too; a local `docker build` sends whatever is in the directory, so list `web/node_modules` and `web/dist` in a `.dockerignore` for that (it only affects local builds, as above). The handshake still goes inline in `web/index.html`, which Vite copies into the bundle as it is: `references/sdk-api.md` → "The pattern that actually shipped". Point `templates/check_ui.py` at the built directory (`web/dist` after a local `npm run build`) or at the sources, since it reads `.jsx` and `.tsx` as well as `.js`; a built bundle's `className:"sidebar"` is caught too.
 
 Env vars the platform sets on every task:
 
