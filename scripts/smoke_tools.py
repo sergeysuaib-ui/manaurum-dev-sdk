@@ -434,14 +434,16 @@ class HookTimedOut:
     stderr = "timed out - hooks.json gives this hook 5 seconds"
 
 
-def run_hook(plugin_root: Path, latest: str = ""):
+def run_hook(plugin_root: Path, latest: str = "", marketplace: Path = None):
     """version_check.py as the harness runs it: CLAUDE_PLUGIN_ROOT, no args.
 
     Hermetic: no network, and no marketplace clone from the machine running
-    the smoke. `latest` stands in for the version GitHub would report.
+    the smoke. `latest` stands in for the version GitHub would report, and
+    `marketplace` for the clone `claude plugin marketplace update` refreshes.
     """
+    clone = marketplace or plugin_root / "no-marketplace-here"
     env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plugin_root),
-               MANAURUM_SDK_MARKETPLACE_DIR=str(plugin_root / "no-marketplace-here"))
+               MANAURUM_SDK_MARKETPLACE_DIR=str(clone))
     env.pop("MANAURUM_SDK_LATEST_VERSION", None)
     env.pop("MANAURUM_SDK_NO_UPDATE_CHECK", None)
     if latest:
@@ -493,6 +495,32 @@ def _smoke_version_check(cache: Path, problems: list) -> None:
     if result.returncode != 0:
         problems.append("scripts/version_check.py: exit %d when a newer release exists"
                         % result.returncode)
+    if "claude plugin marketplace update manaurum-sdk" not in context:
+        problems.append("scripts/version_check.py: with no clone of the newer release, "
+                        "the message does not say how to read it without a new session")
+
+    # The clone already holds the newer release: a run that cannot restart is
+    # told to read the skills there, and what changed since its own version.
+    clone = plugin_cache(cache.parent / "marketplace", "99.0.0")
+    (clone / "CHANGELOG.md").write_text(
+        "# 99.0.0 - newest\n\nSummary: The newest thing.\n\n"
+        "# 3.0.0 - between\n\nSummary: A thing in between.\n\n"
+        "# 2.9.0 - this copy\n\nSummary: Already read.\n", encoding="utf-8")
+    result = run_hook(current, latest="99.0.0", marketplace=clone)
+    context = ""
+    try:
+        context = json.loads(result.stdout.strip() or "{}").get(
+            "hookSpecificOutput", {}).get("additionalContext", "")
+    except ValueError:
+        pass
+    if (str(clone) not in context or "The newest thing." not in context
+            or "A thing in between." not in context):
+        problems.append("scripts/version_check.py: a clone holding the newer release is "
+                        "not named with the changes since this copy (got %r)"
+                        % context[-240:])
+    if "Already read." in context:
+        problems.append("scripts/version_check.py: listed a release the session already "
+                        "runs as a change")
 
     result = run_hook(current)
     if result.returncode != 0:

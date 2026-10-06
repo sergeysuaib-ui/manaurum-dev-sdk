@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.19.0.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.20.0.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -203,7 +203,7 @@ parts inlined. Reading one real app beats reading four pages about apps.
   an app its owner rejected on sight; the questions ask what the owner asks.
 * `templates/check_ui.py` — the UI contract, mechanically. It reads your static files and
   fails on what a green deploy hides: a hex hidden in a `var()` fallback whose token does
-  not exist, `style=`, a `tab`/`sidebar` class, `<button class="row">`, a click target
+  not exist, `style=`, a `tab`/`sidebar` class (in markup, JSX or a built bundle), `<button class="row">`, a click target
   with no `is-interactive`, `alert`/`confirm`/`prompt`, more than one primary button in a
   view, a missing `manaurum:ready`, appearance read off `e.data` instead of
   `e.data.payload`, an accent class handed out inside a render loop, more than four
