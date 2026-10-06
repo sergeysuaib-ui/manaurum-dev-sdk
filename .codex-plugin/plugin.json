@@ -1,6 +1,6 @@
 {
   "name": "manaurum-dev-sdk",
-  "version": "3.20.1",
+  "version": "3.20.2",
   "description": "Build, test, and deploy ManAurum OS Platform v2 apps with shared SDK skills and templates.",
   "author": {
     "name": "ManAurum OS"

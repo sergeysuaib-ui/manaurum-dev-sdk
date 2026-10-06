@@ -138,9 +138,13 @@ which every deployed hosted app has in its own tenant. Active BYO hosts skip it 
 for `os.ai.complete` and `os.ai.providers`, which are still checked), and so, today, does
 an app id with **no** install row there (MAN-2199): do not
 read a successful call as proof of a grant. There is no
-wildcard grant (MAN-1585): every capability has to be listed. A redeploy never widens an
-existing install's grants, so a capability you add in a later version is missing on old
-installs until an admin grants it (MAN-1112).
+wildcard grant (MAN-1585): every capability has to be listed. A redeploy adds each newly
+declared capability to your own team's install when you are allowed to grant it (a tenant
+admin, or an owner, admin or member of a workspace in that team); it never removes one. The
+deploy result lists each declared capability as `granted`, `not_granted`, `withheld` or
+`unknown`, and `manaurum app deploy --dry-run` shows the same list without deploying. An
+install of your app in another team is not widened by your redeploy: a platform operator
+grants it there until tenant admins get a screen for it (MAN-1112).
 
 **Sensitive capabilities.** `os.ai.*`, `os.ocr.*`, `os.notifications.*`,
 `os.directory.*`, `os.http.*` and `os.secrets.*` are classed sensitive
@@ -1051,7 +1055,7 @@ delivered.
 
 | HTTP | `detail` / `detail.error` | Meaning | Retry? |
 |---|---|---|---|
-| 403 | `capability_not_granted` | The install is not granted this **sensitive** capability. See the gates at the top. A grant screen is not yet available to tenant admins (MAN-1112); ask the platform operator. | no |
+| 403 | `capability_not_granted` | The install is not granted this **sensitive** capability. See the gates at the top. In your own team, a redeploy by someone allowed to grant it adds it (the deploy result says whether it did); in another team, ask the platform operator, since tenant admins have no grant screen yet (MAN-1112). | no |
 | 404 | `user_not_in_tenant` | `to_user_id` is not a member of your tenant. | no |
 | 412 | `in_app_unavailable`, `reason: app_not_live` | No live install of your app in this tenant (not deployed, disabled, or uninstalled), so **no** in-app notification can be delivered. | no — fix the install |
 | 412 | `in_app_unavailable`, `reason: app_slug_conflict` | Your `app_id` is also a built-in's or a catalogue app's, so the desktop could not tell your notifications from that app's. | no — redeploy under another `app_id` |
