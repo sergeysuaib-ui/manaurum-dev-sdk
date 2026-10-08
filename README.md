@@ -1,6 +1,6 @@
 # ManAurum OS Developer SDK — Claude Code and Codex plugin
 
-**Version 3.21.0.** Skills that teach Claude Code and Codex to build and ship apps for
+**Version 3.21.1.** Skills that teach Claude Code and Codex to build and ship apps for
 [ManAurum OS](https://app.manaurum.com) (the product; the API, SDK and developer docs stay on `manaurum.com`), plus a starter app that deploys green with no edits.
 
 ManAurum OS is a multi-tenant browser desktop. An app of yours is **a Docker container**
@@ -115,8 +115,8 @@ is, install the wheel from this repo's
 [releases](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases) (Python 3.11+):
 
 ```bash
-pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.6/manaurum_cli-0.3.6-py3-none-any.whl
-manaurum --version        # manaurum, version 0.3.6
+pip install https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/download/cli-v0.3.8/manaurum_cli-0.3.8-py3-none-any.whl
+manaurum --version        # manaurum, version 0.3.8
 ```
 
 Then save your token. Mint it in **DevHub → Credentials** (`mna_…`) and keep the
