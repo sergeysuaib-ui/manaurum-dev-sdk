@@ -1,3 +1,76 @@
+# 3.21.0 - no PATCH through os.http.fetch, a confirm dialog and a list beside its record, and why Russian search finds nothing on a local database
+
+Summary: The linter reports a PATCH sent through os.http.fetch, the stylesheet gains a confirm dialog and a list beside its record, and the search recipe explains empty Russian results.
+
+### Why
+
+An agent built `dela` (a tracker, v2, on `family-space-v2`'s model) on 2026-10-07 and
+wrote down seven findings. That session was on SDK 2.7.2, so each was checked against
+3.20.2 and the monorepo first. Three were already closed: the starter has
+`tests/test_manifest.py`, the 400-character limit is in the schema and the docs, and
+`manaurum-deploy` says which tokens reach a new slug. Two were wrong, and both are fixed
+here at their source:
+
+* **"`os.secrets.get` answers 412 when there is no secret."** It answers `404
+  secret_not_found` (Core `registration.py`), as this SDK has always said. The claim came
+  from `family-space-v2/src/capability.py`, which reads a `412` as "not set" with a
+  comment saying the gateway does that. Copied, an unset secret becomes an error and a
+  missing header becomes "not set yet".
+* **"`lower()` on both sides fixes Russian search on a `C` cluster."** Measured on
+  Postgres 16.4 with `LC_CTYPE=C`: `lower()` folds ASCII only there too, and the app's own
+  case test skips itself on that cluster, so the fix was never seen working.
+
+The rest were real:
+
+* **`os.http.fetch` refuses `PATCH`,** and nothing said so where it would be read. The
+  method enum in `http_fetch.py` is GET, POST, PUT, DELETE; anything else is `422
+  input_schema_violation` when the user presses the button. Jira, Linear, GitHub and
+  Notion update a record with `PATCH`.
+* **`reference-apps.md` sent readers to `family-space-v2` first** and mentioned its
+  Tailwind look in one line at the end of its section. Its `agent_routes.py` writes its
+  own SQL for what `routes_items.py` does, and the two have drifted.
+* **`app.css` had no confirm dialog and no list-and-record layout.** Every guide says
+  `confirm()` is dead in the desktop and to use "an in-app modal"; there was none, so each
+  app wrote one. The same for a list that opens its record beside it, which `design.md`
+  allows and nothing drew.
+* **On a local database with `LC_CTYPE=C` the search recipe fails as a `StopIteration`**
+  in its snippet test, which says nothing about the cause.
+
+### What changed
+
+* **`check_app.py` rule 6b**: a literal `"method": "PATCH"` (or `method: 'PATCH'`, `HEAD`,
+  a lower-case verb) in an object literal that also has a `url` key, in a file that calls
+  `os.http.fetch`, is a problem. Only values shaped like an HTTP verb count, so a JSON-RPC
+  body's `"method": "tools/call"` stays green, and so does a `PATCH` nested in the body
+  (CodeRabbit on #60). The allowed list is read from the contract, so the rule goes quiet
+  by itself once Core takes `PATCH` and the contract is synced. Three app mutations: red
+  for PATCH, green for MCP and for a nested body.
+* **`sync_contract.py`** records each capability input's string enums
+  (`capability_inputs.*.enums`); `platform-contract.json` re-synced at the same Core SHA,
+  so only the enums are new. **`check_repo.py`**: a field-table row that lists some of a
+  field's allowed values lists all of them. A repo mutation adds `PATCH` on Core's side
+  and expects the `method` row to go red.
+* **`capabilities-reference.md` → `os.http.fetch`**: no PATCH and no HEAD, in the field
+  table and in its own paragraph with the three ways round it (another method for the same
+  change, the service's MCP endpoint, the container's own client); the `422` in the error
+  list; and a `200` from a filter the API does not know is every record (Agentix's
+  `?project=` against `?projectId=`). `SKILL.md` "What will bite you" has a line.
+* **`reference-apps.md`**: "What not to copy" gains `family-space-v2`'s look, its second
+  copy of every query and its `secret_get`; its own section opens with "do not copy its
+  look". **`v2-platform.md` → "Two doors, one data layer"**: the window and the Assistant
+  call one module, as the starter's `main.py` and `agent_routes.py` both call
+  `src/capability.py`.
+* **`app.css`**: `.dialog` (+ `-title`, `-body`, `-actions`) for `<dialog>.showModal()`,
+  which the sandbox allows (checked in Chrome with the shell's sandbox flags: `confirm()`
+  returned `false`, `showModal()` opened a modal); `.split` / `.split-list` /
+  `.split-detail`, side by side or stacked by `flex-wrap` with no width query, one at a
+  time on a phone (`data-open`), the open row `aria-current="true"`, and `.split-back` for
+  the phone; the `--scrim` token. `templates/patterns/index.html#tasks` shows both.
+  `design.md` lists them, the token, and the shell's `manaurum:toast` for an alert.
+* **Search recipe**: `test_capitals_are_found_by_lowercase_words` fails on a `C` database
+  with the cause and the `CREATE DATABASE` that fixes it. `v2-platform.md` → "Full-text
+  search" says the same and that `lower()` is not the fix.
+
 # 3.20.2 - README installs CLI 0.3.6, and a redeploy grants your own team's new capabilities
 
 Summary: The README installs CLI 0.3.6, which previews what a deploy does with each capability, and the guides say a redeploy now adds one to your own team's install when you may grant it.

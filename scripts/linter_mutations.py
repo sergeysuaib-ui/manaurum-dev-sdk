@@ -289,6 +289,43 @@ def a_capability_called_by_url(app: Path) -> None:
          'def note_key(user_id: str) -> str:')
 
 
+def fetch_through_the_gateway(app: Path, method: str) -> None:
+    def mutate(data):
+        data["requires_capabilities"].append({"name": "os.http.fetch", "version": "1"})
+        data["runtime"]["egress_allowed_hosts"] = ["api.example.com"]
+    patch_manifest(app, mutate)
+    edit(app / "src" / "capability.py", "def note_key(user_id: str) -> str:",
+         'FETCH = "os.http.fetch"\n\n\n'
+         'def update_issue(key: str) -> dict:\n'
+         '    return {"url": "https://api.example.com/issues/" + key, "method": "%s"}\n\n\n'
+         'def note_key(user_id: str) -> str:' % method)
+
+
+def a_patch_sent_to_fetch(app: Path) -> None:
+    fetch_through_the_gateway(app, "PATCH")
+
+
+def a_patch_inside_the_body_is_not_the_input(app: Path) -> None:
+    # MUST STAY GREEN. The input POSTs; the PATCH is a field of the body it
+    # carries (a batch API's sub-request), not the method of this call.
+    def mutate(data):
+        data["requires_capabilities"].append({"name": "os.http.fetch", "version": "1"})
+        data["runtime"]["egress_allowed_hosts"] = ["api.example.com"]
+    patch_manifest(app, mutate)
+    edit(app / "src" / "capability.py", "def note_key(user_id: str) -> str:",
+         'FETCH = "os.http.fetch"\n\n\n'
+         'def batch(key: str) -> dict:\n'
+         '    return {"url": "https://api.example.com/batch", "method": "POST",\n'
+         '            "body": {"requests": [{"method": "PATCH", "path": "/issues/" + key}]}}\n\n\n'
+         'def note_key(user_id: str) -> str:')
+
+
+def an_mcp_method_is_not_an_http_verb(app: Path) -> None:
+    # MUST STAY GREEN. A JSON-RPC body sent through os.http.fetch has a
+    # "method" key of its own, and it is not an HTTP method.
+    fetch_through_the_gateway(app, "tools/call")
+
+
 def an_optional_capability_that_is_called(app: Path) -> None:
     def mutate(data):
         data["optional_capabilities"] = [
@@ -801,6 +838,11 @@ APP_MUTATIONS = [
      a_capability_that_does_not_exist, "not a capability the platform registers"),
     ("capabilities: called through a URL", a_capability_called_by_url,
      "calls os.files.list but"),
+    ("capabilities: PATCH sent to os.http.fetch", a_patch_sent_to_fetch,
+     "sends method PATCH in a file that calls os.http.fetch"),
+    ("capabilities: an MCP method stays green", an_mcp_method_is_not_an_http_verb, None),
+    ("capabilities: a PATCH inside the body stays green",
+     a_patch_inside_the_body_is_not_the_input, None),
     ("capabilities: an optional capability that is called",
      an_optional_capability_that_is_called, None),
     ("capabilities: a name in the README is not a call",
@@ -1751,6 +1793,11 @@ def core_makes_a_field_required(repo: Path) -> None:
     edit_inputs(repo, lambda inputs: inputs["os.ai.complete"]["required"].append("temperature"))
 
 
+def core_allows_patch(repo: Path) -> None:
+    # The day Core takes PATCH, the method row must say so.
+    edit_inputs(repo, lambda inputs: inputs["os.http.fetch"]["enums"]["method"].append("PATCH"))
+
+
 def newest_summary(repo: Path, change) -> None:
     path = repo / "CHANGELOG.md"
     text = path.read_text(encoding="utf-8")
@@ -1857,6 +1904,8 @@ REPO_MUTATIONS = [
      "the os.ai.complete field table leaves out `top_p`"),
     ("repo: Core makes an input field required", core_makes_a_field_required,
      "calls `temperature` optional; its input schema requires it"),
+    ("repo: Core allows a new method", core_allows_patch,
+     "lists values of `method` but not `PATCH`"),
     ("repo: Core requires what the example leaves out",
      core_requires_what_the_example_leaves_out,
      "the os.ai.complete example leaves out `provider`"),

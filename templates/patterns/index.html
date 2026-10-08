@@ -19,6 +19,8 @@
                .prose, .pull
     #orders    a list of RECORDS to go through: .row-title / .row-sub /
                .row-meta, a status badge on the few rows that need it
+    #tasks     a list that drives the record it opens: .split, the selected
+               row's aria-current, and a .dialog in place of confirm()
 
   Copy the markup, not the words. It is not part of any app and is not
   deployed; it exists so the shape you copy is a shape made for your kind of
@@ -259,6 +261,65 @@
       </section>
     </div><!-- /view: orders -->
 
+    <!-- LIST AND DETAIL. The list is the content, so it is rows in a card,
+         not a sidebar; the open record is the row with aria-current. Narrow
+         the window and the record drops under the list; on a phone only one
+         of the two shows (data-open). Delete asks first, with a <dialog>:
+         confirm() returns false in the desktop without showing anything. -->
+    <div data-view="tasks" hidden>
+      <header class="page-header">
+        <div>
+          <h1>Tasks</h1>
+          <p class="subtitle">Three open, two waiting on someone else.</p>
+        </div>
+      </header>
+
+      <div class="split" id="task-split">
+        <section class="split-list card card-flush">
+          <ul class="list" id="tasks">
+            <li class="row is-interactive" data-id="t1" data-due="Friday" data-to="Marketing" tabindex="0" aria-current="true">
+              <div class="row-main"><span class="row-title">Send the landing copy to marketing</span><span class="row-sub">Promised for Friday</span></div>
+              <span class="row-meta">Fri</span>
+            </li>
+            <li class="row is-interactive" data-id="t2" data-due="Monday" data-to="Data team" tabindex="0">
+              <div class="row-main"><span class="row-title">Check the week-two retention numbers</span><span class="row-sub">Waiting on the data team</span></div>
+              <span class="row-meta">Mon</span>
+            </li>
+            <li class="row is-interactive" data-id="t3" data-due="Tuesday" data-to="Founders" tabindex="0">
+              <div class="row-main"><span class="row-title">Decide on the trial length</span><span class="row-sub">Two options on the table</span></div>
+              <span class="row-meta">Tue</span>
+            </li>
+          </ul>
+        </section>
+
+        <section class="split-detail card" aria-labelledby="task-title">
+          <div class="toolbar">
+            <a class="btn btn-ghost split-back" href="#tasks"><span class="flip-rtl" aria-hidden="true">&larr;</span> All tasks</a>
+            <span class="toolbar-spacer"></span>
+            <button class="btn btn-secondary" type="button" id="task-delete">Delete</button>
+          </div>
+          <h2 class="card-title">Task</h2>
+          <p class="row-title" id="task-title" tabindex="-1">Send the landing copy to marketing</p>
+          <dl class="kv">
+            <dt>Due</dt><dd id="task-due">Friday</dd>
+            <dt>Promised to</dt><dd id="task-to">Marketing</dd>
+          </dl>
+          <p class="status" id="task-status" role="status"></p>
+        </section>
+      </div>
+
+      <dialog class="dialog" id="confirm-delete" aria-labelledby="cd-title">
+        <form method="dialog">
+          <h2 class="dialog-title" id="cd-title">Delete this task?</h2>
+          <p class="dialog-body">It cannot be brought back.</p>
+          <div class="dialog-actions">
+            <button class="btn btn-secondary" value="cancel" autofocus>Cancel</button>
+            <button class="btn btn-danger" value="ok">Delete</button>
+          </div>
+        </form>
+      </dialog>
+    </div><!-- /view: tasks -->
+
   </div>
 
 <script>
@@ -291,11 +352,65 @@
     openPost(e.target.closest('.row[data-id]'));
   });
 
+  // List and detail: the open record is aria-current, and its id is in the
+  // URL (#tasks/t2) so it opens directly.
+  var tasks = document.getElementById('tasks');
+  var split = document.getElementById('task-split');
+  function showTask(id) {
+    var rows = Array.prototype.slice.call(tasks.querySelectorAll('.row[data-id]'));
+    var phone = document.body.dataset.device === 'mobile';
+    var asked = rows.filter(function (row) { return row.dataset.id === id; })[0] || null;
+    // Nothing in the URL, or an id that is not here (deleted, mistyped): a
+    // phone shows the list alone, a window shows the first record beside it
+    // rather than an empty pane or the last one it drew.
+    var open = asked || (phone ? null : rows[0] || null);
+    var wasOpen = split.hasAttribute('data-open');
+    var previous = tasks.querySelector('.row[aria-current="true"]');
+    rows.forEach(function (row) {
+      if (row === open) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current');
+    });
+    split.toggleAttribute('data-open', !!asked);
+    if (open) {
+      // Every field of the record, and nothing left over from the last one.
+      document.getElementById('task-title').textContent = open.querySelector('.row-title').textContent;
+      document.getElementById('task-due').textContent = open.dataset.due;
+      document.getElementById('task-to').textContent = open.dataset.to;
+      document.getElementById('task-status').textContent = '';
+    }
+    // On a phone the pane that had focus has just been hidden: move focus to
+    // what is on screen now, or a keyboard user is left nowhere.
+    if (phone && asked && !wasOpen) document.getElementById('task-title').focus();
+    if (phone && !asked && wasOpen && previous) previous.focus();
+  }
+  function pickTask(row) {
+    if (row) location.hash = 'tasks/' + row.dataset.id;
+  }
+  tasks.addEventListener('click', function (e) {
+    pickTask(e.target.closest('.row[data-id]'));
+  });
+  tasks.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    pickTask(e.target.closest('.row[data-id]'));
+  });
+
+  // Delete asks first. The answer arrives in the close event, as returnValue.
+  var dialog = document.getElementById('confirm-delete');
+  document.getElementById('task-delete').addEventListener('click', function () {
+    dialog.returnValue = '';
+    dialog.showModal();
+  });
+  dialog.addEventListener('close', function () {
+    document.getElementById('task-status').textContent =
+      dialog.returnValue === 'ok' ? 'Deleted (not really: this page has no data).' : '';
+  });
+
   var views = Array.prototype.slice.call(document.querySelectorAll('[data-view]'));
   function route() {
     var name = location.hash.slice(1).split('/')[0];
     var known = views.some(function (el) { return el.dataset.view === name; });
     views.forEach(function (el) { el.hidden = el.dataset.view !== (known ? name : 'library'); });
+    if (name === 'tasks') showTask(location.hash.split('/')[1] || '');
   }
   window.addEventListener('hashchange', route);
   route();

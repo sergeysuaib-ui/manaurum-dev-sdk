@@ -944,7 +944,7 @@ def check_capability_inputs(problems: list) -> None:
             continue
         column = header.index("Required")
         line = line_of(text, at + table.start())
-        documented = {}
+        documented, rows = {}, {}
         for row in table.group(2).strip().splitlines():
             cells = [cell.strip() for cell in CELL_SPLIT.split(row.strip().strip("|"))]
             if len(cells) <= column:
@@ -952,6 +952,16 @@ def check_capability_inputs(problems: list) -> None:
             flag = cells[column].replace("*", "").lower().startswith("yes")
             for field in re.findall(r"`([a-z_][a-z0-9_]*)`", cells[0]):
                 documented[field] = flag
+                rows[field] = " ".join(cells[1:])
+        # A row that lists a field's allowed values lists all of them: the day
+        # Core adds PATCH to os.http.fetch, the `method` row goes red here.
+        for field, values in sorted((inputs[name].get("enums") or {}).items()):
+            named = set(re.findall(r"`([^`]+)`", rows.get(field, "")))
+            if named & set(values):
+                for value in sorted(set(values) - named):
+                    problems.append("%s:%d: the %s field table lists values of `%s` "
+                                    "but not `%s`, which its input schema allows"
+                                    % (REFERENCE, line, name, field, value))
         for field in sorted(set(documented) - properties):
             problems.append("%s:%d: the %s field table lists `%s`, which its input "
                             "schema does not have" % (REFERENCE, line, name, field))
