@@ -1,3 +1,25 @@
+# 3.21.1 - README installs CLI 0.3.8
+
+Summary: The README installs CLI 0.3.8, whose `manaurum app validate` checks the visibility of the events an app provides.
+
+### Why
+
+* **CLI 0.3.8 is published**
+  ([cli-v0.3.8](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.8)).
+  `manaurum app validate` checks `provides.events[].visibility`, which is `workspace` or
+  `audience`, and refuses one event name declared with two different visibilities, as the
+  deploy does.
+* **CLI 0.3.7** ([cli-v0.3.7](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.3.7))
+  changed only the starter: its `manaurum:ready` handshake trusts the shell by the SDK's
+  rule, so an app made with `manaurum app init` also opens in a developer's local stack.
+  Production behaves as before.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.3.8` wheel.
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.3.8 wheel; `pip install manaurum-cli`
+  still 404s on PyPI.
+
 # 3.21.0 - no PATCH through os.http.fetch, a confirm dialog and a list beside its record, and why Russian search finds nothing on a local database
 
 Summary: The linter reports a PATCH sent through os.http.fetch, the stylesheet gains a confirm dialog and a list beside its record, and the search recipe explains empty Russian results.
