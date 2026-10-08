@@ -39,10 +39,12 @@ The rest were real:
 ### What changed
 
 * **`check_app.py` rule 6b**: a literal `"method": "PATCH"` (or `method: 'PATCH'`, `HEAD`,
-  a lower-case verb) in a file that calls `os.http.fetch` is a problem. Only values shaped
-  like an HTTP verb count, so a JSON-RPC body's `"method": "tools/call"` stays green. The
-  allowed list is read from the contract, so the rule goes quiet by itself once Core takes
-  `PATCH` and the contract is synced. Two app mutations (red for PATCH, green for MCP).
+  a lower-case verb) in an object literal that also has a `url` key, in a file that calls
+  `os.http.fetch`, is a problem. Only values shaped like an HTTP verb count, so a JSON-RPC
+  body's `"method": "tools/call"` stays green, and so does a `PATCH` nested in the body
+  (CodeRabbit on #60). The allowed list is read from the contract, so the rule goes quiet
+  by itself once Core takes `PATCH` and the contract is synced. Three app mutations: red
+  for PATCH, green for MCP and for a nested body.
 * **`sync_contract.py`** records each capability input's string enums
   (`capability_inputs.*.enums`); `platform-contract.json` re-synced at the same Core SHA,
   so only the enums are new. **`check_repo.py`**: a field-table row that lists some of a

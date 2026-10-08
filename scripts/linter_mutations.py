@@ -305,6 +305,21 @@ def a_patch_sent_to_fetch(app: Path) -> None:
     fetch_through_the_gateway(app, "PATCH")
 
 
+def a_patch_inside_the_body_is_not_the_input(app: Path) -> None:
+    # MUST STAY GREEN. The input POSTs; the PATCH is a field of the body it
+    # carries (a batch API's sub-request), not the method of this call.
+    def mutate(data):
+        data["requires_capabilities"].append({"name": "os.http.fetch", "version": "1"})
+        data["runtime"]["egress_allowed_hosts"] = ["api.example.com"]
+    patch_manifest(app, mutate)
+    edit(app / "src" / "capability.py", "def note_key(user_id: str) -> str:",
+         'FETCH = "os.http.fetch"\n\n\n'
+         'def batch(key: str) -> dict:\n'
+         '    return {"url": "https://api.example.com/batch", "method": "POST",\n'
+         '            "body": {"requests": [{"method": "PATCH", "path": "/issues/" + key}]}}\n\n\n'
+         'def note_key(user_id: str) -> str:')
+
+
 def an_mcp_method_is_not_an_http_verb(app: Path) -> None:
     # MUST STAY GREEN. A JSON-RPC body sent through os.http.fetch has a
     # "method" key of its own, and it is not an HTTP method.
@@ -826,6 +841,8 @@ APP_MUTATIONS = [
     ("capabilities: PATCH sent to os.http.fetch", a_patch_sent_to_fetch,
      "sends method PATCH in a file that calls os.http.fetch"),
     ("capabilities: an MCP method stays green", an_mcp_method_is_not_an_http_verb, None),
+    ("capabilities: a PATCH inside the body stays green",
+     a_patch_inside_the_body_is_not_the_input, None),
     ("capabilities: an optional capability that is called",
      an_optional_capability_that_is_called, None),
     ("capabilities: a name in the README is not a call",

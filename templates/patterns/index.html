@@ -277,15 +277,15 @@
       <div class="split" id="task-split">
         <section class="split-list card card-flush">
           <ul class="list" id="tasks">
-            <li class="row is-interactive" data-id="t1" tabindex="0" aria-current="true">
+            <li class="row is-interactive" data-id="t1" data-due="Friday" data-to="Marketing" tabindex="0" aria-current="true">
               <div class="row-main"><span class="row-title">Send the landing copy to marketing</span><span class="row-sub">Promised for Friday</span></div>
               <span class="row-meta">Fri</span>
             </li>
-            <li class="row is-interactive" data-id="t2" tabindex="0">
+            <li class="row is-interactive" data-id="t2" data-due="Monday" data-to="Data team" tabindex="0">
               <div class="row-main"><span class="row-title">Check the week-two retention numbers</span><span class="row-sub">Waiting on the data team</span></div>
               <span class="row-meta">Mon</span>
             </li>
-            <li class="row is-interactive" data-id="t3" tabindex="0">
+            <li class="row is-interactive" data-id="t3" data-due="Tuesday" data-to="Founders" tabindex="0">
               <div class="row-main"><span class="row-title">Decide on the trial length</span><span class="row-sub">Two options on the table</span></div>
               <span class="row-meta">Tue</span>
             </li>
@@ -299,10 +299,10 @@
             <button class="btn btn-secondary" type="button" id="task-delete">Delete</button>
           </div>
           <h2 class="card-title">Task</h2>
-          <p class="row-title" id="task-title">Send the landing copy to marketing</p>
+          <p class="row-title" id="task-title" tabindex="-1">Send the landing copy to marketing</p>
           <dl class="kv">
-            <dt>Due</dt><dd>Friday</dd>
-            <dt>Promised to</dt><dd>Marketing</dd>
+            <dt>Due</dt><dd id="task-due">Friday</dd>
+            <dt>Promised to</dt><dd id="task-to">Marketing</dd>
           </dl>
           <p class="status" id="task-status" role="status"></p>
         </section>
@@ -357,20 +357,30 @@
   var tasks = document.getElementById('tasks');
   var split = document.getElementById('task-split');
   function showTask(id) {
-    // No record in the URL: a phone shows the list alone, a desktop window
-    // shows the first record beside it rather than an empty pane.
-    var asked = !!id;
-    if (!id && document.body.dataset.device !== 'mobile') {
-      id = tasks.querySelector('.row[data-id]').dataset.id;
-    }
-    var open = null;
-    tasks.querySelectorAll('.row[data-id]').forEach(function (row) {
-      var on = row.dataset.id === id;
-      if (on) open = row;
-      if (on) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current');
+    var rows = Array.prototype.slice.call(tasks.querySelectorAll('.row[data-id]'));
+    var phone = document.body.dataset.device === 'mobile';
+    var asked = rows.filter(function (row) { return row.dataset.id === id; })[0] || null;
+    // Nothing in the URL, or an id that is not here (deleted, mistyped): a
+    // phone shows the list alone, a window shows the first record beside it
+    // rather than an empty pane or the last one it drew.
+    var open = asked || (phone ? null : rows[0] || null);
+    var wasOpen = split.hasAttribute('data-open');
+    var previous = tasks.querySelector('.row[aria-current="true"]');
+    rows.forEach(function (row) {
+      if (row === open) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current');
     });
-    split.toggleAttribute('data-open', asked && !!open);
-    if (open) document.getElementById('task-title').textContent = open.querySelector('.row-title').textContent;
+    split.toggleAttribute('data-open', !!asked);
+    if (open) {
+      // Every field of the record, and nothing left over from the last one.
+      document.getElementById('task-title').textContent = open.querySelector('.row-title').textContent;
+      document.getElementById('task-due').textContent = open.dataset.due;
+      document.getElementById('task-to').textContent = open.dataset.to;
+      document.getElementById('task-status').textContent = '';
+    }
+    // On a phone the pane that had focus has just been hidden: move focus to
+    // what is on screen now, or a keyboard user is left nowhere.
+    if (phone && asked && !wasOpen) document.getElementById('task-title').focus();
+    if (phone && !asked && wasOpen && previous) previous.focus();
   }
   function pickTask(row) {
     if (row) location.hash = 'tasks/' + row.dataset.id;

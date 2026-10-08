@@ -232,7 +232,7 @@ packs. Exit 0 or fix what it names.
 | `frontend.entry_point` naming a file that is not there | the window opens on a 404 |
 | any `.env*` **inside** the app directory | a token baked into an image layer and retained per version. There is no way to un-leak it. |
 | a capability called but not declared — or declared and never called | `403 capability_not_granted` at the first real use; or a grant request a tenant admin is asked to approve for nothing |
-| a literal `"method": "PATCH"` (or `HEAD`, or a lower-case verb) in a file that calls `os.http.fetch` | `422 input_schema_violation` when the user presses the button. It takes `GET`, `POST`, `PUT` and `DELETE` only |
+| a literal `"method": "PATCH"` (or `HEAD`, or a lower-case verb) beside a `url` key, in a file that calls `os.http.fetch` | `422 input_schema_violation` when the user presses the button. It takes `GET`, `POST`, `PUT` and `DELETE` only |
 | `migrations/`: a non-`.sql` file, numbers of mixed width, a `DO $$` block, destructive DDL without `migration.breaking` | a migration that silently never runs, runs in the wrong order, or is refused at deploy |
 | `migrations/`: a generated column on one of the common built-ins Postgres does not accept there (`array_to_string`, `concat`, one-argument `to_tsvector`, `now()`, `random()`) — not every refusal: a cast that depends on a setting, such as `::date` on a `timestamptz`, still gets through | a file the deploy's validator passes and Postgres then refuses, for every tenant |
 | a session `SET` (`SET search_path`) inside an asyncpg `create_pool(init=...)` | an app that works on the platform and fails on the second request on your own machine |

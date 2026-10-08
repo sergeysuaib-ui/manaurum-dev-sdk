@@ -80,6 +80,7 @@ CAPABILITY = re.compile(r"""["'](os\.[a-z_]+(?:\.[a-z_]+)+)["']""")
 # shaped like an HTTP verb count: an MCP call's `"method": "tools/call"` is not one.
 FETCH_METHOD = re.compile(r"""(?:["']method["']|(?<![\w.$])method)\s*:\s*["'`]([A-Za-z]+)["'`]""")
 HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+FETCH_URL_KEY = re.compile(r"""(?:["']url["']|(?<![\w.$])url)\s*:""")
 CAPABILITY_URL = re.compile(r"/api/capability/(os\.[a-z_]+(?:\.[a-z_]+)+)")
 # The stdlib's, in a string: `"os.path.join"` in a docstring is not a call.
 STDLIB_OS = ("os.path.", "os.environ", "os.getenv", "os.sep", "os.linesep")
@@ -1204,8 +1205,11 @@ def check_fetch_methods(root: Path, problems: list, contract=None) -> None:
     does not look inside calls. The allowed list is the contract's, so this
     goes quiet by itself once Core allows PATCH and the contract is synced.
     Read where it is decidable: a literal `"method": "PATCH"` (or `method:
-    'PATCH'`) in a file that calls `os.http.fetch`. A method held in a
-    variable is invisible here.
+    'PATCH'`) in the same object literal as a `url` key, in a file that
+    calls `os.http.fetch` - the shape of that capability's input. An object
+    with no `url` (a JSON-RPC body, a payload nested inside the input) is
+    not the input and is left alone. A method held in a variable, or an
+    input built up key by key, is invisible here.
     """
     inputs = ((contract or {}).get("capability_inputs") or {}).get("os.http.fetch") or {}
     allowed = set((inputs.get("enums") or {}).get("method") or [])
@@ -1219,13 +1223,46 @@ def check_fetch_methods(root: Path, problems: list, contract=None) -> None:
             continue
         for match in FETCH_METHOD.finditer(text):
             value = match.group(1)
-            if value.upper() in HTTP_VERBS and value not in allowed:
-                problems.append(
-                    "%s:%d: sends method %s in a file that calls os.http.fetch, which "
-                    "takes only %s - 422 input_schema_violation when it runs, not at "
-                    "deploy. The ways round it: references/capabilities-reference.md "
-                    "-> os.http.fetch" % (rel(path, root), text.count("\n", 0, match.start()) + 1,
-                                          value, ", ".join(sorted(allowed))))
+            if value.upper() not in HTTP_VERBS or value in allowed:
+                continue
+            if not FETCH_URL_KEY.search(enclosing_object(text, match.start())):
+                continue
+            problems.append(
+                "%s:%d: sends method %s in a file that calls os.http.fetch, which "
+                "takes only %s - 422 input_schema_violation when it runs, not at "
+                "deploy. The ways round it: references/capabilities-reference.md "
+                "-> os.http.fetch" % (rel(path, root), text.count("\n", 0, match.start()) + 1,
+                                      value, ", ".join(sorted(allowed))))
+
+
+def enclosing_object(text: str, at: int) -> str:
+    """The `{ ... }` literal around position `at`, with what is nested in it
+    blanked out, so a key found in it is a key of THAT object. Braces inside
+    strings are not told apart: good enough for an object literal, and a
+    miss here only ever makes the rule quieter."""
+    depth, start = 0, -1
+    for index in range(at - 1, -1, -1):
+        char = text[index]
+        if char == "}":
+            depth += 1
+        elif char == "{":
+            if depth == 0:
+                start = index
+                break
+            depth -= 1
+    if start < 0:
+        return ""
+    out, depth = [], 0
+    for char in text[start + 1:]:
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0:
+            out.append(char)
+    return "".join(out)
 
 
 # A file the deploy refuses and a validator that predates the rule accepts:
