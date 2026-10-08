@@ -76,6 +76,10 @@ STATIC_ROOTS = ("", "src/static", "static", "public", "www", "dist", "build",
 CAPABILITY = re.compile(r"""["'](os\.[a-z_]+(?:\.[a-z_]+)+)["']""")
 # The same name inside a URL: f"{core}/api/capability/os.kv.get". The shift
 # checklist called the gateway this way and the quoted-name rule never saw it.
+# `"method": "PATCH"` in Python or JSON, `method: 'PATCH'` in JS. Only values
+# shaped like an HTTP verb count: an MCP call's `"method": "tools/call"` is not one.
+FETCH_METHOD = re.compile(r"""(?:["']method["']|(?<![\w.$])method)\s*:\s*["'`]([A-Za-z]+)["'`]""")
+HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 CAPABILITY_URL = re.compile(r"/api/capability/(os\.[a-z_]+(?:\.[a-z_]+)+)")
 # The stdlib's, in a string: `"os.path.join"` in a docstring is not a call.
 STDLIB_OS = ("os.path.", "os.environ", "os.getenv", "os.sep", "os.linesep")
@@ -1191,6 +1195,39 @@ def check_capabilities(root: Path, manifest: dict, problems: list,
             "where a tenant admin reads it" % name)
 
 
+def check_fetch_methods(root: Path, problems: list, contract=None) -> None:
+    """Rule 6b - an HTTP method `os.http.fetch` does not take.
+
+    Its input schema takes GET, POST, PUT and DELETE, spelled in capitals.
+    A PATCH - how Jira, Linear, GitHub and Notion update a record - is `422
+    input_schema_violation` when the user presses the button: the deploy
+    does not look inside calls. The allowed list is the contract's, so this
+    goes quiet by itself once Core allows PATCH and the contract is synced.
+    Read where it is decidable: a literal `"method": "PATCH"` (or `method:
+    'PATCH'`) in a file that calls `os.http.fetch`. A method held in a
+    variable is invisible here.
+    """
+    inputs = ((contract or {}).get("capability_inputs") or {}).get("os.http.fetch") or {}
+    allowed = set((inputs.get("enums") or {}).get("method") or [])
+    if not allowed:
+        return
+    for path in source_files(root, CODE_SUFFIXES):
+        if is_test_file(path, root):
+            continue
+        text = read(path)
+        if "os.http.fetch" not in CAPABILITY.findall(text):
+            continue
+        for match in FETCH_METHOD.finditer(text):
+            value = match.group(1)
+            if value.upper() in HTTP_VERBS and value not in allowed:
+                problems.append(
+                    "%s:%d: sends method %s in a file that calls os.http.fetch, which "
+                    "takes only %s - 422 input_schema_violation when it runs, not at "
+                    "deploy. The ways round it: references/capabilities-reference.md "
+                    "-> os.http.fetch" % (rel(path, root), text.count("\n", 0, match.start()) + 1,
+                                          value, ", ".join(sorted(allowed))))
+
+
 # A file the deploy refuses and a validator that predates the rule accepts:
 # ADD COLUMN is additive, CREATE INDEX CONCURRENTLY is additive, and only a
 # validator that knows about transactionality rejects the two together.
@@ -1643,6 +1680,7 @@ def check(root: Path) -> tuple:
     check_port(root, manifest, problems, notes)
     check_env_files(root, problems)
     check_capabilities(root, manifest, problems, contract)
+    check_fetch_methods(root, problems, contract)
     check_migrations(root, manifest, problems, notes)
     check_pool_session_settings(root, problems)
     check_database_mode(root, manifest, problems)

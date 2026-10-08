@@ -189,6 +189,13 @@ def capability_inputs(monorepo: Path, ref: str, names: list) -> dict:
                 raise SystemExit("cannot read the input schema of %s in %s - fix "
                                  "capability_inputs()" % (name.value, path))
             entry = {"properties": sorted(properties), "required": sorted(required)}
+            # A field limited to a fixed list: `os.http.fetch`'s `method` has no
+            # PATCH, and check_app.py reports an app that sends one.
+            enums = {field: sorted(spec["enum"]) for field, spec in properties.items()
+                     if isinstance(spec, dict) and isinstance(spec.get("enum"), list)
+                     and all(isinstance(value, str) for value in spec["enum"])}
+            if enums:
+                entry["enums"] = dict(sorted(enums.items()))
             # Required-ness outside `required`: `oneOf` alternatives (exactly one
             # set present) and `not` (never all together). Anything else at the
             # top would make "required" mean something this copy cannot say.

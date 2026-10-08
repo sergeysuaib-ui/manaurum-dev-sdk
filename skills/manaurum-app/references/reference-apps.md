@@ -11,7 +11,7 @@ alone. Nothing here is a snippet you paste unchanged; they are shapes to copy.
 
 | Rung | App | Read it when you are asking |
 |---|---|---|
-| Ceiling | `family-space-v2` (77 files) | "How far does this runtime actually go?" — and it is the manifest reference. |
+| Ceiling | `family-space-v2` (77 files) | "How far does this runtime actually go?" — and it is the manifest reference. Not the look: it is Tailwind. |
 | Small | `shift-checklist` (22 files) | "What does a complete app look like when I can still read all of it?" |
 | Testing | `libi` (82 files, 11 test files) | "How do I test this?" |
 
@@ -27,7 +27,7 @@ business app with a data model, AI tools and reporting. Until then
 `family-space-v2` holds that slot.
 
 **What not to copy from the monorepo's apps, these three included** (checked
-against the monorepo on 2026-10-05). Apps age; this SDK is the contract, and
+against the monorepo on 2026-10-05, the `family-space-v2` items on 2026-10-08). Apps age; this SDK is the contract, and
 where an app and the SDK disagree, the SDK wins:
 
 - **The handshake.** `family-space-v2` and `libi` post `manaurum:ready` to `'*'`
@@ -41,6 +41,18 @@ where an app and the SDK disagree, the SDK wins:
   default is not already the app's schema. The Postgres code to copy is
   `templates/recipes/postgres/` (its docstring says why). Its `auth.py` binds the
   token to the app, as the starter's does.
+- **`family-space-v2`'s look.** It is styled with Tailwind, not the platform's
+  design system. Copy its backend, never its screens: the look comes from the
+  starter's `app.css` (`design.md`).
+- **`family-space-v2`'s second copy of every query.** `agent_routes.py` writes its
+  own SQL for what `routes_items.py` already does, and the two have drifted: the
+  Assistant and the window can answer the same question differently. Give both
+  doors one data layer, as the starter does (`src/capability.py` holds the
+  note, and `main.py` and `agent_routes.py` both call it).
+- **`family-space-v2`'s `secret_get`.** `src/capability.py` reads a `412` from
+  `os.secrets.get` as "no secret stored". The gateway answers that with `404
+  secret_not_found`; a `412` is a missing or malformed header, a real fault. Copied
+  as is, an unset secret becomes an error and a broken call becomes "not set yet".
 
 ---
 
@@ -88,6 +100,13 @@ Also note what is *not* in `api_routes`: `/healthz`, the static files, and
 
 ## Ceiling — `family-space-v2`, 77 files
 
+**Read it for the backend and the manifest. Do not copy its look**: it is
+styled with Tailwind, not the Manaurum design system, so an app that copies its
+screens looks foreign on the desktop. The look comes from the starter's
+`app.css` (`design.md`). How a containerised app should consume the OS design
+tokens is still open (MAN-1401); this app does not answer it. Three more things
+not to copy from it are listed above.
+
 Twenty backend modules over shared infrastructure, and the richest manifest we
 ship: hosted mode, per-route auth levels including an anonymous Telegram
 webhook, an egress allow-list, allow-list visibility, seven platform
@@ -108,11 +127,6 @@ reimplementing them.
 
 It is also the manifest and `agent_capabilities` reference — see
 `v2-platform.md § agent_capabilities[]`, whose examples are taken from here.
-
-One caveat worth knowing before you copy its styling: it uses Tailwind, not the
-Manaurum design system. A v2 app is an isolated iframe serving its own CSS, and
-how a containerised app should consume the OS design tokens is an open
-architectural question (MAN-1401) — not something this app answers.
 
 ---
 

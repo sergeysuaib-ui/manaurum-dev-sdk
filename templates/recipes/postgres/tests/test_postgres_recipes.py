@@ -169,6 +169,32 @@ async def test_the_index_exists_and_is_valid(conn):
     assert valid is True
 
 
+async def test_capitals_are_found_by_lowercase_words(conn):
+    """Text search folds case with the DATABASE's LC_CTYPE, not the query's.
+
+    Under C or POSIX it folds ASCII only, so `Удержание` is indexed with its
+    capital and `удержание` finds nothing - no error, an empty result, and
+    code that is correct. The platform's database folds it; a local one made
+    with `initdb` defaults on Windows does not. Before this test, that showed
+    up as a StopIteration in the snippet test below.
+    """
+    await conn.execute("INSERT INTO documents (title, body) VALUES ($1, $2)",
+                       "Удержание", "Проверка регистра.")
+    ctype = await conn.fetchval(
+        "SELECT datctype FROM pg_database WHERE datname = current_database()")
+    for case, query in (("lower", "удержание"), ("upper", "УДЕРЖАНИЕ")):
+        titles = [item["title"] for item in (await search.search(conn, query))["items"]]
+        assert "Удержание" in titles, (
+            "the %s-case query did not find a capitalised Russian title on a database "
+            "with LC_CTYPE=%s. "
+            "Postgres folds case for text search with the database's LC_CTYPE, and "
+            "C/POSIX folds ASCII only. The platform's database folds Cyrillic; this "
+            "one does not, so search here is not search there. Test against a "
+            "database with a UTF-8 ctype: CREATE DATABASE t TEMPLATE template0 "
+            "LC_CTYPE 'C.UTF-8' ('ru-RU' or 'en-US' on Windows). lower() does not "
+            "fix it: under C it folds ASCII only too." % (case, ctype))
+
+
 async def test_strict_finds_by_stem(conn):
     result = await search.search(conn, "клиент уходит")
     assert result["mode"] == "strict"

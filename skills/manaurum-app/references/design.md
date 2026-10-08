@@ -148,6 +148,7 @@ touch, and the fallback is what you will see. `check_ui.py` fails on it.
 | `--lh-tight` / `-snug` / `-normal` / `-relaxed` | Line heights (the OS's own, 1.15 / 1.3 / 1.5 / 1.7). | `tight` for display titles, `snug` for headings and headlines, `normal` for labels, rows and short copy, `relaxed` for paragraphs. Four paragraphs at `normal` are tiring to read. |
 | `--motion-fast` / `--motion-normal`, `--ease-standard` / `--ease-spring` | Transition timing. | Fast for hover and colour, normal for anything that moves. |
 | `--shadow-card` / `--shadow-button` | Elevation. | Two levels exist on purpose; a third one you invent will not match the OS. |
+| `--scrim` | What dims the page behind a `.dialog` (`::backdrop`). This file's own, like `--app-bg`. | Only behind something modal. A dimmed page says "answer this first"; anything else stays undimmed. |
 
 ## Window rules
 
@@ -182,8 +183,14 @@ touch, and the fallback is what you will see. `check_ui.py` fails on it.
   `beforeunload` prompts are dead inside the desktop — Chrome returns
   `undefined` / `false` / `null` and logs a warning — and they work on the
   standalone URL, so "it worked in my browser" proves nothing. A
-  `confirm()`-gated delete button becomes a button that does nothing. Use an
-  in-app modal for confirm, an in-app input for prompt, a toast for alert.
+  `confirm()`-gated delete button becomes a button that does nothing. For
+  confirm, a `<dialog class="dialog">` opened with `showModal()`, which the
+  sandbox allows (Patterns, below). For prompt, an input in the page. For
+  alert, `.status` beside the control that caused it, or, for a message that
+  must outlive the screen, the shell's own toast: post `{ type:
+  'manaurum:toast', payload: { type: 'success' | 'error' | 'info', message } }`
+  to the shell's origin (`sdk-api.md`). The shell draws it in the OS's style;
+  on the standalone URL there is no shell, so keep the `.status` too.
 
 - **No downloads, no new tabs, no clipboard writes.** The sandbox has no
   `allow-downloads` and no `allow-popups`, and the frame's `allow` delegates
@@ -317,9 +324,9 @@ It is often 900px wide and sits inside a desktop that already has its own
 navigation, so a sidebar spends a third of the width repeating what the OS
 already told the user. If a page needs sections, stack them as cards; if it
 needs two views, use two `.btn-ghost`s and swap the content; if it needs a
-boolean, use a checkbox with a `.field-label`. Reach for a sidebar only when a
-list genuinely drives a detail pane, and then build it from `.list` + `.row`
-rather than inventing a component.
+boolean, use a checkbox with a `.field-label`. When a list genuinely drives a
+detail pane, that is not a sidebar: it is `.split`, with `.list` + `.row` in its
+first column (Patterns, below), rather than a component you invent.
 
 ### A tool with several modules
 
@@ -358,6 +365,8 @@ Classes are in `app.css`; this is the judgement that goes with them.
 | Badge | `.badge` + `-accent` / `-success` / `-warning` / `-danger` | Short status on the minority of rows. Not for sentences, and not for what most rows are. |
 | Inline status | `.status` + `-success` / `-error` | Feedback next to the control that caused it. |
 | Key/value | `.kv` | Read-only detail pairs. |
+| Confirm | `<dialog class="dialog">` + `.dialog-title`, `.dialog-body`, `.dialog-actions` | Anything `confirm()` would have asked, a delete above all. `showModal()` works in the sandbox where `confirm()` does not; a `<form method="dialog">` puts the pressed button's `value` in `returnValue`. Focus starts on Cancel. Markup in `app.css` and in `templates/patterns/index.html#tasks`. |
+| List and detail | `.split` > `.split-list` + `.split-detail`, the open row `aria-current="true"`, `.btn.split-back` | A list that opens the record beside it. Side by side while the window is wide enough, stacked when not; on a phone one at a time (`data-open` on `.split` while a record shows). Not navigation, and not a sidebar: the list is the content. |
 
 **A badge is a word, and it is rare.** The first half is rule 3. The second
 half is the one that ships: a badge that is honestly one word but sits on half

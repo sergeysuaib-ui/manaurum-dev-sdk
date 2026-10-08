@@ -1,6 +1,6 @@
 /* ============================================================================
    my-app — stylesheet
-   manaurum-starter app.css 3.20.2 — keep this line when you copy the file.
+   manaurum-starter app.css 3.21.0 — keep this line when you copy the file.
    It is how the platform tells which template an app's stylesheet came from,
    and so which apps still carry a defect fixed in a later one.
    ----------------------------------------------------------------------------
@@ -105,6 +105,8 @@
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
   --shadow-button: 0 1px 2px rgba(0, 0, 0, 0.08);
+  /* This file's own, like `--app-bg`: what dims the page behind a `.dialog`. */
+  --scrim: rgba(0, 0, 0, 0.32);
 
   --color-danger: #e5484d;  --color-danger-soft: rgba(229, 72, 77, 0.10);
   --color-success: #16a34a; --color-success-soft: rgba(22, 163, 74, 0.10);
@@ -142,6 +144,7 @@
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-button: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(0, 0, 0, 0.56);
 
   --color-danger: #ff6369;  --color-danger-soft: rgba(255, 99, 105, 0.16);
   --color-success: #30d158; --color-success-soft: rgba(48, 209, 88, 0.16);
@@ -277,7 +280,8 @@ a { color: var(--accent); text-underline-offset: 2px; }
    stack them as cards. If it needs two views, use two `.btn-ghost`s and a URL
    fragment per view (see `index.html`). If it needs a boolean, use a checkbox
    with a `.field-label`. The one narrow exception is a list that genuinely
-   drives a detail pane, and that is `.list` + `.row`, not a new component.
+   drives a detail pane, and that is `.split` + `.list` + `.row` below, not a
+   new component.
    A set of FILTERS is not navigation at all: that is `.chips`, further down.
 
    references/design.md -> Never. `templates/check_ui.py` fails on a
@@ -775,6 +779,102 @@ textarea.input { min-height: 96px; resize: vertical; }
 .status-success { color: var(--color-success); }
 .status-error { color: var(--color-danger); }
 
+/* ── Confirm: .dialog ────────────────────────────────────────────────────────
+   `confirm()` returns false without showing anything inside the desktop (the
+   shell's sandbox has no `allow-modals`), so a confirm-gated delete is a
+   button that does nothing. `<dialog>` is not covered by that rule:
+   `showModal()` works in the sandbox, traps focus, closes on Escape and dims
+   the page. A `<form method="dialog">` closes it and leaves the pressed
+   button's value in `dialog.returnValue`:
+
+     <dialog class="dialog" id="confirm-delete" aria-labelledby="cd-title">
+       <form method="dialog">
+         <h2 class="dialog-title" id="cd-title">Delete this note?</h2>
+         <p class="dialog-body">It cannot be brought back.</p>
+         <div class="dialog-actions">
+           <button class="btn btn-secondary" value="cancel" autofocus>Cancel</button>
+           <button class="btn btn-danger" value="ok">Delete</button>
+         </div>
+       </form>
+     </dialog>
+
+   Open it with `showModal()`, act on `returnValue === "ok"` in its `close`
+   event. Focus starts on Cancel: Enter on a destructive dialog should not
+   destroy. For "saved" use `.status` beside the button; for a message that
+   outlives the screen, the shell's own toast (`manaurum:toast`, design.md). */
+
+.dialog {
+  width: min(420px, calc(100% - 2 * var(--space-4)));
+  max-height: calc(100% - 2 * var(--space-4));
+  padding: var(--space-6);
+  overflow: auto;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-panel);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-card);
+}
+.dialog::backdrop { background: var(--scrim); }
+
+.dialog-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-subhead);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+}
+
+.dialog-body {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-body-lg);
+  color: var(--text-secondary);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+/* ── List and detail: .split ─────────────────────────────────────────────────
+   The one place a column beside the content is right: a list that drives
+   the record it opens (mail, tasks, tickets). It is not navigation - the
+   list IS the content, so it is `.list` + `.row` in a card, and the selected
+   row says so with `aria-current="true"`:
+
+     <div class="split">
+       <section class="split-list card card-flush">
+         <ul class="list">
+           <li class="row is-interactive" data-id="42" tabindex="0" aria-current="true">…</li>
+         </ul>
+       </section>
+       <section class="split-detail card">…the record…</section>
+     </div>
+
+   Two columns while the window is wide enough for both, one under the other
+   when it is not - by `flex-wrap`, so no width media query. On a phone the
+   two never share the screen: put `data-open` on `.split` while a record is
+   showing, and the list steps aside (the Mobile block); a `.btn.split-back`
+   in the record leads back to it, and shows on a phone only. The record still
+   has its own URL fragment (`#note/42`), as every view does. */
+
+.split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+.split-list { flex: 1 1 280px; min-width: 0; }
+.split-detail { flex: 999 1 400px; min-width: 0; }
+
+/* The way back to the list, for the phone, where the list steps aside. In a
+   window the list is on screen and the link would point at it. */
+.split-back { display: none; }
+
+.row.is-interactive[aria-current="true"],
+.row.is-interactive[aria-current="true"]:hover { background: var(--accent-soft); }
+
 /* ── Key/value pairs ───────────────────────────────────────────────────── */
 
 .kv { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-5); margin: 0; }
@@ -967,6 +1067,12 @@ body[data-device="mobile"] .reader { padding-block: 0 var(--space-8); }
 body[data-device="mobile"] .article-title { font-size: var(--fs-title-3); }
 body[data-device="mobile"] .lead { font-size: var(--fs-callout); }
 body[data-device="mobile"] .row-meta { max-width: 50%; }
+/* A dialog's buttons stack full width, primary first under the thumb. */
+body[data-device="mobile"] .dialog-actions { flex-direction: column-reverse; align-items: stretch; }
+/* List or record, never both: `data-open` while a record is showing. */
+body[data-device="mobile"] .split[data-open] > .split-list,
+body[data-device="mobile"] .split:not([data-open]) > .split-detail { display: none; }
+body[data-device="mobile"] .split-back { display: inline-flex; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

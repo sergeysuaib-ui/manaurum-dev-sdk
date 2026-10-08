@@ -1133,12 +1133,31 @@ connections are not filtered — so route through it whatever must be auditable.
 | Field | Required | Notes |
 |---|---|---|
 | `url` | yes | `https://` only. |
-| `method` | optional | `GET` (default) / `POST` / `PUT` / `DELETE`. |
+| `method` | optional | `GET` (default) / `POST` / `PUT` / `DELETE`. **Nothing else: no PATCH, no HEAD** — see below. |
 | `headers` | optional | Plain object, sent as is. |
 | `body` | optional | **String** body — for text/JSON payloads. |
 | `body_base64` | optional | **Binary** request body, base64-encoded (MAN-1316). Mutually exclusive with `body`. ≤ 7,000,000 chars (~5 MB decoded). |
 | `response_format` | optional | `"text"` (default — response `body` is UTF-8 with replacement, LOSSY for binary) or `"base64"` (lossless — exact bytes in `body_base64`, `body` comes back empty). |
 | `timeout_ms` | optional | 1–30000, default 10000. (Milliseconds — there is no `timeout_seconds` field.) |
+
+**No `PATCH`.** The input schema allows four methods, and anything else is `422
+input_schema_violation` at the moment the user presses the button: the deploy does not
+look inside your calls, and nothing else warns. That hits the apps this capability
+exists for: Jira, Linear, GitHub, Notion and most trackers update a record with
+`PATCH`. `check_app.py` reports a literal `"method": "PATCH"` sent to `os.http.fetch`.
+The ways round it, in order:
+
+1. **The same change through another method.** Many APIs have one: Jira edits an issue
+   with `PUT /rest/api/3/issue/{key}`; some APIs (Google's among them) take a `POST`
+   with `X-HTTP-Method-Override: PATCH`. Read the service's own docs; do not guess.
+2. **The service's MCP endpoint**, if it has one: MCP is JSON-RPC over `POST`.
+3. **Call the service from your container directly**, with your own HTTP client. Your
+   container's outbound connections are not filtered (above), so this works today; what
+   you lose is the platform's egress audit for that call.
+
+Allowing `PATCH` is a Core change (the method enum in
+`backend/app/services/capabilities/http_fetch.py`). Until it ships, plan for one of the
+three.
 
 **Binary payloads — the rule:** the default `text` wire corrupts binary data in BOTH
 directions. To send raw bytes (file uploads, audio), base64 them into `body_base64`; to
@@ -1159,6 +1178,10 @@ receive raw bytes (file downloads), pass `response_format: "base64"` and read
 ```
 
 Upstream 4xx/5xx are NOT errors — they come back in `status` and your app handles them.
+A `200` is not proof either: an API that does not know a query parameter usually ignores
+it. Agentix answers `GET /api/issues?project=ZB` with every issue in the workspace; only
+`?projectId=<uuid>` filters. After the first call to a new endpoint, check the count and
+a few records against what the filter should have left.
 Redirects are not followed; handle `Location` yourself with a second call (it re-passes the
 allow-list checks, so the redirect's host has to be in `egress_allowed_hosts` too). Your
 `headers` are sent verbatim on every call, so when the `Location` host differs from the
@@ -1172,7 +1195,7 @@ unchanged hands your Jira token to the CDN.
 - `400 unsafe_url` — non-https scheme, a local name, a private-range IP, or a hostname that
   resolves to one.
 - `422 input_schema_violation` — both body fields sent (older platforms:
-  `400 body_and_body_base64_exclusive`).
+  `400 body_and_body_base64_exclusive`), or a `method` outside the four, `PATCH` above all.
 - `400 invalid_body_base64` — `body_base64` undecodable.
 - `502 upstream_unreachable` — DNS / connect / TLS failure.
 - `502 upstream_response_too_large` — response over the 5 MiB cap.

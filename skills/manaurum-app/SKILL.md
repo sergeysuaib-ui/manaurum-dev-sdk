@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.20.2.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.21.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -121,7 +121,8 @@ migrations and real-Postgres tests for both. Why: `references/v2-platform.md` �
 is a complete stylesheet for a Manaurum app — tokens, layout, lists, filters, forms,
 reading, empty states, skeletons, mobile. The starter's `index.html` shows a form and a
 short record list; `<plugin>/templates/patterns/index.html` shows a list of texts with
-filters, one text on its own page, and a list of records to sort through.
+filters, one text on its own page, a list of records to sort through, and a list
+that opens the record beside it, with a confirm dialog.
 `references/design.md` says when to reach for each.
 
 `<plugin>` is the **plugin root** — the directory holding `skills/` and `templates/`
@@ -164,7 +165,7 @@ but rule 3 and the first half of rule 5.
    does not exist.
 7. **No `alert()` / `confirm()` / `prompt()`.** The shell's iframe has no
    `allow-modals`, so they return silently — a `confirm()`-gated delete button
-   does nothing. Use an in-app modal, input or toast.
+   does nothing. Use a `<dialog class="dialog">`, an input, or the shell's toast.
 
 Also never clip your root (`overflow: hidden` plus a fixed height — the shell cannot
 scroll an iframe app), and never build a palette on gold, yellow or `hue-rotate`. The
@@ -553,7 +554,8 @@ inside the desktop — or breaks silently behind a green deploy. Testing the sta
 URL is not evidence.
 
 - **Your app owns its scroller.** The window cannot scroll an iframe app. Before you deploy, open the smallest window you support with enough data to overflow it and watch the console: the SDK names a clipped element. The fix: `references/design.md` → "Window rules".
-- **No native dialogs** — `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` are dead in the sandbox. Use an in-app modal, input or toast.
+- **No native dialogs** — `alert()`, `confirm()`, `prompt()`, `window.print()` and `beforeunload` are dead in the sandbox. `<dialog>.showModal()` is not: `app.css` styles it as `.dialog` (`references/design.md` → "Window rules").
+- **`os.http.fetch` has no `PATCH`.** `GET`, `POST`, `PUT` and `DELETE` only; a `PATCH` is `422 input_schema_violation` when the user presses the button, and most trackers update a record with `PATCH`. The ways round it: `references/capabilities-reference.md` → `os.http.fetch`.
 - **No downloads, no new tabs, no clipboard writes.** Put a file into the person's Files with `os.drive.publish` and say where it went; show a link as selectable text; show a value in a read-only field that selects itself on focus. Details: `references/design.md` → "Window rules".
 - **Don't set your own framing headers.** Core sets them; the rest of your CSP is kept, so a `connect-src` that forgets your API origin still breaks the app. `references/v2-platform.md` → "What else the gateway answers".
 - **A relative `frontend.icon`** renders as literal text in the tile (Step 1), and **a `.env*` inside the app directory** is deployed ("Required project structure").

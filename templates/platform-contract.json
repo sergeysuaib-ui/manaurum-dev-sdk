@@ -94,7 +94,16 @@
       ],
       "required": [
         "messages"
-      ]
+      ],
+      "enums": {
+        "provider": [
+          "anthropic",
+          "deepseek",
+          "gemini",
+          "groq",
+          "openai"
+        ]
+      }
     },
     "os.ai.embed": {
       "properties": [
@@ -107,7 +116,13 @@
         "input",
         "model",
         "provider"
-      ]
+      ],
+      "enums": {
+        "provider": [
+          "gemini",
+          "openai"
+        ]
+      }
     },
     "os.ai.image_poll": {
       "properties": [
@@ -127,7 +142,24 @@
       ],
       "required": [
         "prompt"
-      ]
+      ],
+      "enums": {
+        "format": [
+          "jpeg",
+          "png",
+          "webp"
+        ],
+        "quality": [
+          "high",
+          "low",
+          "medium"
+        ],
+        "size": [
+          "1024x1024",
+          "1024x1536",
+          "1536x1024"
+        ]
+      }
     },
     "os.ai.providers": {
       "properties": [],
@@ -350,6 +382,18 @@
       "required": [
         "url"
       ],
+      "enums": {
+        "method": [
+          "DELETE",
+          "GET",
+          "POST",
+          "PUT"
+        ],
+        "response_format": [
+          "base64",
+          "text"
+        ]
+      },
       "not_all_of": [
         "body",
         "body_base64"
@@ -385,7 +429,13 @@
       "properties": [
         "kind"
       ],
-      "required": []
+      "required": [],
+      "enums": {
+        "kind": [
+          "sales_point",
+          "warehouse"
+        ]
+      }
     },
     "os.notifications.send_to_user": {
       "properties": [
@@ -400,7 +450,14 @@
         "body",
         "channel",
         "to_user_id"
-      ]
+      ],
+      "enums": {
+        "channel": [
+          "email",
+          "in_app",
+          "sms"
+        ]
+      }
     },
     "os.ocr.extract": {
       "properties": [
