@@ -291,6 +291,31 @@ jq '.version = "1.0.1"' manifest.json > manifest.json.new && mv manifest.json.ne
 
 The URL stays the same. Existing connections drain; new requests hit the new version.
 
+### Deploy on top of the newest version (CLI 0.4.0)
+
+A deploy is accepted only on top of the app's newest published version (its head), so a
+change made from Aurum Studio, DevHub or another laptop is never overwritten unseen
+(Core D-190). `manaurum app deploy` sends the version your tree was made from, kept in
+`.manaurum/base.json` next to `manifest.json`; a successful deploy records the version it
+made live there. Do not commit that file (`manaurum app init` puts `.manaurum/` in
+`.gitignore`; add it to an older app's).
+
+* 409 stale_base: someone published a newer version. The CLI says which, through which
+  door and by whom. Take it (`manaurum app fetch-source <version> --app-id <app> --into
+  <dir>`, merge your change into it), then deploy again. Only the app's owner may replace it
+  anyway, with `--override-base`; the platform records which version was replaced.
+* A working copy with no `.manaurum/base.json` (made before 0.4.0): record the live version
+  as its base once, `manaurum app fetch-source <live version> --app-id <app> --base-only`,
+  after checking that the tree really is that version.
+* 409 app_busy: another deploy, rollback or Studio publish of the app is running.
+  `--wait` asks again until it can start.
+* 422 missing_applied_migration: the bundle drops or edits a migration the app's tenants
+  already ran. Put the file back unchanged; `--dry-run` runs the same check.
+* **From 2026-11-10 a deploy that names no base is refused** (no `.manaurum/base.json`, or a
+  CLI older than 0.4.0). Until then it is accepted and answered `"base_checked": false`.
+* From CI: record the base of the commit you deploy before deploying (the CLI's README,
+  "Deploying from CI").
+
 ### Migrations across redeploys
 
 Schema changes ship as plain `.sql` files directly under a top-level `migrations/` directory

@@ -1,3 +1,24 @@
+# 3.21.2 - README installs CLI 0.4.0; deploys go on top of the newest version
+
+Summary: The README installs CLI 0.4.0, and the deploy skill explains deploying on top of the newest version and the date a deploy without a base is refused.
+
+### Why
+
+* **CLI 0.4.0 is published**
+  ([cli-v0.4.0](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.4.0)).
+  A deploy is accepted only on top of the app's newest published version (Core D-190
+  stage 1), so a change from Aurum Studio or another laptop is never overwritten unseen.
+* **From 2026-11-10 Core refuses a deploy that names no base** (Core MAN-3538), so an agent
+  on an older CLI or a working copy without `.manaurum/base.json` must catch up before then.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.4.0` wheel.
+* `skills/manaurum-deploy/SKILL.md`: new section "Deploy on top of the newest version
+  (CLI 0.4.0)".
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.4.0 wheel; `pip install manaurum-cli`
+  still 404s on PyPI.
+
 # 3.21.1 - README installs CLI 0.3.8
 
 Summary: The README installs CLI 0.3.8, whose `manaurum app validate` checks the visibility of the events an app provides.
