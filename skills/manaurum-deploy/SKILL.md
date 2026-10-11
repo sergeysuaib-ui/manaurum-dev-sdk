@@ -128,8 +128,12 @@ tar cf "$WORK/ctx.tar" \
 # 80 KB of base64). `tr -d '\n'` leaves no trailing newline, which the
 # archive must not have.
 base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
-jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' > "$WORK/deploy.json"
+# The version this tree was made from (see "Deploy on top of the newest
+# version"): the CLI keeps it in .manaurum/base.json. A first deploy has none.
+BASE=$(jq -r '.version_id // empty' .manaurum/base.json 2>/dev/null)
+jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json --arg base "$BASE" \
+  '{manifest_json: $m[0], archive_b64: $b}
+   + (if $base == "" then {} else {base_version_id: $base} end)' > "$WORK/deploy.json"
 
 curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
@@ -290,6 +294,35 @@ jq '.version = "1.0.1"' manifest.json > manifest.json.new && mv manifest.json.ne
 ```
 
 The URL stays the same. Existing connections drain; new requests hit the new version.
+
+### Deploy on top of the newest version (CLI 0.4.0)
+
+A deploy is accepted only on top of the app's newest published version (its head), so a
+change made from Aurum Studio, DevHub or another laptop is never overwritten unseen
+(Core D-190). `manaurum app deploy` sends the version your tree was made from, kept in
+`.manaurum/base.json` next to `manifest.json`; a successful deploy records the version it
+made live there. Do not commit that file (`manaurum app init` puts `.manaurum/` in
+`.gitignore`; add it to an older app's).
+
+* 409 stale_base: someone published a newer version. The CLI says which, through which
+  door and by whom. Take it (`manaurum app fetch-source <version> --app-id <app> --into
+  <dir>`, merge your change into it), then deploy again. Only the app's owner may replace it
+  anyway, with `--override-base`; the platform records which version was replaced.
+* A working copy with no `.manaurum/base.json` (made before 0.4.0): record the live version
+  as its base once, `manaurum app fetch-source <live version> --app-id <app> --base-only`,
+  after checking that the tree really is that version.
+* 409 app_busy: another deploy, rollback or Studio publish of the app is running.
+  `--wait` asks again until it can start.
+* 422 missing_applied_migration: the bundle drops or edits a migration the app's tenants
+  already ran. Put the file back unchanged; `--dry-run` runs the same check.
+* **From 2026-11-10 (00:00 UTC) a deploy that names no base is refused** with 428
+  base_required (no `.manaurum/base.json`, a CLI older than 0.4.0, or a raw `POST` without
+  `base_version_id`). Until then it is accepted and answered `"base_checked": false` with
+  `"base_required_from"`. With the raw API, send `base_version_id`: the version your tree was
+  made from (the curl examples below read it from `.manaurum/base.json`; the 428 and 409
+  answers name the head's `head_version_id`). A dry run does not check the base.
+* From CI: record the base of the commit you deploy before deploying (the CLI's README,
+  "Deploying from CI").
 
 ### Migrations across redeploys
 
@@ -523,8 +556,10 @@ echo "Deploying…"
 # dies with "Argument list too long" on any real project (Windows caps
 # argv at 32 KB; a 60 KB tar is already 80 KB of base64).
 base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
-RESP=$(jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' \
+BASE=$(jq -r '.version_id // empty' .manaurum/base.json 2>/dev/null)
+RESP=$(jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json --arg base "$BASE" \
+  '{manifest_json: $m[0], archive_b64: $b}
+   + (if $base == "" then {} else {base_version_id: $base} end)' \
   | curl -sS -X POST "$BASE_URL/api/dev/v2/deploy" \
       -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
       -H "Content-Type: application/json" \
