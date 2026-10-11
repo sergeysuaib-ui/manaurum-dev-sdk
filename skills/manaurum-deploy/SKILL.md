@@ -128,8 +128,12 @@ tar cf "$WORK/ctx.tar" \
 # 80 KB of base64). `tr -d '\n'` leaves no trailing newline, which the
 # archive must not have.
 base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
-jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' > "$WORK/deploy.json"
+# The version this tree was made from (see "Deploy on top of the newest
+# version"): the CLI keeps it in .manaurum/base.json. A first deploy has none.
+BASE=$(jq -r '.version_id // empty' .manaurum/base.json 2>/dev/null)
+jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json --arg base "$BASE" \
+  '{manifest_json: $m[0], archive_b64: $b}
+   + (if $base == "" then {} else {base_version_id: $base} end)' > "$WORK/deploy.json"
 
 curl -sS -X POST https://manaurum.com/api/dev/v2/deploy \
   -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
@@ -311,8 +315,12 @@ made live there. Do not commit that file (`manaurum app init` puts `.manaurum/` 
   `--wait` asks again until it can start.
 * 422 missing_applied_migration: the bundle drops or edits a migration the app's tenants
   already ran. Put the file back unchanged; `--dry-run` runs the same check.
-* **From 2026-11-10 a deploy that names no base is refused** (no `.manaurum/base.json`, or a
-  CLI older than 0.4.0). Until then it is accepted and answered `"base_checked": false`.
+* **From 2026-11-10 (00:00 UTC) a deploy that names no base is refused** with 428
+  base_required (no `.manaurum/base.json`, a CLI older than 0.4.0, or a raw `POST` without
+  `base_version_id`). Until then it is accepted and answered `"base_checked": false` with
+  `"base_required_from"`. With the raw API, send `base_version_id`: the version your tree was
+  made from (the curl examples below read it from `.manaurum/base.json`; the 428 and 409
+  answers name the head's `head_version_id`). A dry run does not check the base.
 * From CI: record the base of the commit you deploy before deploying (the CLI's README,
   "Deploying from CI").
 
@@ -548,8 +556,10 @@ echo "Deploying…"
 # dies with "Argument list too long" on any real project (Windows caps
 # argv at 32 KB; a 60 KB tar is already 80 KB of base64).
 base64 < "$WORK/ctx.tar" | tr -d '\n' > "$WORK/ctx.b64"
-RESP=$(jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json \
-  '{manifest_json: $m[0], archive_b64: $b}' \
+BASE=$(jq -r '.version_id // empty' .manaurum/base.json 2>/dev/null)
+RESP=$(jq -n --rawfile b "$WORK/ctx.b64" --slurpfile m manifest.json --arg base "$BASE" \
+  '{manifest_json: $m[0], archive_b64: $b}
+   + (if $base == "" then {} else {base_version_id: $base} end)' \
   | curl -sS -X POST "$BASE_URL/api/dev/v2/deploy" \
       -H "Authorization: Bearer $MANAURUM_V2_TOKEN" \
       -H "Content-Type: application/json" \
