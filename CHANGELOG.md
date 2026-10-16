@@ -1,3 +1,25 @@
+# 3.22.0 - Change a live app through its git (CLI 0.5.0)
+
+Summary: The README installs CLI 0.5.0; the deploy skill teaches `manaurum app clone`, `git pull` and a deploy that pushes to `main`.
+
+### Why
+
+* **CLI 0.5.0 is published**
+  ([cli-v0.5.0](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.5.0)).
+  Every v2 app has its own git on the platform, and where the tenant has it turned on a push
+  to `main` releases the version (Core D-190, D-216, MAN-3516). A change started from a
+  clone starts from what is live, so a change made from Aurum Studio or another laptop is
+  pulled, not overwritten.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.5.0` wheel.
+* `skills/manaurum-deploy/SKILL.md`: new section "Change a live app through its git
+  (CLI 0.5.0)": clone, pull, commit, deploy; the credential helper; `fetch first`; what a
+  push may hold; what to do where the app git is not on.
+* `skills/manaurum-app/SKILL.md` Step 5 points at it.
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.5.0 wheel.
+
 # 3.21.2 - README installs CLI 0.4.0; deploys go on top of the newest version
 
 Summary: The README installs CLI 0.4.0, and the deploy skill explains deploying on top of the newest version and the date a deploy without a base is refused.

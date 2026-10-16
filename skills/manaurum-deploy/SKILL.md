@@ -295,6 +295,45 @@ jq '.version = "1.0.1"' manifest.json > manifest.json.new && mv manifest.json.ne
 
 The URL stays the same. Existing connections drain; new requests hit the new version.
 
+### Change a live app through its git (CLI 0.5.0)
+
+Every v2 app has its own git on the platform (Core D-190). Where the tenant has it turned on
+(`platform.app_git_remote`; `seregaos` first), the app's owner works with it like any git
+remote, and **a push to `main` is the deploy** (Core D-216):
+
+```bash
+manaurum app clone <slug>          # git clone; the CLI is git's credential helper
+cd <slug>
+git pull                           # before every change: take what was released since
+# change the code, bump "version" in manifest.json
+git commit -am "what changed"
+manaurum app deploy                # validate, then git push of this branch to main
+```
+
+* `manaurum app clone` keeps the token out of the URL and `.git/config`: git asks
+  `manaurum git-credential` for it, which reads `~/.manaurum/config.json`. Never put the
+  token in a clone URL; git stores the URL in `.git/config` in plain text. `manaurum` must
+  be on `PATH` for git to run it.
+* In the clone, `manaurum app deploy` refuses uncommitted changes (the push releases the
+  commit, not the files on disk), then pushes. The push stays open while the image builds and
+  the version goes live, prints `remote: Manaurum: ...` progress, and ends `ok` only when the
+  version serves; otherwise git shows the reason, and nothing was released.
+* `main` moves only forward from the version that is live. `fetch first` means someone
+  released after your last fetch (another developer, Aurum Studio): `git pull`, then deploy
+  again. `--force` does not change that; replacing a newer version stays
+  `manaurum app deploy --override-base`, which uploads.
+* Other branches are kept as you push them and release nothing; tags are the platform's
+  (`v<version>` per release) and cannot be pushed.
+* Only committed files are released, so `.gitignore` is what keeps a local file out. Still
+  keep `.env.manaurum` outside the clone.
+* Every commit of a push must hold regular files only (no symlinks, no submodules), at most
+  5 MB per file and 64 MB per tree.
+* A clone that answers 404: the tenant does not have the app git yet. Work from
+  `manaurum app fetch-source <version> --app-id <slug> --into <dir>` and the upload deploy
+  (next section).
+* An app whose history has no commit for its live version (deployed before the history
+  existed) takes a push to `main` after one more `manaurum app deploy`.
+
 ### Deploy on top of the newest version (CLI 0.4.0)
 
 A deploy is accepted only on top of the app's newest published version (its head), so a
