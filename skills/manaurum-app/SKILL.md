@@ -5,7 +5,7 @@ description: Build apps for ManAurum OS — a multi-tenant browser-based virtual
 
 # Build ManAurum Apps
 
-> **This page is SDK 3.21.2.** The plugin cache keeps one directory per version,
+> **This page is SDK 3.22.0.** The plugin cache keeps one directory per version,
 > and an update that lands mid-session never reaches a loaded skill (2.8.0 landed
 > 51 minutes after a session loaded 2.7.2, which read old paths for a day). When
 > you resolve `<plugin>` (see "Before you write anything"), look at its
@@ -528,6 +528,7 @@ things to carry from here:
 
 ## Step 5 — Update + rollback
 
+- **Change a live app from its git** (CLI 0.5.0, where the tenant has the app git turned on): `manaurum app clone <slug>`, change, bump the version, commit, `manaurum app deploy` (it pushes to `main`, which releases). Start from the clone rather than from a folder you remember: the clone is what is live. `manaurum-deploy/SKILL.md` → "Change a live app through its git".
 - **New version**: bump `manifest.json.version` on **every** deploy — a label is used up by the first deploy that pushes it, even one that then fails (`409 version_already_published`).
 - **Rollback**: `POST /api/dev/v2/apps/<slug>/rollback` with `{"version_label": "1.0.0"}` (required). It does not revert the schema, probe the container, or re-sync the Assistant's tools.
 - **Versions / inspect / logs**: `GET /api/dev/v2/apps/<slug>/versions`, `GET /api/dev/v2/apps/<slug>`, `GET /api/dev/v2/apps/<slug>/logs?tail=200` (max 1000, not redacted).
