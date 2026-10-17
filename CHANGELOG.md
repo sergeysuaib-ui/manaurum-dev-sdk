@@ -1,3 +1,22 @@
+# 3.22.1 - README installs CLI 0.5.1
+
+Summary: The README installs CLI 0.5.1, whose bundled manifest schema refuses an `app_id` that is not a valid slug.
+
+### Why
+
+* **CLI 0.5.1 is published**
+  ([cli-v0.5.1](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.5.1)).
+  The manifest schema's `app_id` now carries the slug shape the deploy enforces (3-40
+  lowercase letters, digits and hyphens, starting with a letter, ending with a letter or
+  digit; Core sergeysuaib-ui/manaurum#1936), so a manifest that validates no longer fails
+  partway through a deploy.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.5.1` wheel.
+* `skills/manaurum-app/references/v2-platform.md`: the `app_id` row says the schema carries the pattern from CLI 0.5.1.
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.5.1 wheel.
+
 # 3.22.0 - Change a live app through its git (CLI 0.5.0)
 
 Summary: The README installs CLI 0.5.0; the deploy skill teaches `manaurum app clone`, `git pull` and a deploy that pushes to `main`.
