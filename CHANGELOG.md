@@ -13,6 +13,7 @@ Summary: The README installs CLI 0.5.2, which refuses an agent capability whose 
 ### What changed
 
 * README "Install the CLI" installs the `cli-v0.5.2` wheel.
+* `skills/manaurum-app/references/v2-platform.md`: each `input_schema` must be a valid JSON Schema of its draft; the refusal and typical slips.
 * `scripts/open-claims.txt`: MAN-1385 names the cli-v0.5.2 wheel.
 
 # 3.22.1 - README installs CLI 0.5.1
