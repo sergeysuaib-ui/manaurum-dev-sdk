@@ -155,6 +155,8 @@ Note the shape of that description: a positive trigger ("use for household to-do
 "properties": {"q": {"$ref": "https://example.com/query.json"}}
 ```
 
+**And a valid JSON Schema.** Each `input_schema` must pass the metaschema of the draft its `$schema` names (Draft 2020-12 when none) — the same check Core makes when the tool is called, so a schema it would refuse at call time is refused at deploy and by `manaurum app validate` (CLI 0.5.2+), naming the tool and the place: `tool 'count_open_items': input_schema is not a valid JSON Schema: input_schema/properties/a/minimum must be a number, not "1"`. Typical slips: a number written as a string (`"minimum": "1"`), `items: 5`, a `pattern` that is not a valid regex.
+
 ```
 input_schema/properties/q/$ref must be a local '#...' reference, not 'https://example.com/query.json'
 ```

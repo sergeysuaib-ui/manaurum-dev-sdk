@@ -1,3 +1,20 @@
+# 3.22.2 - README installs CLI 0.5.2
+
+Summary: The README installs CLI 0.5.2, which refuses an agent capability whose `input_schema` is not a valid JSON Schema before a build.
+
+### Why
+
+* **CLI 0.5.2 is published**
+  ([cli-v0.5.2](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.5.2)).
+  `manaurum app validate` and the deploy preflight check each `agent_capabilities[].input_schema`
+  against its draft's metaschema, the same check the platform makes when the tool is called
+  (Core sergeysuaib-ui/manaurum#2474). Before, such a tool deployed and failed on every call.
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.5.2` wheel.
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.5.2 wheel.
+
 # 3.22.1 - README installs CLI 0.5.1
 
 Summary: The README installs CLI 0.5.1, whose bundled manifest schema refuses an `app_id` that is not a valid slug.
