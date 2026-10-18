@@ -1,3 +1,22 @@
+# 3.22.3 - README installs CLI 0.5.3
+
+Summary: The README installs CLI 0.5.3: named profiles for several tenants, the git credential helper on the right tenant's token, and credentials never uploaded.
+
+### Why
+
+* **CLI 0.5.3 is published**
+  ([cli-v0.5.3](https://github.com/sergeysuaib-ui/manaurum-dev-sdk/releases/tag/cli-v0.5.3)).
+  `--profile` / `MANAURUM_PROFILE` keep one token per tenant side by side; a clone remembers
+  its profile and `git push` uses that tenant's token (Core sergeysuaib-ui/manaurum#2473).
+  `app deploy` never uploads `.env*`, `*.pem`, `*.key`; everything else is the app's source of
+  record, whatever `.dockerignore` says (Core sergeysuaib-ui/manaurum#2275).
+
+### What changed
+
+* README "Install the CLI" installs the `cli-v0.5.3` wheel and mentions profiles.
+* `skills/manaurum-deploy/SKILL.md`: profiles, and what the upload leaves out.
+* `scripts/open-claims.txt`: MAN-1385 names the cli-v0.5.3 wheel.
+
 # 3.22.2 - README installs CLI 0.5.2
 
 Summary: The README installs CLI 0.5.2, which refuses an agent capability whose `input_schema` is not a valid JSON Schema before a build.
