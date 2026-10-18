@@ -33,10 +33,14 @@ description: Deploy a ManAurum OS app on Platform v2 (containerized — `manauru
   is no rotate: create a new token, then revoke the old one. The container never uses
   this token; it gets its own `MANAURUM_RUNTIME_TOKEN`, which cannot deploy
   (`403 runtime_credential_not_allowed`).
-- **Where the token lives.** `manaurum auth login` stores it in `~/.manaurum/config.json`;
-  the CLI reads nothing else (no env var, no `.env.manaurum`). For `curl` and `deploy.sh`,
-  keep it in `.env.manaurum` as `MANAURUM_V2_TOKEN=...` in the directory **above** the app
-  (beside it, never inside it: the packager does not exclude `.env*`).
+- **Where the token lives.** `manaurum auth login` stores it in `~/.manaurum/config.json`.
+  From CLI 0.5.3 that file holds one token per **profile**: `manaurum --profile <name> auth login
+  --token mna_...` adds another tenant's token beside the first, and `--profile <name>` (or
+  `MANAURUM_PROFILE=<name>`) picks it for a command; with neither, the `default` profile is used.
+  A clone made with `manaurum --profile <name> app clone` remembers its profile, and `git push`
+  there uses that tenant's token. For `curl` and `deploy.sh`, keep a token in `.env.manaurum` as
+  `MANAURUM_V2_TOKEN=...` in the directory **above** the app, never inside it: CLI 0.5.3 never
+  uploads `.env*`, `*.pem` or `*.key`, but `deploy.sh` and older CLIs do.
 - **The token decides the tenant, not the manifest.** An `mna_*` is bound to one tenant: the
   tenant of the workspace that was active in Dev Hub when it was minted. Every deploy with
   it lands in that tenant, and nothing in `manifest.json` chooses it. The deploy response
